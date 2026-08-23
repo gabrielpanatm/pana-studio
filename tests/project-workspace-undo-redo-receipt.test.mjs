@@ -12,7 +12,7 @@ import {
 import {
   PROJECT_WORKSPACE_SCHEMA_VERSION,
   PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION,
-} from "$lib/types";
+} from "$lib/project/workspace-contract";
 
 function receipt(overrides = {}) {
   return {
@@ -171,25 +171,25 @@ test("numai istoricul structural rescanează catalogul înainte de Preview", asy
 });
 
 test("reconcilierea topologiei precedă publicarea generației Preview", () => {
-  const route = readFileSync(resolve(process.cwd(), "src/routes/+page.svelte"), "utf8");
-  const syncStart = route.indexOf("async function settleKernelUndoRedoCanonicalProjection");
-  const topology = route.indexOf(
+  const service = readFileSync(resolve(process.cwd(), "src/lib/versioning/workspace-history-service.svelte.ts"), "utf8");
+  const syncStart = service.indexOf("private async settleCanonicalProjection");
+  const topology = service.indexOf(
     "await reconcileProjectWorkspaceTopologyAfterHistory",
     syncStart,
   );
-  const preview = route.indexOf("await projectLatestProjectWorkspacePreview", syncStart);
+  const preview = service.indexOf("await this.dependencies.authority.projectLatest", syncStart);
   assert.ok(syncStart >= 0 && topology > syncStart && preview > topology);
 });
 
 test("proiecția canonică UI a Undo/Redo nu depinde de succesul Preview", () => {
-  const route = readFileSync(resolve(process.cwd(), "src/routes/+page.svelte"), "utf8");
-  const localStart = route.indexOf("function applyKernelUndoRedoLocalProjection");
-  const syncStart = route.indexOf("async function settleKernelUndoRedoCanonicalProjection");
-  const refresh = route.indexOf("app.refreshToken += 1", localStart);
-  const preview = route.indexOf("await projectLatestProjectWorkspacePreview", syncStart);
-  const previewCatch = route.indexOf("let warning = errorMessage(error)", preview);
-  const rollback = route.indexOf("await app.rollbackCanvasPatchInPreview", previewCatch);
-  const cssRefresh = route.indexOf("app.notifyCssSourceChanged()", localStart);
+  const service = readFileSync(resolve(process.cwd(), "src/lib/versioning/workspace-history-service.svelte.ts"), "utf8");
+  const localStart = service.indexOf("private applyLocalProjection");
+  const syncStart = service.indexOf("private async settleCanonicalProjection");
+  const refresh = service.indexOf("project.refreshToken += 1", localStart);
+  const preview = service.indexOf("await this.dependencies.authority.projectLatest", syncStart);
+  const previewCatch = service.indexOf("let warning = errorMessage(error)", preview);
+  const rollback = service.indexOf("await this.dependencies.preview.rollbackCanvasPatch", previewCatch);
+  const cssRefresh = service.indexOf("source.notifyCssSourceChanged()", localStart);
 
   assert.ok(localStart >= 0 && syncStart > localStart);
   assert.ok(cssRefresh > localStart && cssRefresh < syncStart);
@@ -199,12 +199,12 @@ test("proiecția canonică UI a Undo/Redo nu depinde de succesul Preview", () =>
 });
 
 test("Undo/Redo aplică patch-ul înaintea reconcilierii canonice și nu rezervă frontend-ul", () => {
-  const route = readFileSync(resolve(process.cwd(), "src/routes/+page.svelte"), "utf8");
-  const start = route.indexOf("async function runKernelUndoRedo");
-  const end = route.indexOf("function kernelUndoRedoContextIsCurrent", start);
-  const operation = route.slice(start, end);
-  const patch = operation.indexOf("await app.applyCanvasPatchToPreview");
-  const settle = operation.indexOf("void settleKernelUndoRedoCanonicalProjection");
+  const service = readFileSync(resolve(process.cwd(), "src/lib/versioning/workspace-history-service.svelte.ts"), "utf8");
+  const start = service.indexOf("private async runKernel");
+  const end = service.indexOf("private contextIsCurrent", start);
+  const operation = service.slice(start, end);
+  const patch = operation.indexOf("await this.dependencies.preview.applyCanvasPatch");
+  const settle = operation.indexOf("void this.settleCanonicalProjection");
   assert.ok(start >= 0 && end > start);
   assert.ok(patch >= 0 && settle > patch);
   assert.doesNotMatch(operation, /beginKernelUndoRedoFrontendLease|drainPreviewStructuralLanes/);
@@ -224,7 +224,7 @@ test("mutarea semantică finalizează editarea HTML și comite direct prin autor
   const capture = operation.indexOf("captureEditorMoveNodeAnchor");
   const rebase = operation.indexOf("resolveEditorMoveNodeAnchor");
   const commit = operation.indexOf("await commitEditorMove");
-  const projection = operation.indexOf("await projectCommittedEditorMoveMutation");
+  const projection = operation.indexOf("await host.projectCommittedMove");
 
   assert.ok(start >= 0 && end > start);
   assert.ok(capture >= 0 && capture < flush);
@@ -276,9 +276,9 @@ test("receipt-ul Workbench este validat și proiectat înaintea topologiei", () 
     withWorkbench,
   );
 
-  const route = readFileSync(resolve(process.cwd(), "src/routes/+page.svelte"), "utf8");
-  const assignment = route.indexOf("app.workbenchSnapshot = receipt.workbench.snapshot");
-  const topology = route.indexOf("await reconcileProjectWorkspaceTopologyAfterHistory");
+  const service = readFileSync(resolve(process.cwd(), "src/lib/versioning/workspace-history-service.svelte.ts"), "utf8");
+  const assignment = service.indexOf("this.dependencies.workbench.snapshot = receipt.workbench.snapshot");
+  const topology = service.indexOf("await reconcileProjectWorkspaceTopologyAfterHistory");
   assert.ok(assignment >= 0 && topology > assignment);
 });
 
@@ -301,7 +301,7 @@ test("snapshot-ul și lanțul reviziilor Undo/Redo sunt validate independent", (
 
 test("versiunea frontend a comenzii este identică versiunii publicate de Rust", () => {
   const rust = readFileSync(
-    resolve(process.cwd(), "src-tauri/src/commands/project.rs"),
+    resolve(process.cwd(), "src-tauri/src/commands/project/contracts.rs"),
     "utf8",
   );
   const match = rust.match(

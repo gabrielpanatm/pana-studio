@@ -3,11 +3,8 @@ import { afterEach, beforeEach, test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import {
   flushFileBufferDraftSync,
-  fileBufferDraftSyncSnapshot,
   queueFileBufferDraftChangeSetForPath,
-  queueFileBufferDraftClear,
   queueFileBufferDraftFlushSnapshotForPath,
-  queueFileBufferDraftSyncForPath,
   queueFileBufferDraftTextTransitionForPath,
   reanchorFileBufferDraftSyncCursor,
   rebaseFileBufferDraftSyncProjection,
@@ -207,7 +204,6 @@ test("rapid continuous Markdown updates preserve the oldest pending base while I
   assert.equal(serverRevision, 3);
   assert.equal(applyCount, 2);
   assert.equal(fullDraftCount, 0);
-  assert.equal(fileBufferDraftSyncSnapshot().failureCount, 0);
 });
 
 test("a Markdown flush snapshot extends the last queued frontend state through CAS", async () => {
@@ -257,7 +253,6 @@ test("a Markdown flush snapshot extends the last queued frontend state through C
   assert.equal(serverText, finalText);
   assert.equal(serverRevision, 3);
   assert.equal(applyCount, 2);
-  assert.equal(fileBufferDraftSyncSnapshot().failureCount, 0);
 });
 
 test("a discontinuous frontend transition stays blocked after an older in-flight task succeeds", async () => {
@@ -307,7 +302,6 @@ test("a discontinuous frontend transition stays blocked after an older in-flight
   assert.equal(serverText, firstText);
   assert.equal(serverRevision, 2);
   assert.equal(applyCount, 1);
-  assert.equal(fileBufferDraftSyncSnapshot().failureCount, 1);
 });
 
 test("an invalid change-set fails closed without retry or full-draft replacement", async () => {
@@ -351,160 +345,6 @@ test("an invalid change-set fails closed without retry or full-draft replacement
   assert.equal(fullDraftCount, 0);
 });
 
-test("a full-draft CAS cannot overwrite a mutation committed after its read", async () => {
-  const beforeText = "alpha";
-  const afterText = "alpha restored";
-  let serverText = beforeText;
-  let serverRevision = 1;
-  let readCount = 0;
-  let setCount = 0;
-
-  mockIPC((command, payload) => {
-    if (command === "read_file_buffer_text") {
-      readCount += 1;
-      return commandReceipt(textSnapshot(serverText, serverRevision));
-    }
-    if (command === "set_file_buffer_draft") {
-      setCount += 1;
-      assert.deepEqual(payload.expectation, {
-        expectedRevision: 1,
-        expectedHash: hashText(beforeText),
-      });
-      serverText = "concurrent authority";
-      serverRevision = 2;
-      throw new Error(
-        `[file_buffer_draft_cas_conflict] expected ${payload.expectation.expectedRevision}/`
-          + `${payload.expectation.expectedHash}, current ${serverRevision}/${hashText(serverText)}`,
-      );
-    }
-    throw new Error(`Comandă IPC neașteptată: ${command}`);
-  });
-
-  queueFileBufferDraftSyncForPath(
-    relativePath,
-    beforeText,
-    afterText,
-    "full_draft_concurrency_test",
-  );
-
-  await assert.rejects(
-    flushFileBufferDraftSync(),
-    (error) => error instanceof Error
-      && error.message.includes("[file_buffer_draft_cas_conflict]"),
-  );
-  assert.equal(serverText, "concurrent authority");
-  assert.equal(serverRevision, 2);
-  assert.equal(readCount, 1);
-  assert.equal(setCount, 1);
-});
-
-test("a clear CAS cannot erase a newer draft committed after its read", async () => {
-  const observedDraft = "owned draft";
-  let serverText = observedDraft;
-  let serverRevision = 2;
-  let readCount = 0;
-  let clearCount = 0;
-
-  mockIPC((command, payload) => {
-    if (command === "read_file_buffer_text") {
-      readCount += 1;
-      return commandReceipt(textSnapshot(serverText, serverRevision));
-    }
-    if (command === "clear_file_buffer_draft") {
-      clearCount += 1;
-      assert.deepEqual(payload.expectation, {
-        expectedRevision: 2,
-        expectedHash: hashText(observedDraft),
-      });
-      serverText = "newer draft";
-      serverRevision = 3;
-      throw new Error(
-        `[file_buffer_draft_cas_conflict] expected ${payload.expectation.expectedRevision}/`
-          + `${payload.expectation.expectedHash}, current ${serverRevision}/${hashText(serverText)}`,
-      );
-    }
-    throw new Error(`Comandă IPC neașteptată: ${command}`);
-  });
-
-  queueFileBufferDraftClear(relativePath, "clear_concurrency_test");
-
-  await assert.rejects(
-    flushFileBufferDraftSync(),
-    (error) => error instanceof Error
-      && error.message.includes("[file_buffer_draft_cas_conflict]"),
-  );
-  assert.equal(serverText, "newer draft");
-  assert.equal(serverRevision, 3);
-  assert.equal(readCount, 1);
-  assert.equal(clearCount, 1);
-});
-
-test("a successful full-draft sync binds the mutation to its read receipt", async () => {
-  const beforeText = "alpha";
-  const afterText = "alpha restored";
-  let setCount = 0;
-
-  mockIPC((command, payload) => {
-    if (command === "read_file_buffer_text") {
-      return commandReceipt(textSnapshot(beforeText, 4));
-    }
-    if (command === "set_file_buffer_draft") {
-      setCount += 1;
-      assert.deepEqual(payload.expectation, {
-        expectedRevision: 4,
-        expectedHash: hashText(beforeText),
-      });
-      return commandReceipt(fileSnapshot(afterText, 5));
-    }
-    throw new Error(`Comandă IPC neașteptată: ${command}`);
-  });
-
-  queueFileBufferDraftSyncForPath(relativePath, beforeText, afterText, "full_draft_success");
-  await flushFileBufferDraftSync();
-
-  assert.equal(setCount, 1);
-  assert.equal(fileBufferDraftSyncSnapshot().failureCount, 0);
-  assert.equal(fileBufferDraftSyncSnapshot().cursorCount, 1);
-});
-
-test("a full draft accepts a Save revision advance when cursor, base and current hash agree", async () => {
-  const beforeText = "alpha";
-  const afterText = "alpha after Save";
-  let setCount = 0;
-
-  assert.equal(reanchorFileBufferDraftSyncCursor(relativePath, {
-    revision: 4,
-    hash: hashText(beforeText),
-  }), true);
-
-  mockIPC((command, payload) => {
-    if (command === "read_file_buffer_text") {
-      // Save advanced only the revision after the cursor was confirmed.
-      return commandReceipt(textSnapshot(beforeText, 5));
-    }
-    if (command === "set_file_buffer_draft") {
-      setCount += 1;
-      assert.deepEqual(payload.expectation, {
-        expectedRevision: 5,
-        expectedHash: hashText(beforeText),
-      });
-      return commandReceipt(fileSnapshot(afterText, 6));
-    }
-    throw new Error(`Comandă IPC neașteptată: ${command}`);
-  });
-
-  queueFileBufferDraftSyncForPath(
-    relativePath,
-    beforeText,
-    afterText,
-    "save_revision_reanchor_test",
-  );
-  await flushFileBufferDraftSync();
-
-  assert.equal(setCount, 1);
-  assert.equal(fileBufferDraftSyncSnapshot().failureCount, 0);
-});
-
 test("history projection rebases both the desired text and CAS cursor without a second read", async () => {
   const restoredText = "restored by history";
   const editedText = `${restoredText}!`;
@@ -540,37 +380,7 @@ test("history projection rebases both the desired text and CAS cursor without a 
 
   assert.equal(readCount, 0);
   assert.equal(applyCount, 1);
-  assert.equal(fileBufferDraftSyncSnapshot().failureCount, 0);
-
   assert.equal(rebaseFileBufferDraftSyncProjection(relativePath, null), true);
-  assert.equal(fileBufferDraftSyncSnapshot().cursorCount, 0);
-});
-
-test("a successful clear binds the mutation to its read receipt and verifies clean state", async () => {
-  const draftText = "owned draft";
-  let clearCount = 0;
-
-  mockIPC((command, payload) => {
-    if (command === "read_file_buffer_text") {
-      return commandReceipt(textSnapshot(draftText, 7));
-    }
-    if (command === "clear_file_buffer_draft") {
-      clearCount += 1;
-      assert.deepEqual(payload.expectation, {
-        expectedRevision: 7,
-        expectedHash: hashText(draftText),
-      });
-      return commandReceipt(fileSnapshot("alpha", 8, { hasDraft: false, dirty: false }));
-    }
-    throw new Error(`Comandă IPC neașteptată: ${command}`);
-  });
-
-  queueFileBufferDraftClear(relativePath, "clear_success");
-  await flushFileBufferDraftSync();
-
-  assert.equal(clearCount, 1);
-  assert.equal(fileBufferDraftSyncSnapshot().failureCount, 0);
-  assert.equal(fileBufferDraftSyncSnapshot().cursorCount, 1);
 });
 
 test("same-root reopen invalidates an in-flight continuation without contaminating session B", async () => {
@@ -616,14 +426,6 @@ test("same-root reopen invalidates an in-flight continuation without contaminati
 
   assert.equal(readCount, 1);
   assert.equal(mutationCount, 0);
-  assert.deepEqual(fileBufferDraftSyncSnapshot(), {
-    generation: fileBufferDraftSyncSnapshot().generation,
-    activeProjectRoot: projectRoot,
-    activeSessionId: sessionB,
-    pendingCount: 0,
-    failureCount: 0,
-    cursorCount: 0,
-  });
 });
 
 test("a receipt from another runtime session is refused before creating a cursor", async () => {
@@ -648,11 +450,7 @@ test("a receipt from another runtime session is refused before creating a cursor
   );
   await flushFileBufferDraftSync();
 
-  const snapshot = fileBufferDraftSyncSnapshot();
   assert.equal(applyCount, 0);
-  assert.equal(snapshot.activeSessionId, sessionA);
-  assert.equal(snapshot.failureCount, 0);
-  assert.equal(snapshot.cursorCount, 0);
 });
 
 function deferred() {

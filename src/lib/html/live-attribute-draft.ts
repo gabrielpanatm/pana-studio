@@ -1,4 +1,4 @@
-import type { EditableAttributes } from "$lib/types";
+import type { EditableAttributes } from "$lib/canvas/contracts";
 import { htmlAttributePreviewMode } from "./editor-schema";
 
 export type LiveProjectableHtmlAttributeDraft = Readonly<{

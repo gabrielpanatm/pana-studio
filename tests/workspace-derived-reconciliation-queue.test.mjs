@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { reconcileWorkspaceDerivedState } from "$lib/state/project-controller";
+import { reconcileWorkspaceDerivedState } from "$lib/state/project-derived-state-controller";
 
 if (!globalThis.window) globalThis.window = globalThis;
 
@@ -61,6 +61,7 @@ test("coada per sesiune păstrează o singură cerere pending și propagă topol
     sourceGraphProjectionStatus: "current",
     sourceGraphWorkspaceRevision: 1,
     loadScannedProjectFile: async () => {},
+    startExternalDiskMonitoring() {},
   };
 
   const first = reconcileWorkspaceDerivedState(host, options(2, true));

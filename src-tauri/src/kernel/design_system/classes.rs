@@ -400,11 +400,6 @@ mod tests {
                 asset_reference_coverage: Default::default(),
                 diagnostics: Vec::new(),
             },
-            tera_graph: crate::project_model::model::TeraGraph {
-                templates: Vec::new(),
-                nodes: Vec::new(),
-                relations: Vec::new(),
-            },
             diagnostics: Vec::new(),
         }
     }

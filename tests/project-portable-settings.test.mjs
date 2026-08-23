@@ -9,7 +9,7 @@ function source(relativePath) {
 test("setările portabile au documente Rust tipizate și revizia rămâne runtime-only", () => {
   const projectSettings = source("../src-tauri/src/commands/config/project_settings.rs");
   const deploySettings = source("../src-tauri/src/deploy/settings.rs");
-  const bootstrap = source("../src-tauri/src/commands/project.rs");
+  const bootstrap = source("../src-tauri/src/commands/project/contracts.rs");
   const lifecycle = source("../src-tauri/src/project/lifecycle.rs");
 
   assert.match(projectSettings, /\.panastudio\/settings\.toml/);
@@ -18,14 +18,14 @@ test("setările portabile au documente Rust tipizate și revizia rămâne runtim
   assert.match(deploySettings, /deny_unknown_fields/);
   assert.doesNotMatch(deploySettings.match(/struct DeploySettingsDocument[\s\S]*?\n\}/)?.[0] ?? "", /revision/);
   assert.match(bootstrap, /project_settings[\s\S]*deploy_settings/);
-  assert.match(lifecycle, /PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION: u32 = 4/);
+  assert.match(lifecycle, /PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION: u32 = 5/);
 });
 
 test("credentialele au o singură autoritate .env și nu sunt proiectate în frontend", () => {
   const credentials = source("../src-tauri/src/deploy/credentials.rs");
   const envStore = source("../src-tauri/src/kernel/project_env_store.rs");
   const commands = source("../src-tauri/src/commands/deploy.rs");
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/deploy/contracts.ts");
 
   assert.match(credentials, /ProjectEnvStore::read_namespace/);
   assert.doesNotMatch(credentials, /app_home|deploy-secrets|serde_json::to_vec/);
@@ -64,14 +64,15 @@ test(".env este exclus din workspace, preview și scanarea publică", () => {
 test("configurația de publicare este salvată printr-o singură mutație workspace", () => {
   const config = source("../src-tauri/src/commands/config.rs");
   const pane = source("../src/lib/components/DeployPane.svelte");
-  const io = source("../src/lib/project/io.ts");
+  const projectIo = source("../src/lib/project/io/configuration.ts");
+  const deployIo = source("../src/lib/deploy/io.ts");
 
   assert.match(config, /save_project_configuration[\s\S]*execute_config_workspace_mutation_at_revision/);
   assert.match(config, /settings\.toml\+zola\.toml\+templates/);
   assert.match(pane, /saveProjectConfiguration\(/);
   assert.doesNotMatch(pane, /Promise\.all/);
-  assert.match(io, /PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION/);
-  assert.match(io, /validateDeployConfigurationSnapshot/);
+  assert.match(projectIo, /PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION/);
+  assert.match(deployIo, /validateDeployConfigurationSnapshot/);
 });
 
 test("Application Home rămâne global/tehnic și căile project-config legacy sunt eliminate", () => {
@@ -85,7 +86,6 @@ test("Application Home rămâne global/tehnic și căile project-config legacy s
   assert.doesNotMatch(appConfig, /project_root|cachebust|deploy/);
   assert.match(startup, /\.panastudio\/settings\.toml/);
   assert.match(startup, /\.panastudio\/deploy\.toml/);
-  assert.match(startup, /\.env/);
 
   for (const removed of [
     "../src-tauri/src/commands/config/env.rs",

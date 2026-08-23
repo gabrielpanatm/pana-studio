@@ -337,7 +337,7 @@ pub fn load_text_file(
         language,
         role,
         baseline: snapshot.baseline,
-        baseline_text: snapshot.text,
+        baseline_text: snapshot.text.into(),
         draft: None,
         revision: 1,
     })

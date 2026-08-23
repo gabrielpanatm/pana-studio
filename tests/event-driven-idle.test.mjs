@@ -8,15 +8,15 @@ function source(relativePath) {
 
 test("coordonarea AI este publicată prin evenimente și expiră la deadline în Rust", () => {
   const frontend = source("../src/lib/state/ai-coordination-controller.ts");
-  const lifecycle = source("../src/lib/state/app-lifecycle-controller.ts");
+  const state = source("../src/lib/ai/coordination-state.svelte.ts");
   const backend = source("../src-tauri/src/commands/ai_coordination.rs");
 
   assert.match(frontend, /subscribeAiCoordinationChanges/);
   assert.match(frontend, /startAiCoordinationEvents/);
   assert.doesNotMatch(frontend, /AI_COORDINATION_POLL_MS/);
   assert.doesNotMatch(frontend, /setTimeout/);
-  assert.match(lifecycle, /startAiCoordinationEvents\(app\)/);
-  assert.match(lifecycle, /stopAiCoordinationEvents\(app\)/);
+  assert.match(state, /startAiCoordinationEvents\(this\.host\)/);
+  assert.match(state, /stopAiCoordinationEvents\(this\.host\)/);
 
   assert.match(backend, /pana-ai-coordination-changed/);
   assert.match(backend, /schedule_ai_coordination_deadline/);
@@ -25,10 +25,13 @@ test("coordonarea AI este publicată prin evenimente și expiră la deadline în
 });
 
 test("monitorizarea proiectului este inotify, debounced și generation-safe", () => {
-  const frontend = source("../src/lib/state/external-disk-controller.ts");
-  const io = source("../src/lib/project/io.ts");
+  const frontend = source("../src/lib/session/external-disk/monitor.ts");
+  const io = source("../src/lib/project/io/external-disk.ts");
   const watcher = source("../src-tauri/src/project/watcher.rs");
-  const command = source("../src-tauri/src/commands/project.rs");
+  const command = [
+    source("../src-tauri/src/commands/project/contracts.rs"),
+    source("../src-tauri/src/commands/project/disk_watch.rs"),
+  ].join("\n");
 
   assert.match(frontend, /subscribeProjectDiskChanges/);
   assert.match(frontend, /FULL_MANIFEST_AUDIT_INTERVAL\s*=\s*5\s*\*\s*60_000/);
@@ -44,8 +47,10 @@ test("monitorizarea proiectului este inotify, debounced și generation-safe", ()
   assert.doesNotMatch(watcher, /thread::sleep/);
   assert.match(
     command,
-    /ProjectDiskWatchStopRequest[\s\S]*expected_watch_generation:\s*u64[\s\S]*active\.watch_generation\(\)\s*!=\s*input\.expected_watch_generation/,
+    /ProjectDiskWatchStopRequest[\s\S]*expected_watch_generation:\s*u64/,
   );
+  assert.match(command, /disk_watch_stop_request_is_current/);
+  assert.match(command, /stop_identity_requires_exact_generation/);
   assert.match(command, /project_disk_watch_transition/);
 });
 

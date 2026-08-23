@@ -4,7 +4,6 @@ use std::{
 };
 
 use crate::zola_links::public_asset_href;
-use toml_edit::{value, DocumentMut, Item, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ZolaTemplateOrigin {
@@ -120,34 +119,6 @@ pub fn active_theme_from_source(source: &str) -> Option<String> {
     }
 
     None
-}
-
-pub fn set_active_theme_in_source(source: &str, theme_id: &str) -> Result<String, String> {
-    if !is_safe_theme_directory_name(theme_id) {
-        return Err(format!(
-            "Configurația Zola a refuzat ID-ul de temă nesigur `{theme_id}`."
-        ));
-    }
-    let mut document = source
-        .parse::<DocumentMut>()
-        .map_err(|error| format!("Configurația Zola nu este TOML valid: {error}."))?;
-    match document.get_mut("theme") {
-        Some(Item::Value(Value::String(current))) => {
-            let decor = current.decor().clone();
-            let mut replacement = toml_edit::Formatted::new(theme_id.to_string());
-            *replacement.decor_mut() = decor;
-            *current = replacement;
-        }
-        Some(_) => {
-            return Err(
-                "Cheia top-level `theme` există, dar nu este un string Zola valid.".to_string(),
-            );
-        }
-        None => {
-            document["theme"] = value(theme_id);
-        }
-    }
-    Ok(document.to_string())
 }
 
 pub fn is_template_relative_path(relative_path: &str) -> bool {

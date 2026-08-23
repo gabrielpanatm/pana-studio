@@ -27,7 +27,7 @@
     FileExplorerOperationPlan,
     FileExplorerOperationRequest,
     FileExplorerSnapshot,
-  } from "$lib/types";
+  } from "$lib/project/file-explorer-contract";
   import { onDestroy, onMount } from "svelte";
   import { listenForExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
   import {
@@ -35,10 +35,15 @@
     projectFileExplorerRows,
     type FileExplorerViewRow,
   } from "$lib/project/file-explorer-view";
+  import {
+    projectFileExplorerScrollTopForIndex,
+    projectFileExplorerVirtualWindow,
+  } from "$lib/project/file-explorer-virtualization";
 
   export let scannedProject = false;
   export let projectRoot = "";
   export let runtimeSessionId = "";
+  export let activeDocumentPath: string | null = null;
   export let snapshot: FileExplorerSnapshot | null = null;
   export let loading = false;
   export let error = "";
@@ -53,6 +58,8 @@
   export let collapsedDirs = new Set<string>();
   export let knownDirPaths = new Set<string>();
   export let revealedEntryKey = "";
+  const fileRowHeight = 25;
+  const fileTreeOverscan = 10;
   type ExplorerRowNode = FileExplorerViewRow;
   type PendingCreate = {
     parentPath: string;
@@ -91,8 +98,28 @@
   let renameError = "";
   let renaming = false;
   let renameInputEl: HTMLInputElement | undefined;
+  let fileTreeEl: HTMLDivElement | undefined;
+  let fileTreeScrollTop = 0;
+  let fileTreeViewportHeight = 500;
+  let revealTimer: number | null = null;
+  let scheduledRevealKey = "";
   $: syncCollapsedDirectories(snapshot?.entries ?? []);
   $: flatTree = projectFileExplorerRows(snapshot?.entries ?? [], collapsedDirs);
+  $: selectedEntryPath = activeDocumentPath
+    ?? snapshot?.selectedEntry?.relativePath
+    ?? null;
+  $: fileTreeWindow = projectFileExplorerVirtualWindow(
+    flatTree.length,
+    fileTreeScrollTop,
+    fileTreeViewportHeight,
+    fileRowHeight,
+    fileTreeOverscan,
+  );
+  $: fileTreeVisibleStart = fileTreeWindow.start;
+  $: fileTreeVisibleEnd = fileTreeWindow.end;
+  $: visibleTree = flatTree.slice(fileTreeVisibleStart, fileTreeVisibleEnd);
+  $: fileTreeTopSpacer = fileTreeWindow.topSpacerPx;
+  $: fileTreeBottomSpacer = fileTreeWindow.bottomSpacerPx;
   $: projectRootDropNode = {
     type: "dir",
     name: t("project-files-root"),
@@ -102,14 +129,14 @@
     expanded: flatTree.length > 0,
   } satisfies ExplorerRowNode;
   $: {
-    const revealPath = snapshot?.activeDocumentPath
+    const revealPath = activeDocumentPath
       ?? snapshot?.selectedEntry?.relativePath
       ?? null;
-    const nextRevealKey = revealPath && snapshot
-      ? `${snapshot.runtimeSessionId}:${revealPath}`
+    const nextRevealKey = revealPath && runtimeSessionId
+      ? `${runtimeSessionId}:${revealPath}`
       : "";
     if (revealPath && nextRevealKey !== revealedEntryKey) {
-      void revealExplorerEntry(revealPath, nextRevealKey);
+      scheduleExplorerReveal(revealPath, nextRevealKey);
     }
   }
   $: dragSourceNode = flatTree.find((item) => item.path === dragSourcePath) ?? null;
@@ -324,19 +351,64 @@
     const entries = snapshot?.entries ?? [];
     const plan = planFileExplorerEntryReveal(entries, collapsedDirs, relativePath);
     if (!plan) return;
-    collapsedDirs = plan.collapsedDirs;
+    if (!sameStringSet(plan.collapsedDirs, collapsedDirs)) {
+      collapsedDirs = plan.collapsedDirs;
+    }
     revealedEntryKey = revealKey;
     await tick();
-    document
-      .querySelector<HTMLElement>(`[data-file-entry-id="${CSS.escape(plan.entryId)}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+    const index = flatTree.findIndex((row) => row.entry?.id === plan.entryId);
+    if (index >= 0) {
+      scrollFileTreeRowIntoView(index);
+      await tick();
+    }
   }
 
-  function focusExplorerEntry(entryId: string | undefined) {
+  function scheduleExplorerReveal(relativePath: string, revealKey: string) {
+    if (typeof window === "undefined" || revealKey === scheduledRevealKey) return;
+    if (revealTimer !== null) window.clearTimeout(revealTimer);
+    scheduledRevealKey = revealKey;
+    revealTimer = window.setTimeout(() => {
+      revealTimer = null;
+      scheduledRevealKey = "";
+      const currentRevealPath = activeDocumentPath
+        ?? snapshot?.selectedEntry?.relativePath
+        ?? null;
+      if (
+        runtimeSessionId
+        && currentRevealPath === relativePath
+        && revealKey === `${runtimeSessionId}:${relativePath}`
+        && revealKey !== revealedEntryKey
+      ) void revealExplorerEntry(relativePath, revealKey);
+    }, 0);
+  }
+
+  async function focusExplorerEntry(entryId: string | undefined) {
     if (!entryId) return;
-    document
-      .querySelector<HTMLElement>(`[data-file-entry-id="${CSS.escape(entryId)}"]`)
-      ?.focus();
+    const index = flatTree.findIndex((row) => row.entry?.id === entryId);
+    if (index >= 0) {
+      scrollFileTreeRowIntoView(index);
+      await tick();
+    }
+    fileTreeEl
+      ?.querySelector<HTMLElement>(`[data-file-entry-id="${CSS.escape(entryId)}"]`)
+      ?.focus({ preventScroll: true });
+  }
+
+  function syncFileTreeViewport() {
+    if (!fileTreeEl) return;
+    fileTreeViewportHeight = fileTreeEl.clientHeight;
+    fileTreeScrollTop = fileTreeEl.scrollTop;
+  }
+
+  function scrollFileTreeRowIntoView(index: number) {
+    if (!fileTreeEl) return;
+    fileTreeEl.scrollTop = projectFileExplorerScrollTopForIndex(
+      index,
+      fileTreeEl.scrollTop,
+      fileTreeEl.clientHeight,
+      fileRowHeight,
+    );
+    syncFileTreeViewport();
   }
 
   function handleTreeRowKeydown(node: ExplorerRowNode, event: KeyboardEvent) {
@@ -345,12 +417,12 @@
     if (index < 0) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      focusExplorerEntry(flatTree[index + 1]?.entry?.id);
+      void focusExplorerEntry(flatTree[index + 1]?.entry?.id);
       return;
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      focusExplorerEntry(flatTree[index - 1]?.entry?.id);
+      void focusExplorerEntry(flatTree[index - 1]?.entry?.id);
       return;
     }
     if (event.key === "ArrowRight" && node.type === "dir" && node.hasChildren) {
@@ -360,7 +432,7 @@
         next.delete(node.path);
         collapsedDirs = next;
       } else {
-        focusExplorerEntry(flatTree[index + 1]?.entry?.id);
+        void focusExplorerEntry(flatTree[index + 1]?.entry?.id);
       }
       return;
     }
@@ -371,7 +443,7 @@
         next.add(node.path);
         collapsedDirs = next;
       } else {
-        focusExplorerEntry(node.entry?.parentId ?? undefined);
+        void focusExplorerEntry(node.entry?.parentId ?? undefined);
       }
       return;
     }
@@ -638,8 +710,21 @@
   }
 
   onMount(() => listenForExternalReconcileInteractionBarrier(cancelDragForExternalReconcile));
+  onMount(() => {
+    if (!fileTreeEl) return;
+    const handleScroll = () => syncFileTreeViewport();
+    const resizeObserver = new ResizeObserver(syncFileTreeViewport);
+    fileTreeEl.addEventListener("scroll", handleScroll, { passive: true });
+    resizeObserver.observe(fileTreeEl);
+    syncFileTreeViewport();
+    return () => {
+      fileTreeEl?.removeEventListener("scroll", handleScroll);
+      resizeObserver.disconnect();
+    };
+  });
   onDestroy(cleanupPointerListeners);
   onDestroy(() => {
+    if (revealTimer !== null) window.clearTimeout(revealTimer);
     document.body.classList.remove("files-dragging");
   });
 </script>
@@ -695,6 +780,7 @@
     </div>
   {/if}
 
+  <div bind:this={fileTreeEl} class="file-tree-viewport">
   <div class="file-tree" role="tree">
     {#if dragActive}
       <div
@@ -739,11 +825,19 @@
       </div>
     {/if}
 
-    {#each flatTree as node (node.entry?.id ?? node.path)}
+    {#if fileTreeTopSpacer > 0}
+      <div
+        class="file-tree-spacer"
+        style="height: {fileTreeTopSpacer}px;"
+        aria-hidden="true"
+      ></div>
+    {/if}
+
+    {#each visibleTree as node, visibleIndex (node.entry?.id ?? node.path)}
       <div
         class="file-row ui-entity-selectable"
-        data-ui-selected={node.entry?.id === snapshot?.selectedEntry?.entryId ? "true" : undefined}
-        data-active-document={node.path === snapshot?.activeDocumentPath ? "true" : undefined}
+        data-ui-selected={node.path === selectedEntryPath ? "true" : undefined}
+        data-active-document={node.path === activeDocumentPath ? "true" : undefined}
         class:file-draggable={node.entry?.capabilities.moveEntry.allowed}
         class:dragging={dragSourcePath === node.path}
         class:drop-inside={isDropTarget(node.path)}
@@ -752,11 +846,13 @@
         data-file-drop-path={node.path}
         data-file-entry-id={node.entry?.id}
         role="treeitem"
-        tabindex={node.entry?.id === snapshot?.selectedEntry?.entryId
-          || (!snapshot?.selectedEntry && node === flatTree[0]) ? 0 : -1}
+        tabindex={node.path === selectedEntryPath
+          || (!selectedEntryPath && node === flatTree[0]) ? 0 : -1}
         aria-level={node.depth + 1}
-        aria-selected={node.entry?.id === snapshot?.selectedEntry?.entryId}
-        aria-current={node.path === snapshot?.activeDocumentPath ? "page" : undefined}
+        aria-posinset={fileTreeVisibleStart + visibleIndex + 1}
+        aria-setsize={flatTree.length}
+        aria-selected={node.path === selectedEntryPath}
+        aria-current={node.path === activeDocumentPath ? "page" : undefined}
         aria-expanded={node.type === "dir" && node.hasChildren ? node.expanded : undefined}
         style="--depth: {node.depth};"
         onpointerdown={(event) => handlePointerDown(node, event)}
@@ -945,6 +1041,15 @@
         </div>
       {/if}
     {/each}
+
+    {#if fileTreeBottomSpacer > 0}
+      <div
+        class="file-tree-spacer"
+        style="height: {fileTreeBottomSpacer}px;"
+        aria-hidden="true"
+      ></div>
+    {/if}
+  </div>
   </div>
 
   {#if createError}
@@ -1069,6 +1174,19 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
+  }
+
+  .file-tree-viewport {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .file-tree-spacer {
+    flex: 0 0 auto;
+    width: 1px;
+    pointer-events: none;
   }
 
   .file-row {

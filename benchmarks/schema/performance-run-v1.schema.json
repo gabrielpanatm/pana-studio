@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pana.invalid/schemas/performance-run-v1.schema.json",
+  "title": "Pană Studio performance run v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "suite",
+    "startedUnixMs",
+    "completedUnixMs",
+    "status",
+    "environment",
+    "fixtures",
+    "rawSamplesPath",
+    "diagnostics"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "suite": { "enum": ["smoke", "standard", "soak"] },
+    "startedUnixMs": { "type": "integer", "minimum": 0 },
+    "completedUnixMs": { "type": ["integer", "null"], "minimum": 0 },
+    "status": { "enum": ["running", "complete", "complete_with_diagnostics", "failed"] },
+    "environment": { "type": "object" },
+    "fixtures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "profile",
+          "sourceRoot",
+          "projectRoot",
+          "sha256",
+          "fileCount",
+          "directoryCount",
+          "totalBytes",
+          "expectedOutcome",
+          "sourceManifest"
+        ]
+      }
+    },
+    "rawSamplesPath": { "type": "string", "minLength": 1 },
+    "diagnostics": { "type": "array", "items": { "type": "string" } }
+  }
+}

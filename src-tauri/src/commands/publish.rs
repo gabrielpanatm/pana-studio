@@ -334,7 +334,7 @@ fn capture_publish_authority_context(state: &AppState) -> Result<PublishAuthorit
             workspace.revision,
             workspace.accepted_disk.generation,
             workspace.is_dirty(),
-            workspace.accepted_disk.clone(),
+            workspace.accepted_disk.as_ref().clone(),
             workspace.capture_projection_snapshot()?,
             workspace.documents.diagnostics.clone(),
         )
@@ -388,7 +388,7 @@ fn publish_preflight_receipt_if_current(
     if workspace.runtime_session_id() != expected.runtime_session_id
         || workspace.session.project_root != expected.project_root
         || workspace.revision != expected.workspace_revision
-        || workspace.accepted_disk != expected.accepted_disk
+        || workspace.accepted_disk.as_ref() != &expected.accepted_disk
         || workspace.is_dirty() != expected.dirty
     {
         return Err("Publish Preflight a devenit stale în timpul analizei.".to_string());

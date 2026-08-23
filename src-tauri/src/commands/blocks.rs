@@ -1,24 +1,16 @@
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use serde::Serialize;
+use tauri::State;
 
 use crate::{
     blocks::{
         inspect_native_block_slots, inspect_native_block_source, inspect_native_icon_source,
-        native_block_registry_snapshot, plan_native_block_contract as plan_contract,
-        IconCatalogPage, IconCatalogSearchInput, IconCatalogSummary, NativeBlockContractPlan,
-        NativeBlockContractRequest, NativeBlockOptionState, NativeBlockRegistrySnapshot,
+        native_block_registry_snapshot, IconCatalogPage, IconCatalogSearchInput,
+        IconCatalogSummary, NativeBlockOptionState, NativeBlockRegistrySnapshot,
         NativeBlockSlotState, NativeIconState,
     },
-    commands::page_contracts::{
-        apply_authoritative_page_contract, PageContractAuthorityReceipt, PageContractMutationPlan,
-    },
-    commands::project::require_current_project_root,
     commands::workspace_entries::require_bound_workspace,
-    js::PageJsDraftStageReceipt,
     kernel::file_buffer_store::FileBufferRequestIdentity,
-    kernel::project_workspace::ProjectWorkspaceMutationReceipt,
     localization::LocalizedDiagnostic,
-    project::strip_zola_root_prefix,
     project_model::cache::{
         build_project_model_from_context, capture_project_model_build_context,
         publish_project_model_if_current,
@@ -29,24 +21,6 @@ use crate::{
     },
     state::AppState,
 };
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeBlockContractApplyReceipt {
-    pub plan: NativeBlockContractPlan,
-    pub workspace_mutation: Option<ProjectWorkspaceMutationReceipt>,
-    pub page_js: Option<PageJsDraftStageReceipt>,
-    pub authority: PageContractAuthorityReceipt,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeBlockContractApplyInput {
-    pub expected_project_root: String,
-    pub expected_session_id: String,
-    pub template_path: String,
-    pub ensure_block_id: Option<String>,
-}
 
 #[tauri::command]
 pub fn read_native_block_registry() -> NativeBlockRegistrySnapshot {
@@ -63,89 +37,12 @@ pub fn search_icon_catalog(input: IconCatalogSearchInput) -> Result<IconCatalogP
     crate::blocks::search_icon_catalog(input)
 }
 
-#[tauri::command]
-pub fn plan_native_block_contract(
-    mut input: NativeBlockContractRequest,
-    state: State<AppState>,
-) -> Result<NativeBlockContractPlan, String> {
-    let _ = require_current_project_root(&state)?;
-    input.template_path = strip_zola_root_prefix(&input.template_path).to_string();
-    let slot = state.project_workspace.lock().map_err(|_| {
-        "Nu am putut bloca ProjectWorkspace pentru contractul blocului.".to_string()
-    })?;
-    let workspace = slot.as_ref().ok_or_else(|| {
-        "ProjectWorkspace nu este inițializat pentru contractul blocului.".to_string()
-    })?;
-    input.cachebust_assets = Some(crate::commands::config::cachebust_assets_from_store(
-        &workspace.documents,
-    )?);
-    Ok(plan_contract(input))
-}
-
-#[tauri::command(async)]
-pub fn apply_native_block_contract(
-    input: NativeBlockContractApplyInput,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<NativeBlockContractApplyReceipt, String> {
-    apply_native_block_contract_impl(input, &app, &state)
-}
-
-pub(crate) fn apply_native_block_contract_impl(
-    input: NativeBlockContractApplyInput,
-    app: &AppHandle,
-    state: &State<AppState>,
-) -> Result<NativeBlockContractApplyReceipt, String> {
-    let expected_project_root = input.expected_project_root;
-    let expected_session_id = input.expected_session_id;
-    let template_path = strip_zola_root_prefix(&input.template_path).to_string();
-    let ensure_block_id = input.ensure_block_id;
-    let applied = apply_authoritative_page_contract(
-        app,
-        state,
-        "Apply Native Block contract",
-        &expected_project_root,
-        &expected_session_id,
-        &template_path,
-        |sources| {
-            let cachebust_assets = sources.cachebust_assets;
-            plan_contract(NativeBlockContractRequest {
-                template_path: sources.template_path.clone(),
-                template_source: sources.template_source.clone(),
-                stylesheet_source: Some(sources.stylesheet_source.clone()),
-                ensure_block_id,
-                cachebust_assets: Some(cachebust_assets),
-            })
-        },
-        |plan| PageContractMutationPlan {
-            template_changed: plan.template.changed,
-            template_contents: plan.template.contents.clone(),
-            stylesheet_changed: plan.stylesheet.changed,
-            stylesheet_contents: plan.stylesheet.contents.clone(),
-            page_js_changed: false,
-            page_js_config: crate::js::PageJsConfig::default(),
-        },
-    )?;
-
-    Ok(NativeBlockContractApplyReceipt {
-        plan: applied.plan,
-        workspace_mutation: applied.workspace_mutation,
-        page_js: applied.page_js,
-        authority: applied.authority,
-    })
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BlockRuntimeSnapshot {
-    pub schema_version: u32,
-    pub project_root: String,
-    pub runtime_session_id: String,
-    pub workspace_revision: u64,
-    pub preview_revision: Option<String>,
-    pub available: bool,
-    pub instances: Vec<crate::source_graph::model::RenderedBlockInstance>,
-    pub diagnostics: Vec<LocalizedDiagnostic>,
+#[derive(Debug)]
+struct BlockRuntimeSnapshot {
+    preview_revision: Option<String>,
+    available: bool,
+    instances: Vec<crate::source_graph::model::RenderedBlockInstance>,
+    diagnostics: Vec<LocalizedDiagnostic>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -321,7 +218,7 @@ pub fn read_ui_block_graph(
         project_root,
         runtime_session_id,
         workspace_revision,
-        model_revision: model.revision,
+        model_revision: model.revision.clone(),
         preview_revision: runtime.preview_revision,
         canvas_available: runtime.available,
         definitions: source_graph.block_graph.definitions.clone(),
@@ -342,14 +239,6 @@ fn ui_block_resolution_status(
     } else {
         BlockResolutionStatus::Resolved
     }
-}
-
-#[tauri::command]
-pub fn read_block_runtime_snapshot(
-    identity: FileBufferRequestIdentity,
-    state: State<AppState>,
-) -> Result<BlockRuntimeSnapshot, String> {
-    block_runtime_snapshot(identity, state.inner())
 }
 
 fn block_runtime_snapshot(
@@ -373,18 +262,12 @@ fn block_runtime_snapshot(
         .map_err(|_| "Motorul Preview embedded este indisponibil.".to_string())?;
     let Some(engine) = engine.as_ref() else {
         return Ok(unavailable_runtime_snapshot(
-            project_root,
-            runtime_session_id,
-            workspace_revision,
             None,
             LocalizedDiagnostic::new("blocks-runtime-not-rendered"),
         ));
     };
     let Some(generation) = engine.active_generation()? else {
         return Ok(unavailable_runtime_snapshot(
-            project_root,
-            runtime_session_id,
-            workspace_revision,
             None,
             LocalizedDiagnostic::new("blocks-runtime-no-active-generation"),
         ));
@@ -393,9 +276,6 @@ fn block_runtime_snapshot(
         || generation.workspace_revision != workspace_revision
     {
         return Ok(unavailable_runtime_snapshot(
-            project_root,
-            runtime_session_id,
-            workspace_revision,
             Some(generation.preview_revision.clone()),
             LocalizedDiagnostic::new("blocks-runtime-workspace-revision-mismatch")
                 .with_argument("canvasRevision", generation.workspace_revision)
@@ -403,10 +283,6 @@ fn block_runtime_snapshot(
         ));
     }
     Ok(BlockRuntimeSnapshot {
-        schema_version: 2,
-        project_root,
-        runtime_session_id,
-        workspace_revision,
         preview_revision: Some(generation.preview_revision.clone()),
         available: true,
         instances: generation.canvas_transaction.graph.block_instances.clone(),
@@ -425,17 +301,10 @@ fn block_runtime_snapshot(
 }
 
 fn unavailable_runtime_snapshot(
-    project_root: String,
-    runtime_session_id: String,
-    workspace_revision: u64,
     preview_revision: Option<String>,
     diagnostic: LocalizedDiagnostic,
 ) -> BlockRuntimeSnapshot {
     BlockRuntimeSnapshot {
-        schema_version: 2,
-        project_root,
-        runtime_session_id,
-        workspace_revision,
         preview_revision,
         available: false,
         instances: Vec::new(),

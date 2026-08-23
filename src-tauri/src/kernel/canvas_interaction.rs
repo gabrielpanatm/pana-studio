@@ -1,12 +1,15 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::Mutex,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     kernel::editor_navigation::{
+        editor_navigation_access_node, EditorNavigationBoundaryKind, EditorNavigationComponentKind,
         EditorNavigationEffectScope, EditorNavigationNode, EditorNavigationNodeKind,
         EditorNavigationOrigin, EditorNavigationSnapshot, EditorNavigationViewNodeKind,
         EditorSourceProvenance,
@@ -16,7 +19,7 @@ use crate::{
     source_graph::model::{SourceCapabilityReason, SourceNodeKind, SourceRange},
 };
 
-pub const CANVAS_INTERACTION_SCHEMA_VERSION: u32 = 2;
+pub const CANVAS_INTERACTION_SCHEMA_VERSION: u32 = 3;
 const MAX_AGENT_INSTANCE_ID_BYTES: usize = 128;
 const MAX_LIVE_CANVAS_AGENTS: usize = 8;
 const MAX_HIT_CANDIDATES: usize = 64;
@@ -137,14 +140,19 @@ pub struct CanvasInteractionProjection {
     identity: CanvasProjectionIdentity,
     model_revision: String,
     route: String,
-    nodes: Vec<EditorNavigationNode>,
+    snapshot: Arc<EditorNavigationSnapshot>,
     render_nodes: HashMap<String, usize>,
     boundary_nodes: HashMap<String, usize>,
     editor_nodes: HashMap<String, usize>,
 }
 
 impl CanvasInteractionProjection {
+    #[cfg(test)]
     pub fn from_snapshot(snapshot: &EditorNavigationSnapshot) -> Self {
+        Self::from_shared_snapshot(Arc::new(snapshot.clone()))
+    }
+
+    fn from_shared_snapshot(snapshot: Arc<EditorNavigationSnapshot>) -> Self {
         let mut render_nodes = HashMap::new();
         let mut boundary_nodes = HashMap::new();
         let mut editor_nodes = HashMap::new();
@@ -167,7 +175,7 @@ impl CanvasInteractionProjection {
             identity: snapshot.identity.clone(),
             model_revision: snapshot.model_revision.clone(),
             route: snapshot.route.clone(),
-            nodes: snapshot.nodes.clone(),
+            snapshot,
             render_nodes,
             boundary_nodes,
             editor_nodes,
@@ -175,7 +183,7 @@ impl CanvasInteractionProjection {
     }
 
     fn node(&self, index: usize) -> Option<&EditorNavigationNode> {
-        self.nodes.get(index)
+        self.snapshot.nodes.get(index)
     }
 }
 
@@ -203,8 +211,7 @@ pub enum CanvasInteractionStatus {
 #[serde(rename_all = "camelCase")]
 pub enum CanvasInteractionTargetKind {
     HtmlElement,
-    TeraBoundary,
-    MarkdownBoundary,
+    Boundary,
     RuntimeElement,
 }
 
@@ -236,6 +243,8 @@ pub struct CanvasInteractionActions {
 pub struct CanvasInteractionTarget {
     pub editor_node_id: String,
     pub kind: CanvasInteractionTargetKind,
+    pub boundary_kind: Option<EditorNavigationBoundaryKind>,
+    pub component_kind: Option<EditorNavigationComponentKind>,
     pub label: String,
     pub tag: Option<String>,
     pub source_node_id: Option<String>,
@@ -378,7 +387,7 @@ fn active_document_authoring_surfaces(
         });
     let mut candidates = Vec::new();
     for node in snapshot.nodes.iter().filter(|node| {
-        node.kind == EditorNavigationNodeKind::TeraBoundary
+        node.kind == EditorNavigationNodeKind::Boundary
             && node
                 .source_kind
                 .as_ref()
@@ -462,12 +471,26 @@ fn normalized_canvas_document_path(path: &str) -> String {
 
 struct LiveCanvasAgent {
     identity: CanvasInteractionIdentity,
-    snapshot: EditorNavigationSnapshot,
-    model: Option<ProjectModel>,
+    snapshot: Arc<EditorNavigationSnapshot>,
+    model: Option<Arc<ProjectModel>>,
     projection: CanvasInteractionProjection,
     active_document_path: Option<String>,
     last_accepted_ordered_sequence: u64,
     last_accepted_hover_sequence: u64,
+    bound_at: Instant,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CanvasInteractionRetentionDiagnostics {
+    pub live_agents: usize,
+    pub snapshot_allocations: usize,
+    pub snapshot_nodes: usize,
+    pub projection_node_copies: usize,
+    pub model_allocations: usize,
+    pub model_files: usize,
+    pub model_source_bytes: usize,
+    pub oldest_agent_age_ms: u64,
+    pub process_pss_kib: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -480,14 +503,14 @@ pub struct CanvasInteractionScopeContext {
 
 #[derive(Clone)]
 pub struct CanvasInteractionSelectionContext {
-    pub snapshot: EditorNavigationSnapshot,
+    pub snapshot: Arc<EditorNavigationSnapshot>,
     pub active_document_path: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct CanvasInteractionPlanningContext {
-    pub snapshot: EditorNavigationSnapshot,
-    pub model: ProjectModel,
+    pub snapshot: Arc<EditorNavigationSnapshot>,
+    pub model: Arc<ProjectModel>,
     pub active_document_path: Option<String>,
 }
 
@@ -502,13 +525,19 @@ impl CanvasInteractionRuntime {
     /// Repetarea aceluiași bind este idempotentă și nu resetează secvența.
     /// Pentru aceeași suprafață, un document nou trebuie să aibă un epoch
     /// strict mai mare decât documentul pe care îl înlocuiește.
+    #[cfg(test)]
     pub fn bind_agent(
         &self,
         snapshot: &EditorNavigationSnapshot,
         active_document_path: Option<&str>,
         identity: CanvasInteractionIdentity,
     ) -> Result<CanvasInteractionBindingReceipt, String> {
-        self.bind_agent_inner(snapshot, None, active_document_path, identity)
+        self.bind_agent_inner(
+            Arc::new(snapshot.clone()),
+            None,
+            active_document_path,
+            identity,
+        )
     }
 
     /// Leagă agentul de snapshot-ul și modelul deja validate de Rust.
@@ -518,23 +547,18 @@ impl CanvasInteractionRuntime {
     /// secțiune atomică, fără o nouă captură ProjectWorkspace.
     pub fn bind_agent_with_model(
         &self,
-        snapshot: &EditorNavigationSnapshot,
-        model: &ProjectModel,
+        snapshot: Arc<EditorNavigationSnapshot>,
+        model: Arc<ProjectModel>,
         active_document_path: Option<&str>,
         identity: CanvasInteractionIdentity,
     ) -> Result<CanvasInteractionBindingReceipt, String> {
-        self.bind_agent_inner(
-            snapshot,
-            Some(model.clone()),
-            active_document_path,
-            identity,
-        )
+        self.bind_agent_inner(snapshot, Some(model), active_document_path, identity)
     }
 
     fn bind_agent_inner(
         &self,
-        snapshot: &EditorNavigationSnapshot,
-        model: Option<ProjectModel>,
+        snapshot: Arc<EditorNavigationSnapshot>,
+        model: Option<Arc<ProjectModel>>,
         active_document_path: Option<&str>,
         identity: CanvasInteractionIdentity,
     ) -> Result<CanvasInteractionBindingReceipt, String> {
@@ -545,6 +569,16 @@ impl CanvasInteractionRuntime {
         }
         if let Some((_, message)) = validate_binding(&identity) {
             return Err(message.to_string());
+        }
+        if let Some(model) = model.as_ref() {
+            if model.project_root != Path::new(&identity.canvas.project_root)
+                || model.revision != snapshot.model_revision
+            {
+                return Err(
+                    "CanvasAgent a refuzat un ProjectModel din alt root sau altă revizie."
+                        .to_string(),
+                );
+            }
         }
 
         let mut agents = self
@@ -566,6 +600,27 @@ impl CanvasInteractionRuntime {
             });
         }
 
+        if let Some(model) = model.as_ref() {
+            let shared_outside_authority = agents.iter().any(|agent| {
+                agent
+                    .model
+                    .as_ref()
+                    .is_some_and(|existing| Arc::ptr_eq(existing, model))
+                    && (agent.identity.canvas.project_root != identity.canvas.project_root
+                        || agent.identity.canvas.runtime_session_id
+                            != identity.canvas.runtime_session_id
+                        || agent.identity.canvas.workspace_revision
+                            != identity.canvas.workspace_revision
+                        || agent.snapshot.model_revision != snapshot.model_revision)
+            });
+            if shared_outside_authority {
+                return Err(
+                    "CanvasAgent a refuzat partajarea ProjectModel în afara autorității session/revision."
+                        .to_string(),
+                );
+            }
+        }
+
         if let Some(existing) = agents
             .iter()
             .find(|agent| same_canvas_surface(&agent.identity, &identity))
@@ -585,21 +640,25 @@ impl CanvasInteractionRuntime {
         if agents.len() >= MAX_LIVE_CANVAS_AGENTS {
             agents.remove(0);
         }
+        let projection = CanvasInteractionProjection::from_shared_snapshot(Arc::clone(&snapshot));
+        let authoring_surfaces =
+            active_document_authoring_surfaces(&snapshot, active_document_path);
         agents.push(LiveCanvasAgent {
             identity: identity.clone(),
-            snapshot: snapshot.clone(),
+            snapshot,
             model,
-            projection: CanvasInteractionProjection::from_snapshot(snapshot),
+            projection,
             active_document_path: active_document_path.map(str::to_string),
             last_accepted_ordered_sequence: 0,
             last_accepted_hover_sequence: 0,
+            bound_at: Instant::now(),
         });
         Ok(CanvasInteractionBindingReceipt {
             schema_version: CANVAS_INTERACTION_SCHEMA_VERSION,
             identity,
             last_accepted_sequence: 0,
             active_document_path: active_document_path.map(str::to_string),
-            authoring_surfaces: active_document_authoring_surfaces(snapshot, active_document_path),
+            authoring_surfaces,
         })
     }
 
@@ -861,6 +920,65 @@ impl CanvasInteractionRuntime {
             agents.clear();
         }
     }
+
+    pub fn retention_diagnostics(&self) -> Result<CanvasInteractionRetentionDiagnostics, String> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|_| "Registrul CanvasAgent este indisponibil.".to_string())?;
+        let mut snapshot_allocations = HashSet::new();
+        let mut model_allocations = HashSet::new();
+        let mut snapshot_nodes = 0;
+        let mut model_files = 0;
+        let mut model_source_bytes = 0;
+        for agent in agents.iter() {
+            if snapshot_allocations.insert(Arc::as_ptr(&agent.snapshot)) {
+                snapshot_nodes += agent.snapshot.nodes.len();
+            }
+            let Some(model) = agent.model.as_ref() else {
+                continue;
+            };
+            if model_allocations.insert(Arc::as_ptr(model)) {
+                model_files += model.files.len();
+                model_source_bytes += model
+                    .files
+                    .iter()
+                    .map(|file| file.contents.len())
+                    .sum::<usize>();
+            }
+        }
+        Ok(CanvasInteractionRetentionDiagnostics {
+            live_agents: agents.len(),
+            snapshot_allocations: snapshot_allocations.len(),
+            snapshot_nodes,
+            projection_node_copies: 0,
+            model_allocations: model_allocations.len(),
+            model_files,
+            model_source_bytes,
+            oldest_agent_age_ms: agents
+                .iter()
+                .map(|agent| agent.bound_at.elapsed().as_millis().min(u64::MAX as u128) as u64)
+                .max()
+                .unwrap_or(0),
+            process_pss_kib: process_pss_kib(),
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn process_pss_kib() -> Option<u64> {
+    std::fs::read_to_string("/proc/self/smaps_rollup")
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            let value = line.strip_prefix("Pss:")?.trim();
+            value.split_whitespace().next()?.parse().ok()
+        })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_pss_kib() -> Option<u64> {
+    None
 }
 
 /// Rezolvă un gest fizic într-o proiecție semantică fără I/O și fără stare
@@ -1022,7 +1140,12 @@ pub fn resolve_canvas_interaction(
             });
             continue;
         };
-        let node = closed_boundary_or_node(&context, node);
+        let node = editor_navigation_access_node(
+            &context.projection.snapshot,
+            &node.id,
+            context.authorized_edit_scope_id,
+        )
+        .unwrap_or(node);
         if !node.capabilities.can_select {
             diagnostics.push(CanvasInteractionDiagnostic {
                 code: CanvasInteractionDiagnosticCode::CandidateNotSelectable,
@@ -1108,30 +1231,6 @@ fn node_for_candidate<'a>(
     context.projection.node(*index)
 }
 
-fn closed_boundary_or_node<'a>(
-    context: &'a CanvasInteractionContext<'_>,
-    node: &'a EditorNavigationNode,
-) -> &'a EditorNavigationNode {
-    let Some(required_scope_id) = node.capabilities.requires_edit_scope_id.as_deref() else {
-        return node;
-    };
-    if context.authorized_edit_scope_id == Some(required_scope_id) {
-        return node;
-    }
-    context
-        .projection
-        .editor_nodes
-        .get(required_scope_id)
-        .and_then(|index| context.projection.node(*index))
-        .filter(|candidate| {
-            matches!(
-                candidate.kind,
-                EditorNavigationNodeKind::TeraBoundary | EditorNavigationNodeKind::MarkdownBoundary
-            )
-        })
-        .unwrap_or(node)
-}
-
 fn project_target(
     context: &CanvasInteractionContext<'_>,
     node: &EditorNavigationNode,
@@ -1163,12 +1262,11 @@ fn project_target(
         editor_node_id: node.id.clone(),
         kind: match node.kind {
             EditorNavigationNodeKind::HtmlElement => CanvasInteractionTargetKind::HtmlElement,
-            EditorNavigationNodeKind::TeraBoundary => CanvasInteractionTargetKind::TeraBoundary,
-            EditorNavigationNodeKind::MarkdownBoundary => {
-                CanvasInteractionTargetKind::MarkdownBoundary
-            }
+            EditorNavigationNodeKind::Boundary => CanvasInteractionTargetKind::Boundary,
             EditorNavigationNodeKind::RuntimeElement => CanvasInteractionTargetKind::RuntimeElement,
         },
+        boundary_kind: boundary.map(|item| item.kind),
+        component_kind: boundary.and_then(|item| item.component_kind),
         label: node.label.clone(),
         tag: node.tag.clone(),
         source_node_id: node.source_node_id.clone(),
@@ -1249,7 +1347,8 @@ mod tests {
     use crate::{
         kernel::editor_navigation::{
             build_editor_navigation_snapshot, editor_navigation_snapshot_for_test,
-            EditorNavigationBoundary, EditorNavigationCapabilities, EditorNavigationSurface,
+            EditorNavigationBoundary, EditorNavigationCapabilities, EditorNavigationRuntime,
+            EditorNavigationSurface,
         },
         kernel::selection_coordinator::{SelectionCoordinatorRuntime, SelectionIntent},
         preview::CanvasGraph,
@@ -1333,7 +1432,7 @@ mod tests {
             parent_id: None,
             children: vec!["editor_render:render-1".to_string()],
             order: 0,
-            kind: EditorNavigationNodeKind::TeraBoundary,
+            kind: EditorNavigationNodeKind::Boundary,
             label: "for card in cards".to_string(),
             tag: None,
             source_node_id: Some("source-for-1".to_string()),
@@ -1358,6 +1457,8 @@ mod tests {
             binding_key: Some("card".to_string()),
             binding_path: Some("cards[0]".to_string()),
             boundary: Some(EditorNavigationBoundary {
+                kind: EditorNavigationBoundaryKind::Component,
+                component_kind: Some(EditorNavigationComponentKind::Repeat),
                 boundary_instance_id: "boundary-1".to_string(),
                 source_node_id: "source-for-1".to_string(),
                 root_render_instance_ids: vec!["render-1".to_string()],
@@ -1463,10 +1564,12 @@ mod tests {
         let mut boundary = boundary_node();
         boundary.id = markdown_scope.to_string();
         boundary.children = vec!["editor_render:markdown-render".to_string()];
-        boundary.kind = EditorNavigationNodeKind::MarkdownBoundary;
+        boundary.kind = EditorNavigationNodeKind::Boundary;
         boundary.label = "Conținut Markdown".to_string();
         boundary.file = Some("content/_index.md".to_string());
         boundary.boundary.as_mut().unwrap().boundary_instance_id = "markdown-1".to_string();
+        boundary.boundary.as_mut().unwrap().kind = EditorNavigationBoundaryKind::Markdown;
+        boundary.boundary.as_mut().unwrap().component_kind = None;
         boundary.boundary.as_mut().unwrap().root_render_instance_ids =
             vec!["markdown-render".to_string()];
         boundary.capabilities = EditorNavigationCapabilities {
@@ -1590,7 +1693,11 @@ mod tests {
         let receipt = resolve(&snapshot, &request("render-1"), None, 8);
 
         let target = receipt.target.expect("target");
-        assert_eq!(target.kind, CanvasInteractionTargetKind::TeraBoundary);
+        assert_eq!(target.kind, CanvasInteractionTargetKind::Boundary);
+        assert_eq!(
+            target.boundary_kind,
+            Some(EditorNavigationBoundaryKind::Component)
+        );
         assert_eq!(target.editor_node_id, "editor_boundary:boundary-1");
         assert_eq!(target.scope_state, CanvasInteractionScopeState::Locked);
         assert_eq!(
@@ -1946,7 +2053,11 @@ mod tests {
         let receipt = resolve(&snapshot, &request("markdown-render"), None, 8);
 
         let target = receipt.target.expect("markdown target");
-        assert_eq!(target.kind, CanvasInteractionTargetKind::MarkdownBoundary);
+        assert_eq!(target.kind, CanvasInteractionTargetKind::Boundary);
+        assert_eq!(
+            target.boundary_kind,
+            Some(EditorNavigationBoundaryKind::Markdown)
+        );
         assert_eq!(target.editor_node_id, "editor_boundary:markdown-1");
         assert_eq!(target.file.as_deref(), Some("content/_index.md"));
         assert!(target.actions.can_select);
@@ -2170,6 +2281,313 @@ mod tests {
                 same_epoch_new_canvas,
             )
             .is_err());
+    }
+
+    #[test]
+    #[ignore = "probă manuală PSS pentru retenția Canvas"]
+    fn canvas_retention_pss_probe() {
+        let root = test_project_root("retention-probe");
+        let mut fixture = ProjectModelTestFixture::standard_zola(
+            root,
+            "<main data-pana-render-instance-id=\"render-root\"></main>\n",
+        )
+        .unwrap();
+        let payload = "x".repeat(128 * 1024);
+        for index in 0..24 {
+            fixture.source(format!("static/probe-{index}.txt"), payload.clone());
+        }
+        let model = Arc::new(fixture.build_model().expect("probe model"));
+        let mut snapshots = Vec::new();
+        for index in 0..MAX_LIVE_CANVAS_AGENTS {
+            let route = format!("/retention-probe/{index}/");
+            let mut snapshot = snapshot();
+            snapshot.route = route.clone();
+            snapshot.model_revision = model.revision.clone();
+            snapshot.identity.project_root = model.project_root.to_string_lossy().into_owned();
+            let mut identity = interaction_identity();
+            identity.route = route;
+            identity.canvas = snapshot.identity.clone();
+            identity.document_epoch += index as u64;
+            identity.agent_instance_id = format!("retention-agent-{index}");
+            snapshots.push((Arc::new(snapshot), identity));
+        }
+
+        let runtime = CanvasInteractionRuntime::default();
+        let before_pss_kib = process_pss_kib();
+        let first_bind_started = Instant::now();
+        runtime
+            .bind_agent_with_model(
+                Arc::clone(&snapshots[0].0),
+                Arc::clone(&model),
+                Some("templates/index.html"),
+                snapshots[0].1.clone(),
+            )
+            .expect("first retention bind");
+        let first_bind_us = first_bind_started.elapsed().as_micros();
+        let one_agent = runtime
+            .retention_diagnostics()
+            .expect("one-agent diagnostics");
+        let remaining_bind_started = Instant::now();
+        for (snapshot, identity) in snapshots.iter().skip(1) {
+            runtime
+                .bind_agent_with_model(
+                    Arc::clone(snapshot),
+                    Arc::clone(&model),
+                    Some("templates/index.html"),
+                    identity.clone(),
+                )
+                .expect("retention bind");
+        }
+        let remaining_bind_us = remaining_bind_started.elapsed().as_micros();
+        let diagnostics = runtime.retention_diagnostics().expect("diagnostics");
+        let pss_delta_kib = before_pss_kib
+            .zip(diagnostics.process_pss_kib)
+            .map(|(before, after)| after.saturating_sub(before));
+        eprintln!(
+            "CANVAS_RETENTION_PSS before_kib={before_pss_kib:?} after_kib={:?} delta_kib={pss_delta_kib:?} first_bind_us={first_bind_us} remaining_seven_bind_us={remaining_bind_us} one_agent={one_agent:?} diagnostics={diagnostics:?}",
+            diagnostics.process_pss_kib,
+        );
+        assert_eq!(diagnostics.live_agents, MAX_LIVE_CANVAS_AGENTS);
+        assert!(diagnostics.oldest_agent_age_ms < 60_000);
+    }
+
+    #[test]
+    fn runtime_shares_retained_authority_only_within_session_and_revision() {
+        let root = test_project_root("retention-isolation");
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root,
+            "<main data-pana-render-instance-id=\"render-root\"></main>\n",
+        )
+        .unwrap();
+        let model = Arc::new(fixture.build_model().expect("retained model"));
+        let runtime = CanvasInteractionRuntime::default();
+
+        let mut first_snapshot = snapshot();
+        first_snapshot.route = "/retention/a/".to_string();
+        first_snapshot.model_revision = model.revision.clone();
+        first_snapshot.identity.project_root = model.project_root.to_string_lossy().into_owned();
+        let mut first_identity = interaction_identity();
+        first_identity.route = first_snapshot.route.clone();
+        first_identity.canvas = first_snapshot.identity.clone();
+        let first_snapshot = Arc::new(first_snapshot);
+        runtime
+            .bind_agent_with_model(
+                Arc::clone(&first_snapshot),
+                Arc::clone(&model),
+                Some("templates/index.html"),
+                first_identity.clone(),
+            )
+            .expect("first bind");
+
+        let mut second_snapshot = first_snapshot.as_ref().clone();
+        second_snapshot.route = "/retention/b/".to_string();
+        let mut second_identity = first_identity.clone();
+        second_identity.route = second_snapshot.route.clone();
+        second_identity.agent_instance_id = "retention-agent-b".to_string();
+        second_identity.document_epoch += 1;
+        runtime
+            .bind_agent_with_model(
+                Arc::new(second_snapshot),
+                Arc::clone(&model),
+                Some("templates/index.html"),
+                second_identity,
+            )
+            .expect("same-session bind");
+
+        let selection = runtime
+            .selection_context(&first_identity.canvas, &first_identity.route)
+            .expect("selection context")
+            .expect("active selection context");
+        let planning = runtime
+            .planning_context(&first_identity.canvas, &first_identity.route)
+            .expect("planning context");
+        assert!(Arc::ptr_eq(&selection.snapshot, &planning.snapshot));
+        assert!(Arc::ptr_eq(&selection.snapshot, &first_snapshot));
+        assert!(Arc::ptr_eq(&planning.model, &model));
+        assert_eq!(
+            runtime.retention_diagnostics().unwrap().model_allocations,
+            1
+        );
+        assert_eq!(
+            runtime
+                .retention_diagnostics()
+                .unwrap()
+                .projection_node_copies,
+            0,
+        );
+
+        let mut other_session_snapshot = first_snapshot.as_ref().clone();
+        other_session_snapshot.route = "/retention/other-session/".to_string();
+        other_session_snapshot.identity.runtime_session_id = "runtime-2".to_string();
+        let mut other_session_identity = first_identity.clone();
+        other_session_identity.route = other_session_snapshot.route.clone();
+        other_session_identity.canvas = other_session_snapshot.identity.clone();
+        other_session_identity.agent_instance_id = "retention-agent-other-session".to_string();
+        let other_session_snapshot = Arc::new(other_session_snapshot);
+        assert!(runtime
+            .bind_agent_with_model(
+                Arc::clone(&other_session_snapshot),
+                Arc::clone(&model),
+                Some("templates/index.html"),
+                other_session_identity.clone(),
+            )
+            .is_err());
+        let other_session_model = Arc::new(model.as_ref().clone());
+        runtime
+            .bind_agent_with_model(
+                other_session_snapshot,
+                other_session_model,
+                Some("templates/index.html"),
+                other_session_identity,
+            )
+            .expect("isolated session bind");
+        assert_eq!(
+            runtime.retention_diagnostics().unwrap().model_allocations,
+            2
+        );
+
+        let mut next_model = model.as_ref().clone();
+        next_model.revision = format!("{}:next", model.revision);
+        let next_model = Arc::new(next_model);
+        let mut next_revision_snapshot = first_snapshot.as_ref().clone();
+        next_revision_snapshot.route = "/retention/next-revision/".to_string();
+        next_revision_snapshot.model_revision = next_model.revision.clone();
+        let mut next_revision_identity = first_identity;
+        next_revision_identity.route = next_revision_snapshot.route.clone();
+        next_revision_identity.canvas.workspace_revision += 1;
+        next_revision_identity.canvas.transaction_id = "canvas-next-revision".to_string();
+        next_revision_identity.canvas.preview_revision = "preview-next-revision".to_string();
+        next_revision_snapshot.identity = next_revision_identity.canvas.clone();
+        next_revision_identity.agent_instance_id = "retention-agent-next-revision".to_string();
+        runtime
+            .bind_agent_with_model(
+                Arc::new(next_revision_snapshot),
+                Arc::clone(&next_model),
+                Some("templates/index.html"),
+                next_revision_identity,
+            )
+            .expect("isolated revision bind");
+        assert_eq!(
+            runtime.retention_diagnostics().unwrap().model_allocations,
+            3
+        );
+        drop(selection);
+        drop(planning);
+        runtime.revoke_all();
+        assert_eq!(Arc::strong_count(&first_snapshot), 1);
+        assert_eq!(Arc::strong_count(&model), 1);
+    }
+
+    #[test]
+    fn editor_navigation_cache_and_canvas_share_the_exact_snapshot_and_model_allocations() {
+        let root = test_project_root("cache-to-canvas-sharing");
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root,
+            "<main data-pana-render-instance-id=\"render-root\"></main>\n",
+        )
+        .unwrap();
+        let model = Arc::new(fixture.build_model().unwrap());
+        let mut snapshot = snapshot();
+        snapshot.identity.project_root = model.project_root.to_string_lossy().into_owned();
+        snapshot.model_revision = model.revision.clone();
+        let snapshot = Arc::new(snapshot);
+
+        let navigation = EditorNavigationRuntime::default();
+        navigation
+            .cache_snapshot(Some("templates/index.html"), None, Arc::clone(&snapshot))
+            .unwrap();
+        let context_snapshot = navigation
+            .cached_snapshot(
+                &snapshot.identity,
+                &snapshot.route,
+                Some("templates/index.html"),
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(Arc::ptr_eq(&snapshot, &context_snapshot));
+
+        let mut identity = interaction_identity();
+        identity.canvas = snapshot.identity.clone();
+        let canvas = CanvasInteractionRuntime::default();
+        canvas
+            .bind_agent_with_model(
+                Arc::clone(&context_snapshot),
+                Arc::clone(&model),
+                Some("templates/index.html"),
+                identity.clone(),
+            )
+            .unwrap();
+        let planning = canvas
+            .planning_context(&identity.canvas, &identity.route)
+            .unwrap();
+        assert!(Arc::ptr_eq(&planning.snapshot, &snapshot));
+        assert!(Arc::ptr_eq(&planning.model, &model));
+        assert_eq!(
+            canvas.retention_diagnostics().unwrap().snapshot_allocations,
+            1
+        );
+        assert_eq!(canvas.retention_diagnostics().unwrap().model_allocations, 1);
+    }
+
+    #[test]
+    #[ignore = "probă manuală de latență pentru hot-path Canvas"]
+    fn canvas_interaction_latency_probe() {
+        const ITERATIONS: u64 = 20_000;
+        let root = test_project_root("latency-probe");
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root,
+            "<main data-pana-render-instance-id=\"render-root\"></main>\n",
+        )
+        .unwrap();
+        let model = Arc::new(fixture.build_model().expect("latency model"));
+        let mut snapshot = snapshot();
+        snapshot.model_revision = model.revision.clone();
+        snapshot.identity.project_root = model.project_root.to_string_lossy().into_owned();
+        let mut identity = interaction_identity();
+        identity.canvas = snapshot.identity.clone();
+        let bound_identity = identity.clone();
+        let runtime = CanvasInteractionRuntime::default();
+        runtime
+            .bind_agent_with_model(
+                Arc::new(snapshot),
+                Arc::clone(&model),
+                Some("templates/index.html"),
+                identity,
+            )
+            .expect("latency bind");
+
+        let mut hover = pointer_request("render-root", 1);
+        hover.identity = bound_identity.clone();
+        let hover_started = Instant::now();
+        for sequence in 1..=ITERATIONS {
+            hover.gesture_sequence = sequence;
+            let (_, projection) = runtime
+                .resolve_pointer_hover(None, &hover, |_, _, _| Ok(()))
+                .expect("hover resolve");
+            assert!(projection.is_some());
+        }
+        let hover_average_ns = hover_started.elapsed().as_nanos() / ITERATIONS as u128;
+
+        let mut drag = request("render-root");
+        drag.identity = bound_identity;
+        drag.gesture = CanvasInteractionGesture::DragOver;
+        drag.drag = Some(CanvasDragSample {
+            session_id: "latency-drag".to_string(),
+            position: Some(CanvasDragPosition::Before),
+        });
+        let drag_started = Instant::now();
+        for sequence in 1..=ITERATIONS {
+            drag.gesture_sequence = sequence;
+            let (_, projection) = runtime
+                .resolve_drag_over(None, &drag, |_, _, _, _| Ok(()))
+                .expect("drag resolve");
+            assert!(projection.is_some());
+        }
+        let drag_average_ns = drag_started.elapsed().as_nanos() / ITERATIONS as u128;
+        eprintln!(
+            "CANVAS_INTERACTION_LATENCY iterations={ITERATIONS} hover_average_ns={hover_average_ns} drag_average_ns={drag_average_ns}"
+        );
     }
 
     #[test]

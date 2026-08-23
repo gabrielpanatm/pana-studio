@@ -196,11 +196,11 @@ impl ProjectModelTestFixture {
             runtime_session_id: self.runtime_session_id.clone(),
             revision: self.revision,
             workspace_transaction_id: self.workspace_transaction_id.clone(),
-            source_texts: self.source_texts.clone(),
-            resource_bytes: self.resource_bytes.clone(),
+            source_texts: self.source_texts.clone().into(),
+            resource_bytes: self.resource_bytes.clone().into(),
             deleted_sources: self.deleted_sources.clone(),
             changed_paths: self.changed_paths.clone(),
-            accepted_disk,
+            accepted_disk: accepted_disk.into(),
         }
     }
 

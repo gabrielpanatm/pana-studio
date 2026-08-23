@@ -6,9 +6,7 @@ pub(crate) mod options;
 pub(crate) mod runtime;
 pub(crate) mod slots;
 
-pub(crate) use contract::{
-    plan_native_block_contract, NativeBlockContractPlan, NativeBlockContractRequest,
-};
+pub(crate) use contract::{plan_native_block_contract, NativeBlockContractRequest};
 pub(crate) use icons::{
     inspect_native_icon_source, read_icon_catalog, search_icon_catalog, IconCatalogPage,
     IconCatalogSearchInput, IconCatalogSummary, NativeIconMutationIntent, NativeIconState,

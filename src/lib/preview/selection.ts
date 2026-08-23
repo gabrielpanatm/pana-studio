@@ -1,11 +1,10 @@
 import { t } from "$lib/i18n/runtime.svelte";
 import type { MessageId } from "$lib/i18n/generated/catalog";
 import type {
-  DomNodeLink,
+  CanvasElementObservation,
   EditableAttributes,
   PageSection,
-  CanvasElementObservation,
-} from "$lib/types";
+} from "$lib/canvas/contracts";
 
 export type MarkdownSelectionTarget = {
   kind: "heading" | "link" | "text";
@@ -13,21 +12,8 @@ export type MarkdownSelectionTarget = {
   href?: string;
 };
 
-function normalizeText(text: string | null) {
-  const compact = text?.replace(/\s+/g, " ").trim();
-  return compact && compact.length > 0 ? compact : t("preview-selection-no-text");
-}
-
 function escapeCssIdentifier(value: string) {
   return value.replace(/[^A-Za-z0-9_-]/g, (character) => `\\${character}`);
-}
-
-function createCssSelector(tag: string, id: string, classes: string[]) {
-  if (id) return `#${escapeCssIdentifier(id)}`;
-  if (classes.length > 0) {
-    return `${tag}${classes.map((className) => `.${escapeCssIdentifier(className)}`).join("")}`;
-  }
-  return tag;
 }
 
 const SEMANTIC_TAG_LABEL_IDS: Record<string, MessageId> = {
@@ -121,10 +107,6 @@ function readableClassFor(element: Element) {
       && !GENERATED_CLASS_RE.test(className)
       && !UTILITY_CLASS_RE.test(className)
   ) ?? "";
-}
-
-function isDisplayClass(className: string) {
-  return !RUNTIME_CLASSES.has(className) && !GENERATED_CLASS_RE.test(className);
 }
 
 export function domNodeLabelFor(element: Element) {
@@ -224,52 +206,11 @@ const SESSION_ID_ATTR = "data-pana-session-id";
 const SOURCE_ID_ATTR = "data-pana-source-id";
 const TEMPLATE_SOURCE_ID_ATTR = "data-pana-template-source-id";
 const TEMPLATE_SOURCE_STACK_ATTR = "data-pana-template-source-stack";
-const SKIP_ATTRS = new Set([
-  "class",
-  "style",
-  SOURCE_ID_ATTR,
-  TEMPLATE_SOURCE_ID_ATTR,
-  TEMPLATE_SOURCE_STACK_ATTR,
-  "data-pana-preview-revision",
-  SESSION_ID_ATTR,
-  "data-pana-empty-tera-slot",
-  "data-pana-active-document-root",
-  "data-pana-empty-html",
-  "data-pana-empty-label",
-]);
 const RUNTIME_CLASSES = new Set([
   "pana-studio-empty-editable",
   "pana-studio-empty-tera-slot",
   "pana-studio-active-document-root",
 ]);
-
-function collectElementAttributes(element: Element): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const attr of Array.from(element.attributes)) {
-    // `data-pana-*` belongs exclusively to the Preview runtime. Filtering the
-    // complete namespace prevents newly introduced runtime identities from
-    // leaking into an editable ProjectWorkspace draft.
-    if (attr.name.startsWith("data-pana-") || SKIP_ATTRS.has(attr.name)) continue;
-    result[attr.name] = attr.value;
-  }
-  return result;
-}
-
-export function createDomNodeLink(element: Element): DomNodeLink {
-  return {
-    selector: createDomPathSelector(element),
-    label: domNodeLabelFor(element),
-    tag: element.tagName.toLowerCase(),
-  };
-}
-
-export function formatElementSelector(tag: string, id: string, classes: string[]) {
-  const idPart = id ? ` id="${id}"` : "";
-  const realClasses = classes.filter(isDisplayClass);
-  const classPart = realClasses.length > 0 ? ` class="${realClasses.join(" ")}"` : "";
-
-  return `<${tag}${idPart}${classPart}>`;
-}
 
 function inheritedTemplateSourceId(element: Element): string | null {
   let current: Element | null = element;
@@ -285,56 +226,6 @@ function assignTemplateSourceStack(element: Element, stack: string[]) {
   if (stack.length === 0) return;
   element.setAttribute(TEMPLATE_SOURCE_ID_ATTR, stack[stack.length - 1]);
   element.setAttribute(TEMPLATE_SOURCE_STACK_ATTR, stack.join(" "));
-}
-
-export function summarizeElementText(text: string | null) {
-  const normalized = text?.replace(/\s+/g, " ").trim() ?? "";
-
-  if (normalized.length <= 90) {
-    return normalized || t("preview-selection-no-text");
-  }
-
-  return `${normalized.slice(0, 87)}...`;
-}
-
-function sectionDepthFor(element: Element) {
-  let depth = 0;
-  let current = element.parentElement;
-
-  while (current && current.tagName.toLowerCase() !== "body") {
-    if (current.matches("main, section, article, header, footer, nav, aside")) {
-      depth += 1;
-    }
-    current = current.parentElement;
-  }
-
-  return depth;
-}
-
-export function collectPageSections(document: Document): PageSection[] {
-  applyTemplateSourceIdsFromMarkers(document);
-  const semanticNodes = Array.from(
-    document.querySelectorAll("main, section, article, header, footer, nav, aside"),
-  );
-  const fallbackNodes =
-    semanticNodes.length > 0
-      ? semanticNodes
-      : Array.from(document.body?.children ?? []).filter((child) =>
-        child instanceof Element && !isEmptyTeraSlot(child) && !isActiveDocumentRoot(child));
-
-  return fallbackNodes
-    .filter((element) => !isEmptyTeraSlot(element) && !isActiveDocumentRoot(element))
-    .map((element) => ({
-      selector: createDomPathSelector(element),
-      label: domNodeLabelFor(element),
-      tag: element.tagName.toLowerCase(),
-      depth: sectionDepthFor(element),
-      sourceLocation: null,
-      sourceId: element.getAttribute(SOURCE_ID_ATTR),
-      templateSourceId: inheritedTemplateSourceId(element),
-      sessionId: element.getAttribute(SESSION_ID_ATTR),
-    }))
-    .filter((section, index, array) => array.findIndex((item) => item.selector === section.selector) === index);
 }
 
 const SKIP_TAGS = new Set([

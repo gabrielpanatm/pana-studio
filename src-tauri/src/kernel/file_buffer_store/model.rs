@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +13,7 @@ pub struct FileBufferStore {
     pub runtime_session_id: String,
     pub project_root: String,
     pub loaded_at_ms: u128,
-    pub files: BTreeMap<String, FileBufferEntry>,
+    pub files: Arc<BTreeMap<String, Arc<FileBufferEntry>>>,
     pub diagnostics: Vec<FileBufferDiagnostic>,
     pub limits: FileBufferStoreLimits,
 }
@@ -26,7 +26,7 @@ pub struct FileBufferEntry {
     pub language: TextBufferLanguage,
     pub role: TextBufferRole,
     pub baseline: FileBufferBaseline,
-    pub baseline_text: String,
+    pub baseline_text: Arc<str>,
     pub draft: Option<FileBufferDraft>,
     pub revision: u64,
 }

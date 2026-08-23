@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RecoveryCoordinatorDiagnostic } from "$lib/types";
+  import type { RecoveryCoordinatorDiagnostic } from "$lib/kernel/recovery-contract";
   import { t } from "$lib/i18n/runtime.svelte";
   import { recoverySeverityLabel } from "$lib/kernel/recovery-control";
   import { errorMessage } from "$lib/util";

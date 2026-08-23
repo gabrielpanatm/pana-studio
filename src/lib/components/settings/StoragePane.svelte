@@ -19,16 +19,16 @@
     readApplicationStorageInventory,
   } from "$lib/application/storage";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
   import type {
     ApplicationStorageSnapshot,
     StorageCleanupReceipt,
     StorageSessionSnapshot,
-  } from "$lib/types";
+  } from "$lib/application/contracts";
 
   type Confirmation = "cache" | "logs" | "sessions" | null;
 
-  let { app }: { app: AppState } = $props();
+  let { globalStatus }: { globalStatus: GlobalStatusState } = $props();
 
   let snapshot = $state<ApplicationStorageSnapshot | null>(null);
   let loading = $state(false);
@@ -65,7 +65,7 @@
       applySnapshot(await readApplicationStorageInventory());
     } catch (cause) {
       error = errorMessage(cause);
-      app.setGlobalStatus(t("settings-storage-read-failed", { error }), "error");
+      globalStatus.set(t("settings-storage-read-failed", { error }), "error");
     } finally {
       loading = false;
     }
@@ -177,13 +177,13 @@
     applySnapshot(receipt.snapshot, resetSelection);
     if (receipt.failures.length > 0) {
       error = receipt.failures.join("\n");
-      app.setGlobalStatus(
+      globalStatus.set(
         t("settings-storage-cleanup-partial", { bytes: formatBytes(receipt.freedBytes) }),
         "error",
       );
       return;
     }
-    app.setGlobalStatus(
+    globalStatus.set(
       t("settings-storage-cleanup-success", {
         bytes: formatBytes(receipt.freedBytes),
         count: receipt.removedItems,
@@ -194,7 +194,7 @@
 
   function handleCleanupError(cause: unknown) {
     error = errorMessage(cause);
-    app.setGlobalStatus(t("settings-storage-cleanup-failed", { error }), "error");
+    globalStatus.set(t("settings-storage-cleanup-failed", { error }), "error");
   }
 
   async function refreshAfterFailure() {

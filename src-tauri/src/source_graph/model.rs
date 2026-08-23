@@ -377,6 +377,8 @@ pub enum ComponentDefinitionKind {
     Shortcode,
     TemplateBlock,
     InlineRepeat,
+    InlineConditional,
+    InlineTransform,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -386,6 +388,8 @@ pub enum ComponentInvocationKind {
     MacroCall,
     Shortcode,
     Repeat,
+    Conditional,
+    Transform,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -719,6 +723,21 @@ pub struct SourceNode {
     pub capabilities: SourceCapabilities,
 }
 
+impl SourceNode {
+    /// Returns the first literal template target carried by a Tera relation
+    /// node. The lossless SourceGraph label is the canonical projection for
+    /// unresolved targets and ordered include fallbacks as well.
+    pub(crate) fn tera_template_target(&self) -> Option<&str> {
+        let prefix = match self.kind {
+            SourceNodeKind::Extends => "extends ",
+            SourceNodeKind::Include => "include ",
+            SourceNodeKind::Import => "import ",
+            _ => return None,
+        };
+        self.label.strip_prefix(prefix)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum SourceNodeKind {
@@ -1021,6 +1040,39 @@ mod tests {
 
         assert_eq!(value["reasonCode"], serde_json::Value::Null);
         assert!(capabilities.technical_reason().is_none());
+    }
+
+    #[test]
+    fn tera_template_target_preserves_literal_unresolved_and_fallback_head_targets() {
+        let mut node = graph_with_nodes(1).nodes.remove(0);
+        for (kind, label, expected) in [
+            (
+                SourceNodeKind::Extends,
+                "extends base.html",
+                Some("base.html"),
+            ),
+            (
+                SourceNodeKind::Include,
+                "include partials/missing.html",
+                Some("partials/missing.html"),
+            ),
+            (
+                SourceNodeKind::Import,
+                "import macros/cards.html",
+                Some("macros/cards.html"),
+            ),
+        ] {
+            node.kind = kind;
+            node.label = label.to_string();
+            assert_eq!(node.tera_template_target(), expected);
+        }
+
+        node.kind = SourceNodeKind::Include;
+        node.label = "include".to_string();
+        assert_eq!(node.tera_template_target(), None);
+        node.kind = SourceNodeKind::Html;
+        node.label = "include partials/card.html".to_string();
+        assert_eq!(node.tera_template_target(), None);
     }
 
     #[test]

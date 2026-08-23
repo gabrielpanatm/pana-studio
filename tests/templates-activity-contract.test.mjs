@@ -10,7 +10,7 @@ test("Șabloane este distinctă de catalogul semantic al componentelor Tera", ()
   const rail = source("../src/lib/components/workbench/ActivityRail.svelte");
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
   const components = source("../src/lib/components/creation/ComponentsWorkspace.svelte");
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/workbench/contracts.ts");
   const workbench = source("../src-tauri/src/kernel/workbench/model.rs");
 
   assert.match(rail, /id:\s*"templates"/);
@@ -55,17 +55,16 @@ test("catalogul semantic și impactul șabloanelor au autoritate Rust unică", (
   assert.match(templates, /readTemplateCatalog/);
   assert.match(templates, /catalog\?\.semanticEntries/);
   assert.doesNotMatch(templates, /catalog\?\.collections|selectedCollection/);
-  assert.match(source("../src/lib/project/io.ts"), /TEMPLATE_CATALOG_SCHEMA_VERSION/);
+  assert.match(source("../src/lib/templates/io.ts"), /TEMPLATE_CATALOG_SCHEMA_VERSION/);
   assert.doesNotMatch(templates, /CodeMirror|Monaco|contenteditable|<textarea/);
 });
 
 test("operațiile șabloanelor trec prin ProjectWorkspace și păstrează o redenumire atomică", () => {
   const commands = source("../src-tauri/src/commands/templates.rs");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
-  const frontend = source("../src/lib/project/io.ts");
+  const frontend = source("../src/lib/templates/io.ts");
 
   for (const command of [
-    "workspace_create_template",
     "workspace_create_semantic_template",
     "workspace_duplicate_template",
     "workspace_override_theme_template",
@@ -75,8 +74,20 @@ test("operațiile șabloanelor trec prin ProjectWorkspace și păstrează o rede
     "workspace_delete_template",
   ]) {
     assert.match(registry, new RegExp(command));
-    assert.match(frontend, new RegExp(`"${command}"`));
   }
+  for (const activeFrontendCommand of [
+    "workspace_create_semantic_template",
+    "workspace_duplicate_template",
+    "workspace_override_theme_template",
+    "workspace_rename_template",
+    "workspace_set_template_parent",
+    "workspace_set_template_assignment",
+    "workspace_delete_template",
+  ]) assert.match(frontend, new RegExp(`"${activeFrontendCommand}"`));
+  assert.doesNotMatch(
+    `${commands}\n${registry}\n${frontend}`,
+    /\bworkspace_create_template(?:_collection)?\b/,
+  );
 
   assert.match(commands, /require_bound_workspace/);
   assert.match(commands, /finish_mutation/);
@@ -97,13 +108,12 @@ test("Deschide în Editor folosește editorul existent, nu creează o suprafaț�
     templates,
     /async function openResource[\s\S]*await openWorkspaceSource\(resource\.file/,
   );
-  assert.match(templates, /await app\.setWorkbenchActivity\("editor"\)/);
+  assert.match(templates, /await openEditor\(\)/);
   assert.match(templates, /t\("templates-edit-visual"\)/);
 });
 
 test("rolurile semantice se deschid vizual numai în contextul exact proiectat de Rust", () => {
   const templates = source("../src/lib/components/templates/TemplatesWorkspace.svelte");
-  const controller = source("../src/lib/state/project-controller.ts");
 
   assert.match(
     templates,
@@ -118,13 +128,6 @@ test("rolurile semantice se deschid vizual numai în contextul exact proiectat d
     /context\?\.available && context\.url[\s\S]*surface:\s*"visual"[\s\S]*templateContextUrl:\s*context\.url/,
   );
   assert.match(templates, /previewContext\?\.unavailableDiagnostic/);
-  assert.match(
-    controller,
-    /preferredTemplatePagePath !== undefined[\s\S]*options\.preferredTemplatePagePath/,
-  );
-  assert.match(controller, /t\("project-controller-template-page-unconfirmed"/);
-  assert.match(controller, /preferredRoute:[\s\S]*options\.preferredTemplateRoute/);
-  assert.match(controller, /t\("project-controller-template-route-unconfirmed"/);
 });
 
 test("activitatea prezintă ierarhia Mosaic adaptată la Zola fără tabul Toate", () => {
@@ -174,9 +177,9 @@ test("formularele șabloanelor păstrează comenzile Rust drept autoritate de mu
   assert.match(editFlow, /renameTemplate/);
   assert.match(templates, /setTemplateParent/);
   assert.match(templates, /setTemplateAssignment/);
-  assert.match(templates, /settleProjectWorkspaceMutation\(app, receipt,/);
+  assert.match(templates, /workspaceMutations\.settle\(receipt,/);
   assert.match(templates, /preferredRelativePath: receipt\.relativePath/);
   assert.match(templates, /warningLabel: t\("templates-operation-label"\)/);
-  assert.doesNotMatch(templates, /app\.rescanCurrentProject\(receipt\.relativePath/);
+  assert.doesNotMatch(templates, /rescanCurrentProject\(receipt\.relativePath/);
   assert.doesNotMatch(templates, /\bwriteProjectFile\b/);
 });

@@ -34,15 +34,21 @@ test("catalogul de inserare este un snapshot Rust versionat și legat de revizie
   const kernel = source("../src-tauri/src/kernel/insert_catalog.rs");
   const command = source("../src-tauri/src/commands/insert_catalog.rs");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
+  const contracts = source("../src/lib/blocks/contracts.ts");
+  const io = source("../src/lib/blocks/io.ts");
+  const dragService = source("../src/lib/creation/insert-catalog-drag-service.ts");
 
-  assert.match(kernel, /INSERT_CATALOG_SCHEMA_VERSION:\s*u32\s*=\s*1/);
+  assert.match(kernel, /INSERT_CATALOG_SCHEMA_VERSION:\s*u32\s*=\s*2/);
+  assert.match(contracts, /INSERT_CATALOG_SCHEMA_VERSION\s*=\s*2\s+as const/);
+  assert.match(io, /snapshot\.schemaVersion !== INSERT_CATALOG_SCHEMA_VERSION/);
+  assert.match(dragService, /snapshot\.schemaVersion !== INSERT_CATALOG_SCHEMA_VERSION/);
   for (const field of [
     "project_root",
     "runtime_session_id",
     "workspace_revision",
     "model_revision",
   ]) assert.match(kernel, new RegExp(`pub ${field}:`));
-  for (const category of ["Html", "Block", "Component", "Tera", "DynamicWidget", "DirectField"]) {
+  for (const category of ["Html", "Block", "Component", "Tera", "DynamicWidget"]) {
     assert.match(kernel, new RegExp(`\\b${category},`));
   }
   assert.match(command, /expected_workspace_revision/);
@@ -50,6 +56,18 @@ test("catalogul de inserare este un snapshot Rust versionat și legat de revizie
   assert.match(command, /workspace\.revision != workspace_revision/);
   assert.match(command, /insert_catalog_stale_revision/);
   assert.match(registry, /read_insert_catalog/);
+});
+
+test("snapshotul v2 nu mai construiește sau expune inserarea directField", () => {
+  const kernel = source("../src-tauri/src/kernel/insert_catalog.rs");
+  const contracts = source("../src/lib/blocks/contracts.ts");
+  const adapter = source("../src/lib/state/insert-catalog-drag-controller.ts");
+  const panel = source("../src/lib/components/project/InsertCatalogPanel.svelte");
+
+  assert.doesNotMatch(kernel, /\bDirectField\b|InsertCatalogDynamicBinding|InsertCatalogPayload::DynamicField|direct_field_group|direct-fields/);
+  assert.doesNotMatch(contracts, /"directField"|kind:\s*"dynamicField"|ProjectDynamicFieldBinding/);
+  assert.doesNotMatch(adapter, /payload\.kind\s*===?\s*"dynamicField"|payload\.kind\s*!==?\s*"dynamicField"|dynamicBinding:/);
+  assert.doesNotMatch(panel, /"dynamicField"|insert_catalog_dynamic_item_scope_requires_loop/);
 });
 
 test("panoul legacy nu mai reconstruiește cataloage locale în Svelte", () => {
@@ -115,7 +133,7 @@ test("inventarul HTML autoritar rămâne în Rust și acoperă elementele editab
 
 test("un adaptor comun convertește itemii discriminați fără autoritate HTML pentru blocuri", () => {
   const adapter = source("../src/lib/state/insert-catalog-drag-controller.ts");
-  const app = source("../src/lib/state/app.svelte.ts");
+  const service = source("../src/lib/creation/insert-catalog-drag-service.ts");
 
   assert.match(adapter, /startInsertCatalogDrag/);
   assert.match(adapter, /startElementPaletteDrag\(host, html, event\)/);
@@ -123,8 +141,8 @@ test("un adaptor comun convertește itemii discriminați fără autoritate HTML 
   assert.match(adapter, /blockId:\s*item\.payload\.blockId/);
   assert.match(adapter, /Rust renders the authoritative block source from blockId/);
   assert.match(adapter, /html:\s*""/);
-  assert.match(app, /snapshot\.workspaceRevision !== currentRevision/);
-  assert.match(app, /Catalogul de inserare s-a actualizat/);
+  assert.match(service, /snapshot\.workspaceRevision !== currentRevision/);
+  assert.match(service, /Catalogul de inserare s-a actualizat/);
 });
 
 test("bridge-ul iframe păstrează identitatea tuturor blocurilor native până la Rust", async () => {
@@ -176,6 +194,55 @@ test("bridge-ul iframe păstrează identitatea tuturor blocurilor native până 
     assert.equal(request?.element.blockId, blockId);
     assert.equal(request?.element.blockKind, blockKind);
   }
+});
+
+test("payloadul HTML component legacy este refuzat, nu convertit sau reinterpretat", async () => {
+  const normalize = bridgeFunction(
+    "normalizedInsertElementPayload",
+    "resetPreviewInsertDragState",
+  );
+  const bridge = source("../src-tauri/src/preview/bridge/07_drag_drop.js");
+  const controller = source("../src/lib/state/preview-insert-controller.ts");
+  const palette = source("../src/lib/html/palette.ts");
+  const engine = source("../src-tauri/src/project_model/insert_engine.rs");
+  const rustNormalizer = engine.match(/fn build_insert_snippet[\s\S]*?fn build_native_block_insert_snippet/)?.[0] ?? "";
+  const legacy = {
+    id: "component:counter",
+    kind: "component",
+    componentId: "counter",
+    componentKind: "js",
+    tag: "span",
+    label: "Counter",
+  };
+
+  assert.equal(normalize(legacy), null);
+  assert.doesNotMatch(bridge, /legacyComponent|componentId|componentKind/);
+  assert.doesNotMatch(engine, /alias\s*=\s*"componentId"/);
+  assert.doesNotMatch(rustNormalizer, /"block"\s*\|\s*"component"/);
+  assert.match(rustNormalizer, /kind != "html"[\s\S]*sunt permise html și block/);
+  assert.match(controller, /data\.kind === "html"[\s\S]*data\.kind === "block"[\s\S]*if \(!kind\) return null/);
+  assert.match(palette, /kind:\s*"html"\s*\|\s*"block"/);
+  assert.doesNotMatch(palette, /kind\?:|htmlPaletteGroups|htmlTagGroups|tagMeta/);
+
+  let calls = 0;
+  let statusKind = "";
+  await handlePreviewInsertDrop({
+    async insertPaletteElementAtTarget() {
+      calls += 1;
+      return { status: "committed" };
+    },
+    setGlobalStatus(_message, kind) {
+      statusKind = kind;
+    },
+  }, {
+    targetSessionId: "session-1",
+    targetSourceId: "source-main",
+    targetTag: "main",
+    position: "inside",
+    element: legacy,
+  });
+  assert.equal(calls, 0);
+  assert.equal(statusKind, "error");
 });
 
 test("bridge-ul Tera păstrează macroCall și bindingul dinamic tipizat", () => {
@@ -301,18 +368,21 @@ test("identitatea widgetului inserat este extrasă din marker pentru selectarea 
   assert.match(actions, /await host\.selectDynamicWidgetSourceInstance/);
 });
 
-test("catalogul proiectează blocuri, partialuri și câmpuri dinamice din grafurile Rust", () => {
+test("catalogul proiectează blocuri, componente Tera și DynamicWidget din grafurile Rust", () => {
   const kernel = source("../src-tauri/src/kernel/insert_catalog.rs");
+  const adapter = source("../src/lib/state/insert-catalog-drag-controller.ts");
 
   assert.match(kernel, /graph\.block_graph\.definitions/);
   assert.match(kernel, /native_block_registry_snapshot/);
   assert.match(kernel, /graph\s*\.component_graph/);
   assert.match(kernel, /ComponentDefinitionKind::Partial/);
   assert.match(kernel, /definition\.active && definition\.shadowed_by\.is_none\(\)/);
-  assert.match(kernel, /model_ids_for_page_files\(&graph\.content_models/);
-  assert.match(kernel, /catalog\s*\.page_bindings/);
-  assert.match(kernel, /resolved_template/);
-  assert.match(kernel, /insert_catalog_dynamic_item_scope_requires_loop/);
+  assert.match(kernel, /InsertCatalogPayload::Component/);
+  assert.match(kernel, /tera_kind:\s*"include"/);
+  assert.match(kernel, /tera_kind:\s*"macroCall"/);
+  assert.match(kernel, /dynamic_widget_group/);
+  assert.match(kernel, /InsertCatalogPayload::DynamicWidget/);
+  assert.match(adapter, /sourceNodeId:\s*payload\.kind === "component" \? payload\.componentId/);
   for (const included of ["img", "video", "audio", "picture", "iframe"]) {
     assert.match(kernel, new RegExp(`html_catalog_covers_authorable_body_elements[\\s\\S]*"${included}"`));
   }
@@ -331,18 +401,18 @@ test("macrocomenzile fără argumente obligatorii au reprezentare validată de m
 });
 
 test("revizia workspace și contextul Canvas sunt trimise reactiv panoului", () => {
-  const area = source("../src/lib/components/workspace/WorkspaceProjectArea.svelte");
+  const application = source("../src/lib/components/application/ApplicationWorkspace.svelte");
   const panel = source("../src/lib/components/project/InsertCatalogPanel.svelte");
-  const app = source("../src/lib/state/app.svelte.ts");
-  const io = source("../src/lib/project/io.ts");
+  const drag = source("../src/lib/creation/insert-catalog-drag-service.ts");
+  const io = source("../src/lib/blocks/io.ts");
 
-  assert.match(area, /workspaceRevision=\{app\.projectWorkspaceSnapshot\?\.revision \?\? 0\}/);
-  assert.match(area, /activeTemplatePath:\s*app\.activeRenderedTemplatePath/);
-  assert.match(area, /activePagePath:\s*app\.templateWorkbenchPreferredPagePath/);
-  assert.match(area, /canvasPreviewRevision:\s*app\.activeCanvasIdentity\?\.previewRevision/);
-  assert.match(area, /targetSourceId:\s*app\.coordinatedElementSelection\?\.sourceNodeId/);
+  assert.match(application, /workspaceRevision:\s*\(\) => projectSession\.workspace\?\.revision \?\? 0/);
+  assert.match(application, /activeTemplatePath:\s*\(\) => documents\.activeRenderedTemplatePath/);
+  assert.match(application, /activePagePath:\s*\(\) => documents\.templatePreferredPagePath/);
+  assert.match(application, /canvasPreviewRevision:\s*\(\) => previewWorkspace\.activeIdentity\?\.previewRevision/);
+  assert.match(application, /targetSourceId:\s*\(\) => selectionWorkspace\.coordinatedElement\?\.sourceNodeId/);
   assert.match(panel, /sameContext\(snapshot\?\.context, context\)/);
-  assert.match(app, /context\.canvasPreviewRevision !== \(this\.activeCanvasIdentity\?\.previewRevision \?\? null\)/);
-  assert.match(app, /context\.targetSourceId !== \(this\.coordinatedElementSelection\?\.sourceNodeId \?\? null\)/);
+  assert.match(drag, /context\.canvasPreviewRevision !== \(preview\.activeIdentity\?\.previewRevision \?\? null\)/);
+  assert.match(drag, /context\.targetSourceId !== \(selection\.coordinatedElement\?\.sourceNodeId \?\? null\)/);
   assert.match(io, /snapshot\.workspaceRevision !== expectedWorkspaceRevision/);
 });

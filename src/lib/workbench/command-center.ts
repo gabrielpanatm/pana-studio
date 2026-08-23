@@ -3,7 +3,7 @@ import {
   COMMAND_CENTER_SCHEMA_VERSION,
   type CommandCenterScope,
   type CommandCenterSearchResponse,
-} from "$lib/types";
+} from "$lib/workbench/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export async function searchCommandCenter(input: {

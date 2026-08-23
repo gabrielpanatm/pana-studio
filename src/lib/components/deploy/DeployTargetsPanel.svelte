@@ -12,7 +12,9 @@
     IconX,
   } from "@tabler/icons-svelte";
   import {
-    cancelPublishOperation,
+  cancelPublishOperation,
+} from "$lib/deploy/io";
+  import {
     deleteDeployCredential,
     executeDeploy,
     planDeploy,
@@ -20,7 +22,7 @@
     saveDeployCredential,
     saveDeploySettings,
     testDeployConnection,
-  } from "$lib/project/io";
+  } from "$lib/deploy/io";
   import type {
     DeployCommandError,
     DeployConfigurationSnapshot,
@@ -32,16 +34,21 @@
     DeployReceipt,
     DeploySettings,
     DeployTarget,
-  } from "$lib/types";
+  } from "$lib/deploy/contracts";
+  import type {
+    PublishBuildReceipt,
+    PublishPreflightReceipt,
+  } from "$lib/deploy/contracts";
   import { errorMessage } from "$lib/util";
-  import type { AppState } from "$lib/state/app.svelte";
 
   let {
     scannedProject = false,
     actionsOnly = false,
     projectRoot = "",
     runtimeSessionId = "",
-    app = undefined as AppState | undefined,
+    publishPreflight = null as PublishPreflightReceipt | null,
+    publishBuild = null as PublishBuildReceipt | null,
+    invalidatePublishAuthorization = () => {},
     disabled = false,
     onStatusUpdate = undefined as ((text: string, kind: string) => void) | undefined,
     onRunningChange = undefined as ((running: boolean) => void) | undefined,
@@ -50,7 +57,9 @@
     actionsOnly?: boolean;
     projectRoot?: string;
     runtimeSessionId?: string;
-    app?: AppState;
+    publishPreflight?: PublishPreflightReceipt | null;
+    publishBuild?: PublishBuildReceipt | null;
+    invalidatePublishAuthorization?: () => void;
     disabled?: boolean;
     onStatusUpdate?: (text: string, kind: string) => void;
     onRunningChange?: (running: boolean) => void;
@@ -107,9 +116,6 @@
       ? snapshot?.targetCapabilities.find((item) => item.targetId === selectedTarget.id)?.capabilities
       : null,
   );
-  const publishPreflight = $derived(app?.currentPublishPreflightReceipt() ?? null);
-  const publishBuild = $derived(app?.currentPublishBuildReceipt() ?? null);
-
   $effect(() => {
     if (
       plan
@@ -292,7 +298,7 @@
     try {
       const preferred = selectedTargetId;
       const next = await saveDeploySettings(settings);
-      app?.invalidatePublishAuthorization();
+      invalidatePublishAuthorization();
       applySnapshot(next, preferred);
       succeed("Configurația țintelor deploy a fost salvată.");
       return next;
@@ -312,7 +318,7 @@
     savingCredential = true;
     try {
       await saveDeployCredential(selectedTarget.id, credentialInput(selectedTarget));
-      app?.invalidatePublishAuthorization();
+      invalidatePublishAuthorization();
       await loadConfiguration(selectedTarget.id);
       secretDraft = {};
       succeed("Credentialele au fost salvate în .env din rădăcina proiectului.");
@@ -327,7 +333,7 @@
     if (!selectedTarget || settingsDirty) return;
     try {
       await deleteDeployCredential(selectedTarget.credentialEnvPrefix);
-      app?.invalidatePublishAuthorization();
+      invalidatePublishAuthorization();
       await loadConfiguration(selectedTarget.id);
       succeed("Credentialele țintei au fost eliminate.");
     } catch (error) {

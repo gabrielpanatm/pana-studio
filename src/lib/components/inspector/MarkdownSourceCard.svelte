@@ -2,7 +2,7 @@
   import { IconCode, IconEdit, IconMarkdown } from "@tabler/icons-svelte";
   import { editorSourceReferenceDisplay } from "$lib/source-provenance";
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { EditorNavigationNode } from "$lib/types";
+  import type { EditorNavigationNode } from "$lib/editor/contracts";
 
   let {
     navigationNode = null,
@@ -17,7 +17,8 @@
   const definition = $derived(navigationNode?.sourceProvenance.definition ?? null);
   const composition = $derived(navigationNode?.sourceProvenance.composition ?? null);
   const resolved = $derived(
-    navigationNode?.kind === "markdownBoundary"
+    navigationNode?.kind === "boundary"
+      && navigationNode.boundary?.kind === "markdown"
       && navigationNode.sourceProvenance.resolution === "resolved"
       && Boolean(definition),
   );
@@ -78,9 +79,9 @@
     flex-direction: column;
     gap: 10px;
     padding: 10px;
-    border: 1px solid color-mix(in srgb, var(--markdown) 38%, var(--border));
+    border: 1px solid color-mix(in srgb, var(--entity-markdown) 38%, var(--border));
     border-radius: 9px;
-    background: color-mix(in srgb, var(--markdown-soft) 62%, var(--surface-2));
+    background: color-mix(in srgb, var(--entity-markdown-soft) 62%, var(--surface-2));
   }
 
   .card-head,
@@ -103,9 +104,9 @@
     flex: 0 0 auto;
     gap: 4px;
     padding: 3px 6px;
-    border: 1px solid color-mix(in srgb, var(--markdown) 42%, transparent);
+    border: 1px solid color-mix(in srgb, var(--entity-markdown) 42%, transparent);
     border-radius: 6px;
-    color: var(--markdown);
+    color: var(--entity-markdown);
     font-size: 11px;
     font-weight: 850;
     background: var(--surface);

@@ -9,7 +9,7 @@ import {
 } from "$lib/kernel/project-workspace-preview-coordinator";
 import {
   projectTemplateWorkbenchPreview,
-} from "$lib/project/io";
+} from "$lib/preview/io";
 
 if (!globalThis.window) globalThis.window = globalThis;
 

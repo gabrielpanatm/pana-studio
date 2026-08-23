@@ -14,7 +14,7 @@ use crate::{
         scan::{
             builder::SourceGraphBuilder,
             files::{read_source, relative_project_path, template_name},
-            ranges::source_range,
+            ranges::SourceRangeIndex,
             summary::{TemplateSummary, TeraScopeSummary},
         },
         tera::{tera_items_from_document, TeraItemKind},
@@ -78,11 +78,12 @@ pub(super) fn scan_template(
     );
 
     let source = read_source(&file, draft_sources, builder);
+    let ranges = SourceRangeIndex::new(&source);
     // The template/partial node is also the addressable root of a fragment
     // opened directly in Template Workbench. Keeping its full-file range in
     // SourceGraph gives HTML and Tera insertions one Rust-owned anchor even
     // when the file is completely empty and has no child nodes yet.
-    builder.update_node_range(&node_id, source_range(&source, 0, source.len()));
+    builder.update_node_range(&node_id, ranges.range(0, source.len()));
     let mixed_document = parse_mixed_cst(&source, &name);
     debug_assert!(mixed_document.is_lossless());
     let tera_document = &mixed_document.tera;
@@ -119,10 +120,7 @@ pub(super) fn scan_template(
                 }
                 if let Some(mut scope) = open_scopes.pop() {
                     scope.end = item.end;
-                    builder.update_node_range(
-                        &scope.node_id,
-                        source_range(&source, scope.start, item.end),
-                    );
+                    builder.update_node_range(&scope.node_id, ranges.range(scope.start, item.end));
                     completed_scopes.push(scope);
                 }
             }
@@ -130,7 +128,7 @@ pub(super) fn scan_template(
                 let Some(kind) = item.node_kind.clone() else {
                     continue;
                 };
-                let range = source_range(&source, item.start, item.end);
+                let range = ranges.range(item.start, item.end);
                 if is_partial {
                     match kind {
                         SourceNodeKind::Extends => {
@@ -182,7 +180,7 @@ pub(super) fn scan_template(
                                 SourceDiagnosticSeverity::Warning,
                                 LocalizedDiagnostic::new("source-graph-multiple-extends"),
                                 Some(file.clone()),
-                                Some(source_range(&source, item.start, item.end)),
+                                Some(ranges.range(item.start, item.end)),
                             );
                         }
                         extends = item.target.clone();
@@ -204,7 +202,7 @@ pub(super) fn scan_template(
                                 LocalizedDiagnostic::new("source-graph-duplicate-tera-block")
                                     .with_argument("block", item.label.clone()),
                                 Some(file.clone()),
-                                Some(source_range(&source, item.start, item.end)),
+                                Some(ranges.range(item.start, item.end)),
                             );
                         }
                         blocks.push((item.label.clone(), item_node_id.clone()));
@@ -258,10 +256,7 @@ pub(super) fn scan_template(
     }
 
     for scope in open_scopes.drain(..) {
-        builder.update_node_range(
-            &scope.node_id,
-            source_range(&source, scope.start, source.len()),
-        );
+        builder.update_node_range(&scope.node_id, ranges.range(scope.start, source.len()));
         completed_scopes.push(scope);
     }
 
@@ -301,6 +296,7 @@ pub(super) fn scan_template(
         theme_name.clone(),
         &completed_scopes,
         &mixed_document,
+        &ranges,
         builder,
     );
     reparent_tera_nodes_inside_html(&tera_projection_nodes, &projected_html_bodies, builder);
@@ -394,6 +390,7 @@ fn add_mixed_html_nodes(
     theme_name: Option<String>,
     tera_scopes: &[TeraScopeSummary],
     document: &MixedCstDocument,
+    ranges: &SourceRangeIndex<'_>,
     builder: &mut SourceGraphBuilder,
 ) -> Vec<ProjectedHtmlBody> {
     let mut projected_elements = HashMap::<usize, (String, usize)>::new();
@@ -436,7 +433,7 @@ fn add_mixed_html_nodes(
             origin.clone(),
             theme_name.clone(),
             html_label(&tag.name, raw),
-            Some(source_range(source, opening_node.start, element_end)),
+            Some(ranges.range(opening_node.start, element_end)),
             Some(parent_node_id.to_string()),
             html_capabilities(parent_scope),
         );
@@ -462,8 +459,7 @@ fn add_mixed_html_nodes(
                 .iter()
                 .find(|attribute| attribute.name.eq_ignore_ascii_case("data-pana-block"))
                 .map(|attribute| {
-                    source_range(
-                        source,
+                    ranges.range(
                         attribute.name_start,
                         attribute.value_end.unwrap_or(attribute.name_end),
                     )

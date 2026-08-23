@@ -4,13 +4,47 @@ use std::{
 };
 
 use super::{
-    git::{GitCommandOutput, ProgressCallback, NETWORK_CANCELLED_ERROR},
+    git::{GitCommandOutput, ProgressCallback, RunningGitCommand, NETWORK_CANCELLED_ERROR},
     repository::{parse_history, require_ready, validate_oid, zero_oid},
     VersionBranch, VersionBranchInput, VersionHistoryEntry, VersionNetworkOperationKind,
     VersionNetworkReceipt, VersionPushInput, VersionRemote, VersionRemoteBranch,
-    VersionRemoteInput, VersionRepository, VersionSyncComparison, VersionSyncState,
-    VersionUpstream, VersionUpstreamInput, VersioningSnapshot, VERSIONING_SCHEMA_VERSION,
+    VersionRemoteInput, VersionRepository, VersionSyncState, VersionUpstream, VersionUpstreamInput,
+    VersioningSnapshot, VERSIONING_SCHEMA_VERSION,
 };
+
+pub(crate) enum PreparedVersionNetworkOperation {
+    Fetch(PreparedVersionFetch),
+    Push(PreparedVersionPush),
+}
+
+pub(crate) struct PreparedVersionFetch {
+    operation_id: String,
+    remote: String,
+    before: VersioningSnapshot,
+    args: Vec<OsString>,
+}
+
+pub(crate) struct PreparedVersionPush {
+    operation_id: String,
+    remote: String,
+    remote_branch: String,
+    local_branch: String,
+    set_upstream: bool,
+    before: VersioningSnapshot,
+    head_oid: String,
+    tracking_ref: String,
+    previous_tracking: String,
+    args: Vec<OsString>,
+}
+
+impl PreparedVersionNetworkOperation {
+    fn args(&self) -> &[OsString] {
+        match self {
+            Self::Fetch(prepared) => &prepared.args,
+            Self::Push(prepared) => &prepared.args,
+        }
+    }
+}
 
 const MAX_REMOTE_NAME_BYTES: usize = 64;
 const MAX_BRANCH_NAME_BYTES: usize = 256;
@@ -281,14 +315,12 @@ impl VersionRepository {
         self.snapshot()
     }
 
-    pub(crate) fn fetch_remote(
+    pub(crate) fn prepare_fetch_remote(
         &self,
         remote: &str,
         prune: bool,
         operation_id: &str,
-        cancellation: Arc<AtomicBool>,
-        progress: ProgressCallback,
-    ) -> Result<VersionNetworkReceipt, String> {
+    ) -> Result<PreparedVersionFetch, String> {
         validate_operation_id(operation_id)?;
         let before = self.snapshot()?;
         require_ready(&before)?;
@@ -308,43 +340,18 @@ impl VersionRepository {
         args.push(OsString::from("--"));
         args.push(OsString::from(configured.fetch_url));
         args.push(OsString::from(refspec));
-        let output = self
-            .runner
-            .run_network(args, cancellation, progress)
-            .map_err(|error| {
-                classify_network_runtime_error(VersionNetworkOperationKind::Fetch, error)
-            })?;
-        if !output.success() {
-            return Err(classify_network_output_error(
-                VersionNetworkOperationKind::Fetch,
-                &output,
-            ));
-        }
-        if output.stdout_truncated || output.stderr_truncated {
-            return Err(
-                "Fetch a reușit posibil, dar outputul Git a depășit limita sigură. Actualizează starea înainte de a repeta operația."
-                    .to_string(),
-            );
-        }
-        let after = self.snapshot()?;
-        Ok(VersionNetworkReceipt {
-            schema_version: VERSIONING_SCHEMA_VERSION,
+        Ok(PreparedVersionFetch {
             operation_id: operation_id.to_string(),
-            kind: VersionNetworkOperationKind::Fetch,
             remote,
-            branch: after.branch.clone(),
-            changed: before.status_token != after.status_token,
-            diagnostic: None,
-            snapshot: after,
+            before,
+            args,
         })
     }
 
-    pub(crate) fn push_branch(
+    pub(crate) fn prepare_push_branch(
         &self,
         input: &VersionPushInput,
-        cancellation: Arc<AtomicBool>,
-        progress: ProgressCallback,
-    ) -> Result<VersionNetworkReceipt, String> {
+    ) -> Result<PreparedVersionPush, String> {
         validate_operation_id(&input.operation_id)?;
         let before = self.snapshot()?;
         require_ready(&before)?;
@@ -362,47 +369,126 @@ impl VersionRepository {
         let remote_branch = self.validate_branch_name(&input.remote_branch)?;
         let configured = self.require_usable_remote(&remote)?;
         let refspec = format!("refs/heads/{local_branch}:refs/heads/{remote_branch}");
-        let output = self
-            .runner
-            .run_network(
-                [
-                    "push",
-                    "--porcelain",
-                    "--progress",
-                    "--",
-                    &configured.push_url,
-                    &refspec,
-                ],
-                cancellation,
-                progress,
-            )
-            .map_err(|error| {
-                classify_network_runtime_error(VersionNetworkOperationKind::Push, error)
-            })?;
-        if !output.success() {
-            return Err(classify_network_output_error(
-                VersionNetworkOperationKind::Push,
-                &output,
-            ));
+        let head_oid = before
+            .head_oid
+            .as_deref()
+            .ok_or_else(|| "Push cere un HEAD local determinabil.".to_string())?
+            .to_string();
+        let tracking_ref = format!("refs/remotes/{remote}/{remote_branch}");
+        let previous_tracking = self
+            .resolve_ref_oid(&tracking_ref)
+            .unwrap_or_else(|_| zero_oid(before.object_format.as_deref()));
+        Ok(PreparedVersionPush {
+            operation_id: input.operation_id.clone(),
+            remote,
+            remote_branch,
+            local_branch,
+            set_upstream: input.set_upstream,
+            before,
+            head_oid,
+            tracking_ref,
+            previous_tracking,
+            args: [
+                "push",
+                "--porcelain",
+                "--progress",
+                "--",
+                &configured.push_url,
+                &refspec,
+            ]
+            .into_iter()
+            .map(OsString::from)
+            .collect(),
+        })
+    }
+
+    pub(crate) fn spawn_prepared_network(
+        &self,
+        prepared: &PreparedVersionNetworkOperation,
+        cancellation: Arc<AtomicBool>,
+        progress: ProgressCallback,
+    ) -> Result<RunningGitCommand, String> {
+        self.runner
+            .spawn_network(prepared.args().iter(), cancellation, progress)
+    }
+
+    pub(crate) fn finalize_prepared_network(
+        &self,
+        prepared: PreparedVersionNetworkOperation,
+        output: GitCommandOutput,
+    ) -> Result<VersionNetworkReceipt, String> {
+        match prepared {
+            PreparedVersionNetworkOperation::Fetch(prepared) => {
+                self.finalize_fetch_remote(prepared, output)
+            }
+            PreparedVersionNetworkOperation::Push(prepared) => {
+                self.finalize_push_branch(prepared, output)
+            }
         }
+    }
+
+    fn finalize_fetch_remote(
+        &self,
+        prepared: PreparedVersionFetch,
+        output: GitCommandOutput,
+    ) -> Result<VersionNetworkReceipt, String> {
+        require_network_output(VersionNetworkOperationKind::Fetch, &output)?;
+        if output.stdout_truncated || output.stderr_truncated {
+            return Err(
+                "Fetch a reușit posibil, dar outputul Git a depășit limita sigură. Actualizează starea înainte de a repeta operația."
+                    .to_string(),
+            );
+        }
+        let after = self.snapshot()?;
+        Ok(VersionNetworkReceipt {
+            schema_version: VERSIONING_SCHEMA_VERSION,
+            operation_id: prepared.operation_id,
+            kind: VersionNetworkOperationKind::Fetch,
+            remote: prepared.remote,
+            branch: after.branch.clone(),
+            changed: prepared.before.status_token != after.status_token,
+            diagnostic: None,
+            snapshot: after,
+        })
+    }
+
+    fn finalize_push_branch(
+        &self,
+        prepared: PreparedVersionPush,
+        output: GitCommandOutput,
+    ) -> Result<VersionNetworkReceipt, String> {
+        require_network_output(VersionNetworkOperationKind::Push, &output)?;
         if output.stdout_truncated || output.stderr_truncated {
             return Err(
                 "Push a fost publicat posibil, dar outputul Git a depășit limita sigură. Nu repeta automat; execută Fetch și verifică starea remote."
                     .to_string(),
             );
         }
-        // Push-ul cu URL explicit nu actualizează automat ref-ul de tracking.
-        // Îl publicăm local prin CAS numai după confirmarea serverului, astfel
-        // încât primul push poate seta upstream fără un fetch intermediar.
-        let head_oid = before.head_oid.as_deref().ok_or_else(|| {
-            "Push-ul a reușit, dar HEAD-ul local nu mai poate fi determinat.".to_string()
+        let current = self.snapshot().map_err(|error| {
+            format!(
+                "Push-ul remote a reușit, dar starea locală nu a putut fi revalidată. Nu repeta Push; rulează Fetch și verifică starea. {}",
+                redact_network_text(&error)
+            )
         })?;
-        let tracking_ref = format!("refs/remotes/{remote}/{remote_branch}");
-        let previous_tracking = self
-            .resolve_ref_oid(&tracking_ref)
-            .unwrap_or_else(|_| zero_oid(before.object_format.as_deref()));
+        if current.status_token != prepared.before.status_token
+            || current.head_oid.as_deref() != Some(prepared.head_oid.as_str())
+            || current.branch.as_deref() != Some(prepared.local_branch.as_str())
+        {
+            return Err(
+                "Push-ul remote a reușit, dar repository-ul local s-a schimbat înainte de publicare. Nu repeta Push; rulează Fetch și actualizează starea."
+                    .to_string(),
+            );
+        }
+
+        // Push-ul cu URL explicit nu actualizează automat ref-ul de tracking.
+        // Îl publicăm local prin CAS numai după confirmarea serverului.
         self.runner
-            .run(["update-ref", &tracking_ref, head_oid, &previous_tracking])
+            .run([
+                "update-ref",
+                &prepared.tracking_ref,
+                &prepared.head_oid,
+                &prepared.previous_tracking,
+            ])
             .and_then(|output| {
                 output.require_success(
                     "Actualizarea ref-ului local de tracking după push; push-ul remote a reușit, nu îl repeta automat",
@@ -414,11 +500,11 @@ impl VersionRepository {
                     redact_network_text(&error)
                 )
             })?;
-        let snapshot_result = if input.set_upstream {
+        let snapshot_result = if prepared.set_upstream {
             self.configure_upstream(&VersionUpstreamInput {
-                local_branch: local_branch.clone(),
-                remote: remote.clone(),
-                remote_branch: remote_branch.clone(),
+                local_branch: prepared.local_branch.clone(),
+                remote: prepared.remote.clone(),
+                remote_branch: prepared.remote_branch.clone(),
             })
         } else {
             self.snapshot()
@@ -431,43 +517,13 @@ impl VersionRepository {
         })?;
         Ok(VersionNetworkReceipt {
             schema_version: VERSIONING_SCHEMA_VERSION,
-            operation_id: input.operation_id.clone(),
+            operation_id: prepared.operation_id,
             kind: VersionNetworkOperationKind::Push,
-            remote,
-            branch: Some(local_branch),
-            changed: before.status_token != snapshot.status_token,
+            remote: prepared.remote,
+            branch: Some(prepared.local_branch),
+            changed: prepared.before.status_token != snapshot.status_token,
             diagnostic: None,
             snapshot,
-        })
-    }
-
-    pub(crate) fn sync_comparison(&self) -> Result<VersionSyncComparison, String> {
-        let snapshot = self.snapshot()?;
-        require_ready(&snapshot)?;
-        let head_oid = snapshot
-            .head_oid
-            .as_deref()
-            .ok_or_else(|| "Compararea cere un commit local.".to_string())?;
-        let upstream = snapshot
-            .upstream
-            .as_ref()
-            .ok_or_else(|| "Branch-ul activ nu are upstream configurat.".to_string())?;
-        let upstream_oid = upstream.oid.as_deref().ok_or_else(|| {
-            "Referința upstream lipsește local. Rulează Fetch înainte de comparare.".to_string()
-        })?;
-        let local_range = format!("{upstream_oid}..{head_oid}");
-        let remote_range = format!("{head_oid}..{upstream_oid}");
-        Ok(VersionSyncComparison {
-            schema_version: VERSIONING_SCHEMA_VERSION,
-            local_ref: snapshot
-                .branch
-                .clone()
-                .unwrap_or_else(|| "HEAD".to_string()),
-            upstream_ref: upstream.ref_name.clone(),
-            ahead: upstream.ahead,
-            behind: upstream.behind,
-            local_only: self.history_for_range(&local_range)?,
-            remote_only: self.history_for_range(&remote_range)?,
         })
     }
 
@@ -1242,7 +1298,10 @@ fn sync_state(ahead: u64, behind: u64) -> VersionSyncState {
     }
 }
 
-fn classify_network_runtime_error(kind: VersionNetworkOperationKind, error: String) -> String {
+pub(crate) fn classify_network_runtime_error(
+    kind: VersionNetworkOperationKind,
+    error: String,
+) -> String {
     if error == NETWORK_CANCELLED_ERROR {
         return if kind == VersionNetworkOperationKind::Push {
             format!(
@@ -1264,6 +1323,38 @@ fn classify_network_runtime_error(kind: VersionNetworkOperationKind, error: Stri
     } else {
         format!("{operation} nu a putut rula: {diagnostic}")
     }
+}
+
+pub(crate) fn classify_network_publication_error(
+    kind: VersionNetworkOperationKind,
+    error: String,
+    remote_succeeded: bool,
+) -> String {
+    if error == NETWORK_CANCELLED_ERROR {
+        return classify_network_runtime_error(kind, error);
+    }
+    if remote_succeeded {
+        let diagnostic = redact_network_text(&error);
+        return match kind {
+            VersionNetworkOperationKind::Fetch => format!(
+                "Fetch-ul remote a reușit, dar publicarea locală a fost invalidată. Actualizează starea înainte de următoarea operație. {diagnostic}"
+            ),
+            VersionNetworkOperationKind::Push => format!(
+                "Push-ul remote a reușit, dar publicarea locală a fost invalidată. Nu repeta Push automat; rulează Fetch și verifică branch-ul remote. {diagnostic}"
+            ),
+        };
+    }
+    error
+}
+
+fn require_network_output(
+    kind: VersionNetworkOperationKind,
+    output: &GitCommandOutput,
+) -> Result<(), String> {
+    if output.success() {
+        return Ok(());
+    }
+    Err(classify_network_output_error(kind, output))
 }
 
 fn classify_network_output_error(
@@ -1382,6 +1473,48 @@ mod tests {
         )
     }
 
+    fn execute_prepared_network(
+        repository: &VersionRepository,
+        prepared: PreparedVersionNetworkOperation,
+        kind: VersionNetworkOperationKind,
+    ) -> Result<VersionNetworkReceipt, String> {
+        let running = repository.spawn_prepared_network(
+            &prepared,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(|_| {}),
+        )?;
+        let output = running
+            .wait()
+            .map_err(|error| classify_network_runtime_error(kind, error))?;
+        repository.finalize_prepared_network(prepared, output)
+    }
+
+    fn execute_test_push(
+        repository: &VersionRepository,
+        input: &VersionPushInput,
+    ) -> Result<VersionNetworkReceipt, String> {
+        let prepared = repository.prepare_push_branch(input)?;
+        execute_prepared_network(
+            repository,
+            PreparedVersionNetworkOperation::Push(prepared),
+            VersionNetworkOperationKind::Push,
+        )
+    }
+
+    fn execute_test_fetch(
+        repository: &VersionRepository,
+        remote: &str,
+        prune: bool,
+        operation_id: &str,
+    ) -> Result<VersionNetworkReceipt, String> {
+        let prepared = repository.prepare_fetch_remote(remote, prune, operation_id)?;
+        execute_prepared_network(
+            repository,
+            PreparedVersionNetworkOperation::Fetch(prepared),
+            VersionNetworkOperationKind::Fetch,
+        )
+    }
+
     #[test]
     fn accepts_secret_free_https_and_ssh_urls() {
         for value in [
@@ -1442,6 +1575,20 @@ mod tests {
             NETWORK_CANCELLED_ERROR.to_string(),
         );
         assert_eq!(fetch, NETWORK_CANCELLED_ERROR);
+
+        let cancelled_after_remote = classify_network_publication_error(
+            VersionNetworkOperationKind::Push,
+            NETWORK_CANCELLED_ERROR.to_string(),
+            true,
+        );
+        assert!(cancelled_after_remote.contains("Nu repeta Push"));
+        let stale_after_remote = classify_network_publication_error(
+            VersionNetworkOperationKind::Push,
+            "lease stale".to_string(),
+            true,
+        );
+        assert!(stale_after_remote.contains("Push-ul remote a reușit"));
+        assert!(stale_after_remote.contains("Nu repeta Push"));
     }
 
     #[test]
@@ -1665,18 +1812,16 @@ mod tests {
                 push_url: None,
             })
             .unwrap();
-        let first = client
-            .push_branch(
-                &VersionPushInput {
-                    operation_id: "push-first-12345678".to_string(),
-                    remote: "origin".to_string(),
-                    remote_branch: "main".to_string(),
-                    set_upstream: true,
-                },
-                Arc::new(AtomicBool::new(false)),
-                Arc::new(|_| {}),
-            )
-            .unwrap();
+        let first = execute_test_push(
+            &client,
+            &VersionPushInput {
+                operation_id: "push-first-12345678".to_string(),
+                remote: "origin".to_string(),
+                remote_branch: "main".to_string(),
+                set_upstream: true,
+            },
+        )
+        .unwrap();
         assert_eq!(first.snapshot.sync_state, VersionSyncState::UpToDate);
         assert_eq!(
             first.snapshot.upstream.as_ref().unwrap().ref_name,
@@ -1724,15 +1869,7 @@ mod tests {
             .require_success("test peer push")
             .unwrap();
 
-        client
-            .fetch_remote(
-                "origin",
-                true,
-                "fetch-prune-12345678",
-                Arc::new(AtomicBool::new(false)),
-                Arc::new(|_| {}),
-            )
-            .unwrap();
+        execute_test_fetch(&client, "origin", true, "fetch-prune-12345678").unwrap();
         assert!(client.resolve_ref_oid("refs/remotes/origin/side").is_ok());
         assert!(client.resolve_ref_oid("refs/tags/remote-tag").is_err());
         peer.runner
@@ -1740,33 +1877,23 @@ mod tests {
             .unwrap()
             .require_success("test peer delete side")
             .unwrap();
-        client
-            .fetch_remote(
-                "origin",
-                true,
-                "fetch-prune-87654321",
-                Arc::new(AtomicBool::new(false)),
-                Arc::new(|_| {}),
-            )
-            .unwrap();
+        execute_test_fetch(&client, "origin", true, "fetch-prune-87654321").unwrap();
         assert!(client.resolve_ref_oid("refs/remotes/origin/side").is_err());
 
         fs::write(client_root.join("index.html"), "client two\n").unwrap();
         client.stage_all().unwrap();
         let client_head = client.snapshot().unwrap().head_oid;
         client.commit("Client two", client_head.as_deref()).unwrap();
-        let error = client
-            .push_branch(
-                &VersionPushInput {
-                    operation_id: "push-reject-12345678".to_string(),
-                    remote: "origin".to_string(),
-                    remote_branch: "main".to_string(),
-                    set_upstream: false,
-                },
-                Arc::new(AtomicBool::new(false)),
-                Arc::new(|_| {}),
-            )
-            .unwrap_err();
+        let error = execute_test_push(
+            &client,
+            &VersionPushInput {
+                operation_id: "push-reject-12345678".to_string(),
+                remote: "origin".to_string(),
+                remote_branch: "main".to_string(),
+                set_upstream: false,
+            },
+        )
+        .unwrap_err();
         assert!(error.contains("conține versiuni absente local"), "{error}");
     }
 }

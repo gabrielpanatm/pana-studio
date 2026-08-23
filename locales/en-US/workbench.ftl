@@ -1,5 +1,4 @@
 workbench-editor = Editor
-workbench-themes = Themes
 workbench-templates = Templates
 workbench-components = Components
 workbench-blocks = Blocks
@@ -507,27 +506,8 @@ page-contract-css-updated = The CSS contract was updated in the project session.
 page-contract-asset-session-changed = The Page Asset contract was cancelled because ProjectSession changed.
 page-js-draft-identity-invalid = Page JS draft synchronization rejected an incomplete session identity.
 page-js-draft-receipt-session-mismatch = Page JS draft synchronization rejected a receipt from another session: expected { $expectedRoot }/{ $expectedSession }, received { $actualRoot }/{ $actualSession }.
-page-js-draft-session-missing = Page JS draft synchronization does not have an active runtime ProjectSession.
 page-js-command-session-missing = Page JS requires active ProjectRoot and runtimeSessionId values.
 dirty-state-save-or-discard = Save or discard the current changes before direct disk operations.
-disk-state-counts =
-    { $files ->
-        [one] { $files } file
-       *[other] { $files } files
-    } /
-    { $directories ->
-        [one] { $directories } directory
-       *[other] { $directories } directories
-    }
-disk-state-not-scanned = not scanned
-disk-state-last-mutation = { $kind }{ $path }
-disk-state-no-mutations = no mutations
-disk-state-mutation-scan = scan
-disk-state-mutation-save = save
-disk-state-mutation-delete = delete
-disk-state-mutation-move = move
-disk-state-mutation-rename = rename
-disk-state-mutation-discard = discard
 file-buffer-sync-session-missing = [file_buffer_identity_invalid] FileBuffer draft synchronization does not have an active session.
 file-buffer-sync-frontend-discontinuity = [file_buffer_frontend_discontinuity] The FileBuffer queue rejected a discontinuous transition for { $path }: the last frontend destination hash ({ $expectedHash }) differs from the new event base ({ $actualHash }). The new text remains only in the editor; Save is blocked.
 file-buffer-sync-failures = FileBufferStore could not synchronize the active drafts. { $details }
@@ -535,14 +515,6 @@ file-buffer-sync-invalid-cursor = [file_buffer_invalid_cursor] The FileBuffer cu
 file-buffer-sync-history-rebase-pending = [file_buffer_history_rebase_pending] The FileBuffer projection for { $path } cannot be rebased while the draft queue is active.
 file-buffer-sync-history-path-mismatch = [file_buffer_invalid_history_projection] The snapshot requested for { $path } declares path { $actualPath }.
 file-buffer-sync-history-metadata-mismatch = [file_buffer_invalid_history_projection] The snapshot for { $path } has hash/bytes/revision { $hash }/{ $bytes }/{ $revision }, but its text confirms { $calculatedHash }/{ $calculatedBytes }.
-file-buffer-sync-buffer-advanced = The buffer advanced from revision/hash { $previousRevision }/{ $previousHash } to { $revision }/{ $hash }.
-file-buffer-sync-base-hash-mismatch = Synchronization observed hash { $hash }, which differs from frontend base { $baseHash }.
-file-buffer-sync-clear-stale = The stale clear observed revision/hash { $revision }/{ $hash }, but the last confirmed state was { $previousRevision }/{ $previousHash }.
-file-buffer-sync-receipt-path-mismatch = [file_buffer_invalid_receipt] FileBufferStore returned path { $actualPath } for request { $path }.
-file-buffer-sync-read-metadata-mismatch = [file_buffer_invalid_receipt] The read receipt for { $path } has inconsistent hash/bytes/revision { $hash }/{ $bytes }/{ $revision }; the text calculates { $calculatedHash }/{ $calculatedBytes }.
-file-buffer-sync-set-receipt-mismatch = [file_buffer_invalid_receipt] The set-draft receipt for { $path } does not confirm the requested state: expected hash/bytes { $expectedHash }/{ $expectedBytes } after revision { $expectedRevision }, received { $actualHash }/{ $actualBytes }/{ $actualRevision }.
-file-buffer-sync-clear-receipt-mismatch = [file_buffer_invalid_receipt] The clear-draft receipt for { $path } does not confirm a clean buffer at or after revision { $expectedRevision }.
-file-buffer-sync-full-draft-conflict = [file_buffer_draft_cas_conflict] FileBufferStore blocked the full-draft/clear mutation for { $path }; overwriting without CAS is forbidden. { $diagnostic }
 file-buffer-sync-frontend-hash-mismatch = The frontend text hash ({ $frontendHash }) does not match the confirmed buffer ({ $confirmedHash }).
 file-buffer-sync-revalidation-failed = { $message } Buffer revalidation failed: { $refreshMessage }
 file-buffer-sync-buffer-revision-advanced = { $message } The buffer advanced to revision { $revision } with a different hash ({ $hash }).
@@ -572,7 +544,6 @@ io-taxonomy-catalog-identity-invalid = [taxonomy_catalog_identity_invalid] The t
 io-workspace-catalog-identity-invalid = { $resource } returned an invalid ProjectWorkspace identity.
 io-workspace-catalog-revision-mismatch = { $resource } projected revision { $actual }, not the requested revision { $expected }.
 io-data-node-selection-mismatch = The TOML node snapshot does not match the current selection.
-io-block-runtime-session-mismatch = The CanvasGraph block snapshot does not belong to the current session.
 io-ui-block-graph-session-mismatch = UiBlockGraph does not belong to the current session.
 io-project-file-identity-invalid = [project_file_identity_invalid] The file operation requires the project root and runtime session ID.
 io-project-file-stale-receipt = [project_file_stale_receipt] Stale receipt for { $operation }: expected { $expectedRoot }/{ $expectedSession }, received { $actualRoot }/{ $actualSession }.
@@ -675,8 +646,6 @@ command-center-command-show-code-title = Show source code
 command-center-command-show-code-subtitle = Open the active document source
 command-center-activity-editor-title = Editor
 command-center-activity-editor-subtitle = Documents, preview, and source code
-command-center-activity-themes-title = Themes
-command-center-activity-themes-subtitle = Catalog of bundled Zola themes that can be installed and activated
 command-center-activity-templates-title = Templates
 command-center-activity-templates-subtitle = Tera pages, layouts, fragments, and macros
 command-center-activity-components-title = Components
@@ -735,4 +704,3 @@ wal-item-diagnostic = This write operation requires recovery review. Use only th
 workbench-resize-left-panel = Resize the project panel
 workbench-resize-right-panel = Resize the inspector panel
 context-menu-label = Context menu
-html-mutation-kernel-planned-draft = Rust-planned template draft

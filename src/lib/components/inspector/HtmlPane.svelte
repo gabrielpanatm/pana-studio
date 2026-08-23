@@ -32,13 +32,15 @@
   import type {
     EditableAttributes,
     InspectorHtmlPhysicalFacts,
-    InspectorSelectionSummarySnapshot,
-    ProjectFile,
-    ProjectZolaImageIntent,
-    SelectionSnapshot,
     ZolaImageFormat,
     ZolaImageOperation,
-  } from "$lib/types";
+  } from "$lib/canvas/contracts";
+  import type {
+    InspectorSelectionSummarySnapshot,
+    SelectionSnapshot,
+  } from "$lib/editor/contracts";
+  import type { ProjectZolaImageIntent } from "$lib/preview/contracts";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
   import { primarySelectionEntry } from "$lib/kernel/selection-read-model";
 

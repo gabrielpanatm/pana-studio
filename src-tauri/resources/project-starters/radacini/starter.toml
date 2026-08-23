@@ -1,0 +1,20 @@
+schema_version = 1
+id = "radacini"
+kind = "starter"
+display_name = "Rădăcini"
+summary = "Punct de pornire cald pentru pensiuni, retreaturi, wellness și afaceri locale."
+version = "1.0.0"
+category = "ospitalitate"
+preview = "preview.webp"
+capabilities = [
+  "responsive-layout",
+  "design-tokens",
+  "data-driven-navigation",
+  "hospitality-collection",
+  "accessible-menu",
+  "local-assets",
+]
+
+[zola]
+minimum = "0.22.0"
+tested = "0.22.1"

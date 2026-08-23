@@ -1,5 +1,7 @@
 import { projectRelativeZolaPath } from "$lib/project/files";
-import type { SourceGraph, SourceGraphNode, SourceNodeKind } from "$lib/types";
+import type { SourceNodeKind } from "$lib/source-graph/contracts";
+import type { SourceGraph } from "$lib/source-graph/graph-contract";
+import type { SourceGraphNode } from "$lib/source-graph/contracts";
 
 export type SourceInteractionOrigin = "current" | "local" | "theme" | "unknown";
 
@@ -43,30 +45,6 @@ export function sourceInteractionOrigin(
   const owner = normalizeProjectPath(node.file);
   if (active && owner === active) return "current";
   return node.origin === "theme" ? "theme" : "local";
-}
-
-export function nearestTeraSourceNode(
-  graph: SourceGraph | null,
-  node: SourceGraphNode | null | undefined,
-  fallbackNode: SourceGraphNode | null | undefined = null,
-): SourceGraphNode | null {
-  if (isTeraSourceNode(fallbackNode)) return fallbackNode ?? null;
-  if (isTeraSourceNode(node)) return node ?? null;
-  if (!graph || !node) return null;
-
-  const nodesById = new Map(graph.nodes.map((candidate) => [candidate.id, candidate]));
-  const visited = new Set<string>();
-  let parentId = node.parent;
-
-  while (parentId && !visited.has(parentId)) {
-    visited.add(parentId);
-    const parent = nodesById.get(parentId);
-    if (!parent) return null;
-    if (isTeraSourceNode(parent)) return parent;
-    parentId = parent.parent;
-  }
-
-  return null;
 }
 
 export function normalizeProjectPath(path: string | null | undefined) {

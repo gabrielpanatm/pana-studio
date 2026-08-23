@@ -79,7 +79,7 @@ pub fn persist_latest_workbench<R: Runtime>(
         .lock()
         .map_err(|_| "Workbench persistence mutex este compromis.".to_string())?;
     if read_persisted_workbench(session)?
-        .is_some_and(|persisted| persisted.revision > snapshot.revision)
+        .is_some_and(|persisted| persisted.revision >= snapshot.revision)
     {
         return Ok(());
     }

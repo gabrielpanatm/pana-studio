@@ -6,6 +6,16 @@ function source(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
 }
 
+function fontWorkspace() {
+  return [
+    "../src/lib/components/creation/design-system/FontManagerWorkspace.svelte",
+    "../src/lib/fonts/manager-state.svelte.ts",
+    "../src/lib/components/creation/design-system/font-manager/controller.svelte.ts",
+    "../src/lib/components/creation/design-system/font-manager/FontInstaller.svelte",
+    "../src/lib/components/creation/design-system/font-manager/FontDetail.svelte",
+  ].map(source).join("\n");
+}
+
 test("instalarea Google Fonts este o singură mutație text plus binar în ProjectWorkspace", () => {
   const command = source("../src-tauri/src/commands/fonts.rs");
   const fontKernel = source("../src-tauri/src/fonts/mod.rs");
@@ -24,12 +34,12 @@ test("instalarea Google Fonts este o singură mutație text plus binar în Proje
 });
 
 test("FontFaceGraph leagă familia CSS de sursa exactă și este unica autoritate", () => {
-  const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
+  const workspace = fontWorkspace();
   const fontKernel = source("../src-tauri/src/fonts/mod.rs");
   const graph = source("../src-tauri/src/fonts/graph.rs");
   const command = source("../src-tauri/src/commands/fonts.rs");
-  const types = source("../src/lib/types.ts");
-  const io = source("../src/lib/project/io.ts");
+  const types = source("../src/lib/fonts/contracts.ts");
+  const io = source("../src/lib/fonts/io.ts");
 
   assert.match(fontKernel, /pub struct FontFaceGraph/);
   assert.match(fontKernel, /pub struct FontFaceSource/);
@@ -39,8 +49,9 @@ test("FontFaceGraph leagă familia CSS de sursa exactă și este unica autoritat
   assert.match(graph, /content_hash/);
   assert.match(command, /font_face_graph_for_workspace/);
   assert.match(command, /pub graph: FontFaceGraph/);
-  assert.match(types, /export type FontFaceGraph/);
-  assert.match(workspace, /manager\.graph/);
+  assert.match(types, /type FontFaceGraph/);
+  assert.match(types, /export type FontManagerSnapshot/);
+  assert.match(workspace, /manager\.snapshot\?\.graph/);
   assert.doesNotMatch(fontKernel, /FontInventory|FontFamilyKey|annotate_font_registrations/);
   assert.doesNotMatch(types, /FontInventory|LocalFontFamily/);
   assert.doesNotMatch(io, /get_font_inventory/);
@@ -51,8 +62,8 @@ test("FontFaceGraph leagă familia CSS de sursa exactă și este unica autoritat
 });
 
 test("interfața Fonturi caută catalogul Rust și selectează explicit variantele", () => {
-  const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
-  const io = source("../src/lib/project/io.ts");
+  const workspace = fontWorkspace();
+  const io = source("../src/lib/fonts/io.ts");
   const fontKernel = source("../src-tauri/src/fonts/mod.rs");
 
   assert.match(workspace, /searchGoogleFonts/);
@@ -75,8 +86,8 @@ test("importul local este multiplu, planificat și aplicat prin aceeași autorit
   const command = source("../src-tauri/src/commands/fonts.rs");
   const localImport = source("../src-tauri/src/fonts/local_import.rs");
   const fontMetadata = source("../src-tauri/src/fonts/metadata.rs");
-  const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
-  const io = source("../src/lib/project/io.ts");
+  const workspace = fontWorkspace();
+  const io = source("../src/lib/fonts/io.ts");
 
   assert.match(localImport, /parse_font_metadata/);
   assert.match(fontMetadata, /FontData<'_>/);
@@ -100,8 +111,8 @@ test("biblioteca inclusă este offline, validată la build și instalată prin c
   const command = source("../src-tauri/src/commands/fonts.rs");
   const bundled = source("../src-tauri/src/fonts/bundled.rs");
   const buildValidation = source("../src-tauri/build/font_library.rs");
-  const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
-  const io = source("../src/lib/project/io.ts");
+  const workspace = fontWorkspace();
+  const io = source("../src/lib/fonts/io.ts");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
   const tauriConfig = source("../src-tauri/tauri.conf.json");
   const catalog = JSON.parse(source("../src-tauri/resources/font-library/catalog.json"));
@@ -146,7 +157,7 @@ test("biblioteca inclusă este offline, validată la build și instalată prin c
 test("rolurile semantice sunt citite și mutate în Rust, separat de instalarea fontului", () => {
   const command = source("../src-tauri/src/commands/fonts.rs");
   const roles = source("../src-tauri/src/fonts/roles.rs");
-  const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
+  const workspace = fontWorkspace();
 
   assert.match(roles, /FontRoleId::Text/);
   assert.match(roles, /"font-primary"/);
@@ -165,9 +176,9 @@ test("rolurile semantice sunt citite și mutate în Rust, separat de instalarea 
 test("font-display și preload sunt livrate per fișier prin ProjectWorkspace, nu reconstruite în frontend", () => {
   const command = source("../src-tauri/src/commands/fonts.rs");
   const delivery = source("../src-tauri/src/fonts/delivery.rs");
-  const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
+  const workspace = fontWorkspace();
   const typography = source("../src/lib/components/inspector/sections/TypographySection.svelte");
-  const io = source("../src/lib/project/io.ts");
+  const io = source("../src/lib/fonts/io.ts");
 
   assert.match(command, /set_font_display/);
   assert.match(command, /set_font_preload/);
@@ -188,8 +199,8 @@ test("font-display și preload sunt livrate per fișier prin ProjectWorkspace, n
 test("eliminarea fonturilor locale este planificată, confirmată și aplicată atomic în Rust", () => {
   const command = source("../src-tauri/src/commands/fonts.rs");
   const fontKernel = source("../src-tauri/src/fonts/mod.rs");
-  const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
-  const io = source("../src/lib/project/io.ts");
+  const workspace = fontWorkspace();
+  const io = source("../src/lib/fonts/io.ts");
 
   assert.match(command, /plan_font_family_removal/);
   assert.match(command, /remove_font_family/);

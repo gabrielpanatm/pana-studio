@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
-import { FEEDBACK_CHANNELS } from "$lib/feedback/policy";
 import { UI_TERM_IDS } from "$lib/i18n/ui-terms";
 
 function filesBelow(directory, extensionPattern) {
@@ -17,15 +16,12 @@ function source(relativePath) {
 }
 
 test("bara separă statusul global din stânga de sursa selecției din dreapta", () => {
-  assert.deepEqual(FEEDBACK_CHANNELS.statusBar.owns, ["save", "validation", "preview", "ai-authority"]);
-  assert.deepEqual(FEEDBACK_CHANNELS.notification.owns, ["conflict", "recovery", "operator-decision"]);
-
-  const route = source("../src/routes/+page.svelte");
+  const application = source("../src/lib/components/application/ApplicationWorkspace.svelte");
   const status = source("../src/lib/components/StatusBar.svelte");
   const editor = source("../src/lib/components/EditorShell.svelte");
   const session = source("../src/lib/state/app-session-controller.ts");
 
-  assert.doesNotMatch(route + status, /AiEditAuthorityIndicator/);
+  assert.doesNotMatch(application + status, /AiEditAuthorityIndicator/);
   assert.doesNotMatch(
     status,
     /status-right|preview-chip|canvasPatchPerformance|controlledPreview/,
@@ -93,7 +89,7 @@ test("glosarul românesc elimină etichetele legacy din suprafețele vizibile", 
   const rustCommands = source("../src-tauri/src/kernel/command_center/search.rs");
   assert.doesNotMatch(rustCommands, /"(?:Design System|Asset-uri|Problems & Audit|Arată Problems|Arată Output|Arată Timeline)"/);
 
-  const htmlPalette = source("../src/lib/project/html-palette.ts");
+  const htmlPalette = source("../src/lib/html/palette.ts");
   const teraPalette = source("../src/lib/tera/palette.ts");
   assert.doesNotMatch(htmlPalette, /label: "(?:Section|Article|Paragraph|Quote|Image|Source|Picture|Button|Form|Option|Table|Caption)"/);
   assert.doesNotMatch(teraPalette, /label: "(?:Extends|Block content|Include partial|Import macros|If|With|Set|Variable|Comment|Raw)"/);
@@ -102,8 +98,8 @@ test("glosarul românesc elimină etichetele legacy din suprafețele vizibile", 
 test("panoul inferior este exclusiv Terminal, cu un singur toolbar compact", () => {
   const bottomPanel = source("../src/lib/components/workbench/WorkbenchBottomPanel.svelte");
   const terminal = source("../src/lib/components/TerminalPane.svelte");
-  const route = source("../src/routes/+page.svelte");
-  const appState = source("../src/lib/state/app.svelte.ts");
+  const commandCenter = source("../src/lib/application/command-center-service.svelte.ts");
+  const workbenchState = source("../src/lib/workbench/workspace-state.svelte.ts");
   const audit = source("../src/lib/components/audit/AuditWorkspace.svelte");
   const kernel = source("../src/lib/components/kernel/KernelWorkspace.svelte");
   const observability = source("../src/lib/components/kernel/ObservabilityLogControl.svelte");
@@ -122,11 +118,11 @@ test("panoul inferior este exclusiv Terminal, cu un singur toolbar compact", () 
   assert.match(terminal, /\.terminal-scroll-proxy\) \{[^}]*top:\s*0;[^}]*bottom:\s*0;/);
   assert.doesNotMatch(terminal, /--terminal-shell-background/);
 
-  assert.match(route, /case "show_problems":[\s\S]*openAuditWorkspace\("overview"\)/);
-  assert.match(route, /case "show_output":[\s\S]*openAuditWorkspace\("runtime", true\)/);
-  assert.doesNotMatch(route, /setWorkbenchBottomPanel\(true, "(?:problems|output)"\)/);
-  assert.match(appState, /snapshot\.bottomPanel\.activeView !== "terminal"/);
-  assert.match(appState, /open:\s*false,\s*activeView:\s*"terminal"/);
+  assert.match(commandCenter, /case "show_problems": await d\.actions\.openAudit\("overview"\)/);
+  assert.match(commandCenter, /case "show_output": await d\.actions\.openAudit\("runtime", true\)/);
+  assert.doesNotMatch(commandCenter, /setWorkbenchBottomPanel\(true, "(?:problems|output)"\)/);
+  assert.match(workbenchState, /snapshot\.bottomPanel\.activeView !== "terminal"/);
+  assert.match(workbenchState, /open:\s*false,\s*activeView:\s*"terminal"/);
   assert.match(audit, /observabilityFocusSerial/);
   assert.match(kernel, /focusToken=\{observabilityFocusSerial\}/);
   assert.match(observability, /scrollIntoView\(\{ block: "start", behavior: "smooth" \}\)/);
@@ -268,7 +264,7 @@ test("toate familiile de taburi folosesc segmented controlul tactil aprobat", ()
   const designSystem = source("../src/routes/design-system.css");
   const projectPane = source("../src/lib/components/ProjectPane.svelte");
   const inspector = source("../src/lib/components/InspectorPane.svelte");
-  const designWorkspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
+  const designWorkspace = source("../src/lib/components/creation/design-system/font-manager/FontInstaller.svelte");
   const documentBar = source("../src/lib/components/workbench/DocumentBar.svelte");
   const terminal = source("../src/lib/components/TerminalPane.svelte");
   const audit = source("../src/lib/components/audit/AuditWorkspace.svelte");
@@ -331,6 +327,8 @@ test("inspectorul HTML CSS și JS folosește o singură suprafață vizuală", (
 
   assert.match(inspector, /class="inspector-scroll inspector-editor-scroll"/);
   assert.match(inspector, /\.inspector-editor-scroll\s*\{[^}]*padding:\s*0;/);
+  assert.match(inspector, /\.inspector-route\s*\{[^}]*flex-direction:\s*column;/);
+  assert.match(inspector, /\.inspector-route\s*\{[^}]*min-width:\s*0;/);
   assert.match(sections, /\.section\s*\{[^}]*border-bottom:\s*1px solid var\(--border-subtle\);/);
   assert.match(sections, /IconChevronDown/);
 
@@ -397,12 +395,12 @@ test("taburile documentelor derulează exclusiv orizontal", () => {
   const documentBar = source("../src/lib/components/workbench/DocumentBar.svelte");
   const designSystem = source("../src/routes/design-system.css");
   const smoothWheel = source("../src/lib/ui/smooth-wheel.ts");
-  const route = source("../src/routes/+page.svelte");
+  const lifecycle = source("../src/lib/application/workspace-page-lifecycle.ts");
 
   assert.match(documentBar, /\.document-tabs\s*\{[\s\S]*overflow-x:\s*auto;/);
   assert.match(documentBar, /\.document-tabs\s*\{[\s\S]*overflow-y:\s*hidden;/);
-  assert.match(documentBar, /new ResizeObserver\(updateDocumentScrollCues\)/);
-  assert.match(documentBar, /onscroll=\{updateDocumentScrollCues\}/);
+  assert.match(documentBar, /new ResizeObserver\(\(\) => scheduleDocumentLayout\(\)\)/);
+  assert.match(documentBar, /onscroll=\{\(\) => scheduleDocumentLayout\(\)\}/);
   assert.match(documentBar, /class:can-scroll-left=\{canScrollDocumentsLeft\}/);
   assert.match(documentBar, /class:can-scroll-right=\{canScrollDocumentsRight\}/);
   assert.match(documentBar, /\.document-tabs-shell\.can-scroll-left::before,[\s\S]*\.document-tabs-shell\.can-scroll-right::after/);
@@ -416,8 +414,10 @@ test("taburile documentelor derulează exclusiv orizontal", () => {
   assert.match(smoothWheel, /const fallbackAxis = preferredAxis === "x" \? "y" : "x"/);
   assert.match(smoothWheel, /Math\.exp\(-elapsed \/ EASING_TIME_CONSTANT_MS\)/);
   assert.match(smoothWheel, /prefers-reduced-motion: reduce/);
-  assert.match(route, /installSmoothWheelScrolling\(window\)/);
+  assert.match(lifecycle, /installSmoothScrolling:\s*installSmoothWheelScrolling/);
+  assert.match(lifecycle, /this\.platform\.installSmoothScrolling\(window\)/);
   assert.match(documentBar, /revealActiveDocumentTab/);
+  assert.match(documentBar, /requestAnimationFrame/);
   assert.match(documentBar, /behavior:\s*window\.matchMedia\("\(prefers-reduced-motion: reduce\)"\)\.matches/);
   assert.doesNotMatch(documentBar, /scrollIntoView/);
 });

@@ -1,11 +1,14 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     path::Path,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::{
     js::{
@@ -28,6 +31,7 @@ use crate::{
     project::{
         project_disk_manifest_changed_paths, read_project_disk_manifest, resolve_project_write_path,
     },
+    state::AppState,
     zola_links::template_contains_asset_path,
 };
 
@@ -138,6 +142,16 @@ pub fn save_project_workspace<R: Runtime>(
     workspace: &mut ProjectWorkspace,
     identity: &ProjectWorkspaceIdentity,
 ) -> Result<ProjectWorkspaceSaveReceipt, ProjectWorkspaceSaveError> {
+    if let Some(state) = app.try_state::<AppState>() {
+        state
+            .versioning_network_operation
+            .require_source_mutation_allowed(
+                "Save ProjectWorkspace",
+                &workspace.session.project_root,
+                &workspace.runtime_session_id(),
+            )
+            .map_err(ProjectWorkspaceSaveError::rejected)?;
+    }
     workspace
         .require_identity(identity)
         .map_err(ProjectWorkspaceSaveError::rejected)?;
@@ -182,7 +196,7 @@ pub fn save_project_workspace<R: Runtime>(
             || !workspace.binary_resources.is_empty()
             || !workspace.deleted_binary_resources.is_empty()
         {
-            let accepted_disk = workspace.accepted_disk.clone();
+            let accepted_disk = workspace.accepted_disk.as_ref().clone();
             workspace
                 .accept_saved_documents(
                     identity,
@@ -516,9 +530,9 @@ pub fn save_project_workspace<R: Runtime>(
 pub(super) struct MaterializedWorkspaceSave {
     pub(super) documents: FileBufferStore,
     pub(super) deleted_documents: BTreeSet<String>,
-    pub(super) accepted_page_js: BTreeMap<String, PageJsConfig>,
-    pub(super) binary_resources: BTreeMap<String, super::model::WorkspaceBinaryResource>,
-    pub(super) deleted_binary_resources: BTreeSet<String>,
+    pub(super) accepted_page_js: Arc<BTreeMap<String, PageJsConfig>>,
+    pub(super) binary_resources: Arc<BTreeMap<String, Arc<super::model::WorkspaceBinaryResource>>>,
+    pub(super) deleted_binary_resources: Arc<BTreeSet<String>>,
 }
 
 pub(super) fn materialize_workspace_for_projection(
@@ -586,7 +600,7 @@ fn materialize_workspace_for_save(
                 stage_materialized_text(&mut documents, &motion_path, source, now_ms)?;
             }
             None => {
-                let tracked = documents.files.remove(&motion_path).is_some();
+                let tracked = documents.files_mut().remove(&motion_path).is_some();
                 let exists_on_disk = project_root
                     .join(&motion_path)
                     .try_exists()
@@ -602,7 +616,8 @@ fn materialize_workspace_for_save(
                 }
             }
         }
-        accepted_page_js.insert(draft.template_path.clone(), draft.current.clone());
+        Arc::make_mut(&mut accepted_page_js)
+            .insert(draft.template_path.clone(), draft.current.clone());
     }
 
     let orphan_motion_sources = documents
@@ -615,9 +630,9 @@ fn materialize_workspace_for_save(
         })
         .collect::<Vec<_>>();
     for (motion_path, template_path) in orphan_motion_sources {
-        documents.files.remove(&motion_path);
+        documents.files_mut().remove(&motion_path);
         deleted_documents.insert(motion_path);
-        accepted_page_js.remove(&template_path);
+        Arc::make_mut(&mut accepted_page_js).remove(&template_path);
     }
 
     let mut template_paths = documents
@@ -639,9 +654,9 @@ fn materialize_workspace_for_save(
             read_page_motion_config(project_root, &documents, &template_path)?
         };
         if config.motion.is_some() {
-            accepted_page_js.insert(template_path.clone(), config.clone());
+            Arc::make_mut(&mut accepted_page_js).insert(template_path.clone(), config.clone());
         } else {
-            accepted_page_js.remove(&template_path);
+            Arc::make_mut(&mut accepted_page_js).remove(&template_path);
         }
         let runtime_plan = PageRuntimePlan::from_sources(&template_source, &config);
         required_anime_entry_modules.extend(runtime_plan.anime_entry_modules());
@@ -722,7 +737,7 @@ fn materialize_workspace_for_save(
                     delete.relative_path
                 ));
             }
-            documents.files.remove(&delete.relative_path);
+            documents.files_mut().remove(&delete.relative_path);
             deleted_documents.insert(delete.relative_path);
         }
     }
@@ -831,7 +846,7 @@ fn materialize_managed_text_asset(
         if required {
             deleted_documents.remove(relative_path);
         } else {
-            documents.files.remove(relative_path);
+            documents.files_mut().remove(relative_path);
             deleted_documents.insert(relative_path.to_string());
         }
         return Ok(());
@@ -948,7 +963,7 @@ fn remove_legacy_public_motion_asset(
     };
     let actual_sha256 = format!("{:x}", Sha256::digest(&current));
     if actual_sha256 == expected_sha256 {
-        documents.files.remove(relative_path);
+        documents.files_mut().remove(relative_path);
         deleted_documents.insert(relative_path.to_string());
     } else {
         // A divergent file is authored code. The obsolete generated tag is
@@ -1019,7 +1034,7 @@ fn workspace_binary_writes(
         .map(|entry| entry.relative_path.as_str())
         .collect::<HashSet<_>>();
     let mut writes = Vec::new();
-    for (path, resource) in &materialized.binary_resources {
+    for (path, resource) in materialized.binary_resources.iter() {
         if accepted_paths.contains(path.as_str()) {
             let disk_path = resolve_project_write_path(project_root, path)?;
             let disk = read_regular_binary_file(&disk_path, path)?.ok_or_else(|| {
@@ -1260,7 +1275,7 @@ fn plan_project_workspace_save(
                 }
                 (
                     true,
-                    entry.baseline_text.clone(),
+                    entry.baseline_text.to_string(),
                     entry.baseline.hash.clone(),
                 )
             }
@@ -1315,7 +1330,7 @@ fn plan_project_workspace_save(
         }
         planned_deletes.push(ProjectWorkspacePlannedDelete {
             relative_path: normalized,
-            before_text: entry.baseline_text.clone(),
+            before_text: entry.baseline_text.to_string(),
             before_hash: entry.baseline.hash.clone(),
         });
     }
@@ -1766,7 +1781,7 @@ mod tests {
                 size: baseline_text.len() as u64,
                 readonly: false,
             },
-            baseline_text: baseline_text.to_string(),
+            baseline_text: baseline_text.to_string().into(),
             draft: None,
             revision: 1,
         });

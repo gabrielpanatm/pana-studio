@@ -1,4 +1,4 @@
-import type { CssProperty } from "$lib/types";
+import type { CssProperty } from "$lib/css/property-contract";
 
 export const CSS_BACKGROUND_SCHEMA_VERSION = 1;
 

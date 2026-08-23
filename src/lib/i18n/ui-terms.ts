@@ -1,7 +1,6 @@
 /** Mapare canonică între conceptele shell-ului și ID-urile Fluent. */
 export const UI_TERM_IDS = Object.freeze({
   editor: "workbench-editor",
-  themes: "workbench-themes",
   templates: "workbench-templates",
   components: "workbench-components",
   blocks: "workbench-blocks",

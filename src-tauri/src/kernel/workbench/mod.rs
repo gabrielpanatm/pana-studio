@@ -1,4 +1,5 @@
 mod model;
+mod projection_persistence;
 mod runtime;
 mod storage;
 
@@ -10,5 +11,6 @@ pub use model::{
     WorkbenchProjectEntrySelection, WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface,
     WORKBENCH_COMMAND_SCHEMA_VERSION, WORKBENCH_MAX_OPEN_DOCUMENTS, WORKBENCH_SCHEMA_VERSION,
 };
+pub use projection_persistence::WorkbenchProjectionPersistence;
 pub use runtime::WorkbenchRuntime;
 pub use storage::{persist_latest_workbench, persist_workbench, read_persisted_workbench};

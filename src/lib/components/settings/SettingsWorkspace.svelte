@@ -23,13 +23,26 @@
   import StoragePane from "$lib/components/settings/StoragePane.svelte";
   import { readAppHome } from "$lib/application/io";
   import { localeOptions, l10n, t } from "$lib/i18n/runtime.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { ApplicationPreferencesState } from "$lib/application/preferences.svelte";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
   import type { GlobalStatusKind } from "$lib/status/global-status";
-  import type { AppHomeSnapshot } from "$lib/types";
+  import type { WorkspaceLayoutState } from "$lib/ui/workspace-layout.svelte";
+  import type { AiContextStatus } from "$lib/ai/contracts";
+  import type { AppHomeSnapshot } from "$lib/application/contracts";
 
   type SettingsSection = "general" | "ai" | "system" | "storage" | "about";
 
-  let { app }: { app: AppState } = $props();
+  let {
+    aiContextStatus,
+    applicationPreferences,
+    globalStatus,
+    workspaceLayout,
+  }: {
+    aiContextStatus: AiContextStatus | null;
+    applicationPreferences: ApplicationPreferencesState;
+    globalStatus: GlobalStatusState;
+    workspaceLayout: WorkspaceLayoutState;
+  } = $props();
 
   let activeSection = $state<SettingsSection>("general");
   let appHome = $state<AppHomeSnapshot | null>(null);
@@ -52,22 +65,22 @@
       { label: t("settings-directory-write-authority"), value: appHome.writeAuthorityWalDir },
     ];
   });
-  const effectiveLanguageName = $derived(l10n.nativeName(app.uiLocale));
+  const effectiveLanguageName = $derived(l10n.nativeName(applicationPreferences.locale));
   const effectiveThemeName = $derived(
-    t(app.uiTheme === "dark" ? "common-dark" : "common-light"),
+    t(applicationPreferences.theme === "dark" ? "common-dark" : "common-light"),
   );
   const languagePreferenceValue = $derived.by(() => {
-    const preference = app.applicationSettings?.preferences.language;
+    const preference = applicationPreferences.snapshot?.preferences.language;
     return preference?.mode === "fixed" ? preference.value : "system";
   });
   const themePreference = $derived(
-    app.applicationSettings?.preferences.theme ?? { mode: "system" as const },
+    applicationPreferences.snapshot?.preferences.theme ?? { mode: "system" as const },
   );
   const accentPreference = $derived(
-    app.applicationSettings?.preferences.accent ?? { mode: "system" as const },
+    applicationPreferences.snapshot?.preferences.accent ?? { mode: "system" as const },
   );
   const fixedAccentValue = $derived(
-    accentPreference.mode === "fixed" ? accentPreference.value : app.uiAccent,
+    accentPreference.mode === "fixed" ? accentPreference.value : applicationPreferences.accent,
   );
 
   onMount(() => {
@@ -92,19 +105,18 @@
     if (!value) return;
     try {
       await navigator.clipboard.writeText(value);
-      app.setGlobalStatus(t("settings-directory-copy-success", { label }), "saved");
+      globalStatus.set(t("settings-directory-copy-success", { label }), "saved");
     } catch {
-      app.setGlobalStatus(t("settings-directory-copy-failure", { label }), "error");
+      globalStatus.set(t("settings-directory-copy-failure", { label }), "error");
     }
   }
 
   function resetWorkspaceLayout() {
-    app.resetResize("left");
-    app.resetResize("right");
-    app.resetResize("terminal");
-    app.leftPaneCollapsed = false;
-    app.rightPaneCollapsed = false;
-    app.setGlobalStatus(t("settings-workspace-reset-status"), "restored");
+    workspaceLayout.resetResize("left");
+    workspaceLayout.resetResize("right");
+    workspaceLayout.resetResize("terminal");
+    workspaceLayout.expandSidebars();
+    globalStatus.set(t("settings-workspace-reset-status"), "restored");
   }
 
   function selectSettingsSection(section: SettingsSection) {
@@ -129,7 +141,7 @@
 
   function updateLanguage(event: Event) {
     const value = (event.currentTarget as HTMLSelectElement).value;
-    void app.persistApplicationSettingsPatch(
+    void applicationPreferences.persistPatch(
       {
         language: value === "system"
           ? { mode: "system" }
@@ -140,7 +152,7 @@
   }
 
   function setAccentPreference(mode: "system" | "brand") {
-    void app.persistApplicationSettingsPatch(
+    void applicationPreferences.persistPatch(
       { accent: { mode } },
       t("diagnostic-application-settings-save-failed"),
     );
@@ -148,7 +160,7 @@
 
   function setFixedAccent(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value;
-    void app.persistApplicationSettingsPatch(
+    void applicationPreferences.persistPatch(
       { accent: { mode: "fixed", value } },
       t("diagnostic-application-settings-save-failed"),
     );
@@ -262,7 +274,7 @@
               <h2 id="appearance-title">{t("settings-appearance-title")}</h2>
               <p>{t("settings-appearance-description")}</p>
             </div>
-            {#if app.applicationSettingsLoading}
+            {#if applicationPreferences.loading}
               <span class="subtle-status">{t("common-loading")}</span>
             {/if}
           </div>
@@ -278,7 +290,7 @@
             <select
               id="application-language"
               value={languagePreferenceValue}
-              disabled={app.applicationSettingsLoading}
+              disabled={applicationPreferences.loading}
               onchange={updateLanguage}
             >
               <option value="system">
@@ -299,7 +311,7 @@
                 type="button"
                 class:selected={themePreference.mode === "system"}
                 aria-pressed={themePreference.mode === "system"}
-                onclick={() => app.setApplicationThemePreference({ mode: "system" })}
+                onclick={() => applicationPreferences.setThemePreference({ mode: "system" })}
               >
                 <span class="theme-preview system"><IconDeviceDesktop size={20} stroke={1.8} /></span>
                 <span>
@@ -311,7 +323,7 @@
               type="button"
               class:selected={themePreference.mode === "fixed" && themePreference.value === "light"}
               aria-pressed={themePreference.mode === "fixed" && themePreference.value === "light"}
-              onclick={() => app.setApplicationTheme("light")}
+              onclick={() => applicationPreferences.setTheme("light")}
             >
               <span class="theme-preview light"><IconSun size={20} stroke={1.8} /></span>
               <span>
@@ -323,7 +335,7 @@
               type="button"
               class:selected={themePreference.mode === "fixed" && themePreference.value === "dark"}
               aria-pressed={themePreference.mode === "fixed" && themePreference.value === "dark"}
-              onclick={() => app.setApplicationTheme("dark")}
+              onclick={() => applicationPreferences.setTheme("dark")}
             >
               <span class="theme-preview dark"><IconMoonStars size={20} stroke={1.8} /></span>
               <span>
@@ -346,11 +358,11 @@
                 aria-pressed={accentPreference.mode === "system"}
                 onclick={() => setAccentPreference("system")}
               >
-                <span class="accent-swatch" style={`--swatch: ${app.uiAccent}`}></span>
+                <span class="accent-swatch" style={`--swatch: ${applicationPreferences.accent}`}></span>
                 <span>
                   <strong>{t("settings-accent-system")}</strong>
-                  <small>{t("settings-accent-system-value", { accent: app.uiAccent })}</small>
-                  {#if app.applicationSettings?.effective.accentSource === "fallback"}
+                  <small>{t("settings-accent-system-value", { accent: applicationPreferences.accent })}</small>
+                  {#if applicationPreferences.snapshot?.effective.accentSource === "fallback"}
                     <small>{t("settings-accent-fallback")}</small>
                   {/if}
                 </span>
@@ -363,7 +375,7 @@
               >
                 <span
                   class="accent-swatch"
-                  style={`--swatch: ${app.applicationSettings?.brandAccent ?? app.uiAccent}`}
+                  style={`--swatch: ${applicationPreferences.snapshot?.brandAccent ?? applicationPreferences.accent}`}
                 ></span>
                 <span>
                   <strong>{t("settings-accent-brand")}</strong>
@@ -407,8 +419,8 @@
           <p>{t("settings-ai-description")}</p>
         </section>
         <AiIntegrationPane
-          status={app.aiContextStatus}
-          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as GlobalStatusKind)}
+          status={aiContextStatus}
+          onStatusUpdate={(text, kind) => globalStatus.set(text, kind as GlobalStatusKind)}
         />
       </div>
     {:else if activeSection === "system"}
@@ -458,17 +470,17 @@
 
         <WriteAuthorityRecoveryControl
           refreshToken={diagnosticsRefreshToken}
-          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
+          onStatusUpdate={(text, kind) => globalStatus.set(text, kind)}
         />
 
         <ObservabilityLogControl
           projectKey="application"
           refreshToken={diagnosticsRefreshToken}
-          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
+          onStatusUpdate={(text, kind) => globalStatus.set(text, kind)}
         />
       </div>
     {:else if activeSection === "storage"}
-      <StoragePane {app} />
+      <StoragePane {globalStatus} />
     {:else}
       <div class="content-column">
         <section class="about-card">

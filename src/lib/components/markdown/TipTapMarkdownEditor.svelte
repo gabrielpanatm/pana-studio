@@ -379,7 +379,7 @@
           const nextMarkdown = editor?.getMarkdown() ?? syncedMarkdown;
           await onFlushSnapshot(nextMarkdown);
           flushedLocalEditVersion = Math.max(flushedLocalEditVersion, flushingVersion);
-        })
+        }, () => localEditVersion !== flushedLocalEditVersion)
       : () => {};
 
     return () => {

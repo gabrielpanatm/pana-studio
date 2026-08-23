@@ -5,7 +5,7 @@ import {
   setSelectedSourceProjection,
   type CodeSelectionPresentation,
 } from "$lib/editor/codemirror";
-import type { SourceLanguage } from "$lib/types";
+import type { SourceLanguage } from "$lib/application/contracts";
 import { defaultKeymap } from "@codemirror/commands";
 import {
   bracketMatching,
@@ -27,7 +27,7 @@ import {
   EditorView,
   type ViewUpdate,
 } from "@codemirror/view";
-import type { FileBufferTextChange } from "$lib/types";
+import type { FileBufferTextChange } from "$lib/project/workspace-contract";
 
 type CodeEditorControllerOptions = {
   host: HTMLDivElement;

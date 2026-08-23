@@ -3,12 +3,10 @@ import {
   invalidateFileBufferDraftSyncCursor,
 } from "$lib/session/file-buffer-draft-sync";
 import { flushWorkspaceMutationInputs } from "$lib/session/workspace-mutation-coordinator";
-import type {
-  PageContractAuthorityReceipt,
-  PageJsConfig,
-  PageJsDraftStageReceipt,
-  ProjectWorkspaceMutationReceipt,
-} from "$lib/types";
+import type { PageJsDraftStageReceipt } from "$lib/js/contracts";
+import type { PageJsConfig } from "$lib/js/contracts";
+import type { PageContractAuthorityReceipt } from "$lib/page-contracts/contracts";
+import type { ProjectWorkspaceMutationReceipt } from "$lib/project/workspace-contract";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export type PageContractProjectionHost = {

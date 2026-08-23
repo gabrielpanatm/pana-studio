@@ -1,4 +1,4 @@
-import type { HtmlPaletteElement } from "$lib/project/html-palette";
+import type { HtmlPaletteElement } from "$lib/html/palette";
 import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import type { DropPosition } from "$lib/ui/drag";
@@ -46,14 +46,21 @@ function paletteElementValue(value: unknown): HtmlPaletteElement | null {
   const tag = stringValue(data.tag).toLowerCase();
   const id = stringValue(data.id) || tag;
   const label = stringValue(data.label) || tag;
+  const kind = data.kind === "html"
+    ? "html"
+    : data.kind === "block" ? "block" : null;
   if (!/^[a-z][a-z0-9-]*$/.test(tag)) return null;
+  if (!kind) return null;
+  const blockId = stringValue(data.blockId) || undefined;
+  const blockKind = data.blockKind === "js"
+    ? "js"
+    : data.blockKind === "css" ? "css" : data.blockKind === "static" ? "static" : undefined;
+  if (kind === "block" && (!blockId || !blockKind)) return null;
   return {
     id,
-    kind: data.kind === "block" ? "block" : "html",
-    blockId: stringValue(data.blockId) || undefined,
-    blockKind: data.blockKind === "js"
-      ? "js"
-      : data.blockKind === "css" ? "css" : data.blockKind === "static" ? "static" : undefined,
+    kind,
+    blockId,
+    blockKind,
     tag,
     label,
     description: stringValue(data.description),

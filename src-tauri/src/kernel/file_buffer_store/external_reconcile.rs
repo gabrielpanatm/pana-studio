@@ -767,15 +767,14 @@ pub(crate) fn commit_clean_external_reconcile(
     let mut invalidated_paths = Vec::new();
     for staged_item in staged.items {
         let entry = store
-            .files
-            .get_mut(&staged_item.target.relative_path)
+            .entry_mut(&staged_item.target.relative_path)
             .expect("CAS validated every staged FileBufferStore entry");
         let before_revision = entry.revision;
         let before_baseline = entry.baseline.clone();
         let before_current_hash = entry.current_hash();
         if staged_item.outcome != KernelExternalDiskReconcileItemOutcome::Unchanged {
             entry.baseline = staged_item.disk_baseline.clone();
-            entry.baseline_text = staged_item.text;
+            entry.baseline_text = staged_item.text.into();
             entry.draft = None;
             entry.revision = entry.revision.saturating_add(1);
             effective_paths.push(entry.relative_path.clone());
@@ -1080,7 +1079,11 @@ fn preview_relevant(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, time::UNIX_EPOCH};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{Instant, UNIX_EPOCH},
+    };
 
     use crate::{
         kernel::file_buffer_store::{
@@ -1440,6 +1443,102 @@ mod tests {
         fs::remove_dir_all(outside).unwrap();
     }
 
+    #[test]
+    #[ignore = "performance baseline; run through npm run performance:baseline"]
+    fn performance_baseline_external_reconcile_large_batch() {
+        const FILE_COUNT: usize = 96;
+        let sample_count = std::env::var("PANA_PERFORMANCE_SAMPLE_COUNT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value >= 20)
+            .unwrap_or(25);
+        let warmup_count = std::env::var("PANA_PERFORMANCE_WARMUP_COUNT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(3);
+        let root = test_root("performance-baseline");
+        let paths = (0..FILE_COUNT)
+            .map(|index| format!("templates/performance/item-{index:03}.html"))
+            .collect::<Vec<_>>();
+        let old_sources = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                let text = format!(
+                    "<article data-index=\"{index}\">{}</article>\n",
+                    "vechi ".repeat(128)
+                );
+                write_text(&root, path, &text);
+                (path.clone(), text)
+            })
+            .collect::<Vec<_>>();
+        let mut base_store = FileBufferStore::new(
+            "session-1",
+            root.to_string_lossy(),
+            1,
+            FileBufferStoreLimits {
+                max_files: FILE_COUNT + 16,
+                max_file_bytes: 128 * 1024,
+                max_total_bytes: 32 * 1024 * 1024,
+            },
+        );
+        for (path, text) in &old_sources {
+            base_store.insert_loaded_file(entry(&root, path, text));
+        }
+        let mut total_bytes = 0_u64;
+        for (index, path) in paths.iter().enumerate() {
+            let text = format!(
+                "<article data-index=\"{index}\">{}</article>\n",
+                "nou extern ".repeat(128)
+            );
+            total_bytes += text.len() as u64;
+            write_text(&root, path, &text);
+        }
+        let path_refs = paths.iter().map(String::as_str).collect::<Vec<_>>();
+        let input = input_for(&root, &path_refs);
+        let mut samples = Vec::with_capacity(sample_count);
+        for sample in 0..(warmup_count + sample_count) {
+            let mut store = base_store.clone();
+            let started = Instant::now();
+            let plan = ready(plan_clean_external_reconcile(
+                &store,
+                input.clone(),
+                sample as u128 + 10,
+            ));
+            let staged = staged(read_clean_external_reconcile_plan(
+                plan,
+                sample as u128 + 11,
+            ));
+            let receipt = commit_clean_external_reconcile(&mut store, staged, sample as u128 + 12);
+            assert_eq!(receipt.status, KernelExternalDiskReconcileStatus::Applied);
+            assert_eq!(receipt.reconciled_count, FILE_COUNT);
+            if sample >= warmup_count {
+                samples.push(started.elapsed().as_micros().min(u64::MAX as u128) as u64);
+            }
+        }
+        samples.sort_unstable();
+        let percentile =
+            |percent: usize| samples[(samples.len() * percent).div_ceil(100).saturating_sub(1)];
+        let p95 = percentile(95);
+        eprintln!(
+            "[pana-performance] {}",
+            serde_json::json!({
+                "schemaVersion": 1,
+                "operation": "external_reconcile",
+                "variant": "plan_read_commit",
+                "sampleCount": samples.len(),
+                "samplesUs": samples,
+                "p50Us": percentile(50),
+                "p95Us": p95,
+                "maxUs": samples.last().copied().unwrap_or_default(),
+                "requestedCount": FILE_COUNT,
+                "totalBytes": total_bytes,
+            })
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn ready(result: CleanExternalReconcilePlanResult) -> CleanExternalReconcilePlan {
         match result {
             CleanExternalReconcilePlanResult::Ready(plan) => *plan,
@@ -1511,7 +1610,7 @@ mod tests {
                 size: metadata.len(),
                 readonly: metadata.permissions().readonly(),
             },
-            baseline_text: text.to_string(),
+            baseline_text: text.to_string().into(),
             draft: None,
             revision: 1,
         }

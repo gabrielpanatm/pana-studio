@@ -1,14 +1,15 @@
 import type {
-  KernelProjectTransitionDecisionRetentionHotJournal,
-  KernelProjectTransitionDecisionRetentionHotJournalDiskState,
-  KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction,
   RecoveryCoordinatorDiagnostic,
   RecoveryCoordinatorScan,
-  RecoveryCoordinatorStatus,
   RecoveryJournalFamily,
   RecoveryJournalFamilyStatus,
   RecoveryJournalFamilySummary,
-} from "$lib/types";
+} from "$lib/kernel/recovery-contract";
+import type {
+  KernelProjectTransitionDecisionRetentionHotJournal,
+  KernelProjectTransitionDecisionRetentionHotJournalDiskState,
+  KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction,
+} from "$lib/project/transition-contract";
 import { l10n, t } from "$lib/i18n/runtime.svelte";
 
 export type RecoveryCoordinatorTone = "idle" | "clean" | "blocked" | "error";
@@ -59,12 +60,6 @@ export function recoveryCoordinatorSummary(
     }),
     blocked: true,
   };
-}
-
-export function recoveryCoordinatorStatusLabel(status: RecoveryCoordinatorStatus): string {
-  if (status === "clean") return t("project-recovery-status-clean");
-  if (status === "needs_attention") return t("project-recovery-status-attention");
-  return t("project-recovery-status-unreadable");
 }
 
 export function recoveryJournalFamilyLabel(family: RecoveryJournalFamily): string {

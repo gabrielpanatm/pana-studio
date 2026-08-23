@@ -1,6 +1,7 @@
 # Reconstruire incrementală `ProjectModel`
 
 Data: 2026-07-31
+Actualizat: 2026-08-21
 
 ## Rezultat
 
@@ -10,17 +11,31 @@ snapshot-ul exact al candidatului și lista exactă de fișiere din receipt-ul
 tranzacției, reparsează template-ul schimbat și publică numai un model complet
 și verificat.
 
-Pe `/home/gabriel/Documente/studio.pana.tm.ro/sursa`, în build release warm:
+Pe fixture-ul determinist extins `40 pagini / 20 componente / 200 noduri`, în
+build release warm:
 
-| Cale | Mostre | p95 |
+| Cale | Mostre | Înainte p95 | După p95 | Diferență |
+| --- | ---: | ---: | ---: | ---: |
+| editare HTML incrementală | 25 | 40,902 ms | 14,728 ms | −64,0% |
+| oracle complet | 5 | 56,301 ms | 28,416 ms | −49,5% |
+| deschidere proiect | 20 | 54,526 ms | 30,619 ms | −43,8% |
+| external reconcile | 25 | 7,039 ms | 6,871 ms | −2,4% |
+
+Fast-path-ul a avut zero fallback și fiecare rezultat a fost semantic identic
+cu snapshot-ul produs de builder-ul complet. CSS, cale neafectată de această
+schimbare, a rămas la 0,783 ms mediană față de 0,773 ms înainte; p95-ul său
+submilisecundă variază între rulări cu zgomotul scheduler-ului.
+
+| Fază HTML | Înainte p95 | După p95 |
 | --- | ---: | ---: |
-| builder complet | 10 | 74 ms |
-| builder incremental | 25 | 37 ms |
-
-Fast-path-ul a avut zero fallback și fiecare rezultat a fost identic cu
-snapshot-ul produs de builder-ul complet. Ultima mostră incrementală s-a
-descompus în 1 ms clonare model, 29 ms parsare template, 1 ms
-`ComponentGraph`, 0 ms `BlockGraph` și 1 ms `TeraGraph`.
+| parse + reconciliere identități | 35,819 ms | 12,137 ms |
+| `ComponentGraph` | 3,371 ms | 0,793 ms |
+| `BlockGraph` | 0,085 ms | 0,094 ms |
+| content usages | 0,582 ms | 0,283 ms |
+| listing items | 0,063 ms | 0 ms, reutilizat |
+| dynamic widgets | 0,176 ms | 0,083 ms |
+| markdown | 0,001 ms | 0,001 ms |
+| node index | 0,263 ms | 0,238 ms |
 
 ## Contract Rust
 
@@ -59,11 +74,25 @@ schimbat, mecanismul:
 5. înlocuiește numai nodurile și sumarul template-ului, păstrând relațiile și
    restul grafului neschimbate.
 
-`ComponentGraph`, `BlockGraph` și `TeraGraph` sunt regenerate determinist din
-`SourceGraph`-ul deja actualizat. Pe fixture-ul real acest cost cumulat este de
-aproximativ 2 ms în release. Alegerea păstrează oracle-ul exact și evită o a
-doua autoritate de indexare; fragmentarea acestor derivate nu este necesară
-pentru bugetul de 50 ms.
+După confirmarea contractului stabil, un plan explicit de invalidare aplică:
+
+- upsert pe fișier pentru definițiile și invocările `ComponentGraph`, apoi
+  reconciliază determinist shadowing-ul, consumatorii și parametrii;
+- upsert pe fișier pentru instanțele `BlockGraph`;
+- înlocuirea exclusivă a `template_usages` pentru content models;
+- reutilizarea integrală a `ListingItemCatalog`, ale cărui intrări nu s-au
+  schimbat;
+- upsert local pentru dynamic widgets, urmat numai de reconcilierea globală a
+  ID-urilor duplicate;
+- înlocuirea proiecțiilor Markdown deja calculate în sumarul template-ului.
+
+Full builders rămân unica implementare pentru scanarea completă, oracle și full
+fallback. Un gard arhitectural respinge apelarea lor din hot-path-ul unui
+template. Nu există al doilea graf semantic sau cache paralel.
+
+Scannerul folosește acum un index al începuturilor de linie pentru `SourceRange`.
+Anterior, fiecare nod recalcula linia și coloana de la începutul sursei, ceea ce
+făcea parsarea cvadratică pe template-uri cu multe noduri.
 
 ## Fallback fail-closed
 
@@ -101,32 +130,34 @@ imediat, separat de commitul autoritativ.
 ## Oracle și observabilitate
 
 Testele serializează snapshot-ul incremental și pe cel al builder-ului complet
-și cer egalitate exactă pentru files/revision, `SourceGraph`, `TeraGraph`,
-`ComponentGraph`, `BlockGraph`, capabilities și diagnostics.
+și compară toate derivatele: `ComponentGraph`, `BlockGraph`, content models,
+listing items, dynamic widgets și Markdown. Sunt normalizate exclusiv
+identitățile runtime; ID-urile semantice rămân în comparație.
 
 Matricea include operațiile HTML, mutații consecutive, forward/Undo/Redo,
-extends/include/import/macro/block, inheritance de pagină, content/data/
-assets/styles/scripts, `load_data` static și dinamic, override local peste o
-temă activă, editarea temei, config/taxonomii, create/delete/rename, revision
-stale și rollback la sursă invalidă.
+extends/include/import/macro/repeat/native block, inheritance de pagină,
+content-field usage, listing item, dynamic widgets inclusiv ID duplicat,
+Markdown, content/data/assets/styles/scripts, `load_data` static și dinamic,
+override local peste o temă activă, editarea temei, config/taxonomii,
+create/delete/rename, revision stale, Undo/Redo și rollback la sursă invalidă.
 
 Evenimentele Rust pentru editor move și Undo/Redo raportează:
 
 - `incremental` sau `fullFallback` și motivul fallback-ului;
 - changed paths, template-uri și pagini invalidate;
 - noduri înlocuite/reutilizate și relații reutilizate;
-- clone, parse, `ComponentGraph`, `BlockGraph`, `TeraGraph` și durata totală.
+- clone, parse, `ComponentGraph`, `BlockGraph`, content usages, listing
+  reuse/update, dynamic widgets, Markdown, node index și durata totală, în
+  microsecunde.
 
-Testul release pe proiectul real este ignorat implicit și se activează cu
-`PANA_INCREMENTAL_BENCH_PROJECT`; testele CI obișnuite păstrează protecția
-algoritmică prin fast-path obligatoriu, contoare de reutilizare și egalitate
-exactă cu oracle-ul. Pragul temporal p95 rămâne separat pentru a nu transforma
-variația hardware a runnerului într-un test instabil.
+Benchmark-ul release se rulează prin `npm run performance:baseline`. Runner-ul
+generează fixture-ul controlat, setează `PANA_PERFORMANCE_BENCH_PROJECT` și
+aplică bugete executabile: HTML/model 20 ms, oracle complet 50 ms, project open
+40 ms, CSS 1,5 ms, external reconcile 10 ms și clone 1,5 ms. Raportul final are
+`budgetViolations: []`.
 
 ## Limită cunoscută
 
-Parserul Tera folosit de scanner este mult mai lent în build debug: pe
-template-ul real de aproximativ 20 KiB parsarea poate dura circa 600 ms. Acesta
-este cost de build neoptimizat; acceptance-ul release este 37 ms p95. Dacă
-template-ul își schimbă dependențele sau diagnosticele, rebuild-ul complet este
-intenționat și rămâne în afara fast-path-ului.
+Dacă template-ul își schimbă dependențele, topologia sau diagnosticele,
+rebuild-ul complet este intenționat și rămâne în afara fast-path-ului. Calea
+incrementală nu este extinsă la content/config/style topology.

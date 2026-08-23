@@ -1,14 +1,16 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { IconActivity, IconAlertTriangle, IconCircleCheck, IconRefresh } from "@tabler/icons-svelte";
-  import { readKernelObservabilityLog } from "$lib/project/io";
+  import {
+  readKernelObservabilityLog,
+} from "$lib/kernel/recovery-io";
   import { t } from "$lib/i18n/runtime.svelte";
   import type {
     KernelLogLevel,
     KernelObservabilityLogEvent,
     KernelObservabilityLogSnapshot,
     KernelObservabilityLogSourceFilter,
-  } from "$lib/types";
+  } from "$lib/kernel/observability-contract";
   import {
     formatKernelLogTime,
     kernelLogAttributeEntries,

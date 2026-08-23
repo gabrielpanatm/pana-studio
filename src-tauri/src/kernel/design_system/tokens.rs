@@ -729,7 +729,7 @@ $cycle-b: $cycle-a;
     #[test]
     fn pana_studio_theme_tokens_map_to_the_visual_catalog_without_frontend_heuristics() {
         let source = include_str!(
-            "../../../resources/theme-packs/pana-studio/theme/sass/css-framework/_variabile.scss"
+            "../../../resources/project-starters/pana-studio/project/sass/css-framework/_variabile.scss"
         );
         let catalog = build_catalog_from_sources(
             "/tmp/site",

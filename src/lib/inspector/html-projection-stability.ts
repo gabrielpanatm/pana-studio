@@ -1,9 +1,11 @@
 import type {
   EditableAttributes,
   InspectorHtmlPhysicalFacts,
+} from "$lib/canvas/contracts";
+import type {
   InspectorSelectionSummarySnapshot,
   SelectionSnapshot,
-} from "$lib/types";
+} from "$lib/editor/contracts";
 import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
 import { normalizeClassTokens } from "$lib/html/mutations";
 

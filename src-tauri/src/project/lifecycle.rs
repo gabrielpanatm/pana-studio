@@ -12,7 +12,7 @@ use super::{ProjectDiskManifest, StartupCandidateKind, StartupCandidateSnapshot}
 
 pub const PROJECT_LIFECYCLE_SCHEMA_VERSION: u32 = 1;
 pub const PROJECT_OPEN_INSPECTION_SCHEMA_VERSION: u32 = 1;
-pub const PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION: u32 = 4;
+pub const PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -460,8 +460,12 @@ fn require_operation(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+    use std::time::Instant;
+
     use super::*;
     use crate::kernel::project_workspace::ProjectOpenRecoveryConflictReason;
+    use crate::project::ProjectDiskManifestEntry;
 
     fn candidate(root: &str, token: &str) -> StartupCandidateSnapshot {
         StartupCandidateSnapshot {
@@ -612,6 +616,45 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_open_preparations_have_exactly_one_owner() {
+        let runtime = ProjectLifecycleRuntime::default();
+        let root = "/tmp/project-lifecycle-overlap";
+        let operation = runtime.begin_inspection(root).unwrap();
+        runtime
+            .publish_inspection(
+                &operation,
+                candidate(root, "candidate"),
+                manifest(root),
+                fingerprint(root),
+                recovery(root, ProjectOpenRecoveryStatus::Missing),
+            )
+            .unwrap();
+
+        let barrier = Arc::new(Barrier::new(3));
+        let mut threads = Vec::new();
+        for _ in 0..2 {
+            let runtime = runtime.clone();
+            let operation = operation.clone();
+            let barrier = barrier.clone();
+            threads.push(std::thread::spawn(move || {
+                barrier.wait();
+                runtime.begin_preparing(&operation, "candidate", true, None)
+            }));
+        }
+        barrier.wait();
+        let results = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
+        assert_eq!(
+            runtime.snapshot().unwrap().transition,
+            ProjectTransitionState::Preparing,
+        );
+    }
+
+    #[test]
     fn recovery_decision_is_bound_to_the_inspected_assessment() {
         let runtime = ProjectLifecycleRuntime::default();
         let root = "/tmp/project-lifecycle-recovery";
@@ -655,6 +698,41 @@ mod tests {
             snapshot.active_session.unwrap().runtime_session_id,
             "old-session"
         );
+    }
+
+    #[test]
+    fn reattach_then_close_clears_only_the_active_lifecycle_session() {
+        let runtime = ProjectLifecycleRuntime::default();
+        let root = "/tmp/project-lifecycle-reattach-close";
+        let session = ProjectSessionSnapshot {
+            schema_version: 2,
+            id: "stable".to_string(),
+            project_root: root.to_string(),
+            zola_root: root.to_string(),
+            session_dir: "/tmp/session".to_string(),
+            manifest_path: "/tmp/session/manifest.json".to_string(),
+            opened_at_ms: 7,
+            last_seen_at_ms: 7,
+            root_fingerprint: fingerprint(root),
+            scan_summary: crate::kernel::project_session::ProjectSessionScanSummary {
+                active_theme: None,
+                file_count: 0,
+                directory_count: 0,
+            },
+        };
+        let expected_runtime_session_id = session.runtime_instance_id();
+        let attached = runtime.attach_existing_session(&session).unwrap();
+        assert_eq!(
+            attached
+                .active_session
+                .as_ref()
+                .map(|active| active.runtime_session_id.as_str()),
+            Some(expected_runtime_session_id.as_str()),
+        );
+        let closed = runtime.clear_active("project_closed").unwrap();
+        assert!(closed.active_session.is_none());
+        assert_eq!(closed.transition, ProjectTransitionState::Idle);
+        assert!(closed.operation_id.is_none());
     }
 
     #[test]
@@ -777,5 +855,105 @@ mod tests {
             ready.active_session.unwrap().readiness,
             ActiveProjectReadiness::Ready
         ));
+    }
+
+    #[test]
+    #[ignore = "performance baseline; run explicitly with --ignored --nocapture"]
+    fn project_lifecycle_transition_cost_baseline() {
+        let small = lifecycle_runtime_measurement("small", 8);
+        let large = lifecycle_runtime_measurement("large", 1_000);
+        eprintln!(
+            "[Pană Studio][perf] project_lifecycle_transition \
+small_open_us={} small_reattach_us={} small_close_us={} small_receipt_bytes={} \
+large_open_us={} large_reattach_us={} large_close_us={} large_receipt_bytes={}",
+            small.open_us,
+            small.reattach_us,
+            small.close_us,
+            small.receipt_bytes,
+            large.open_us,
+            large.reattach_us,
+            large.close_us,
+            large.receipt_bytes,
+        );
+        assert!(large.receipt_bytes >= small.receipt_bytes);
+    }
+
+    struct LifecycleRuntimeMeasurement {
+        open_us: u128,
+        reattach_us: u128,
+        close_us: u128,
+        receipt_bytes: usize,
+    }
+
+    fn lifecycle_runtime_measurement(
+        label: &str,
+        manifest_file_count: usize,
+    ) -> LifecycleRuntimeMeasurement {
+        let runtime = ProjectLifecycleRuntime::default();
+        let root = format!("/tmp/project-lifecycle-perf-{label}");
+        let mut inspected_candidate = candidate(&root, "candidate");
+        inspected_candidate.entry_count = manifest_file_count;
+        let inspected_manifest = ProjectDiskManifest {
+            root: root.clone(),
+            files: (0..manifest_file_count)
+                .map(|index| ProjectDiskManifestEntry {
+                    relative_path: format!("templates/page-{index:04}.html"),
+                    modified_ms: 1,
+                    size: 1024,
+                    version_token: format!("token-{index}"),
+                })
+                .collect(),
+            truncated: false,
+            max_files: manifest_file_count.max(1),
+        };
+        let session = ProjectSessionSnapshot {
+            schema_version: 2,
+            id: format!("stable-{label}"),
+            project_root: root.clone(),
+            zola_root: root.clone(),
+            session_dir: format!("/tmp/session-{label}"),
+            manifest_path: format!("/tmp/session-{label}/manifest.json"),
+            opened_at_ms: 7,
+            last_seen_at_ms: 7,
+            root_fingerprint: fingerprint(&root),
+            scan_summary: crate::kernel::project_session::ProjectSessionScanSummary {
+                active_theme: None,
+                file_count: manifest_file_count,
+                directory_count: 1,
+            },
+        };
+
+        let open_started = Instant::now();
+        let operation = runtime.begin_inspection(&root).unwrap();
+        runtime
+            .publish_inspection(
+                &operation,
+                inspected_candidate,
+                inspected_manifest,
+                fingerprint(&root),
+                recovery(&root, ProjectOpenRecoveryStatus::Missing),
+            )
+            .unwrap();
+        runtime
+            .begin_preparing(&operation, "candidate", true, None)
+            .unwrap();
+        runtime.begin_commit(&operation).unwrap();
+        let opened = runtime.commit_session(&operation, &session).unwrap();
+        let open_us = open_started.elapsed().as_micros();
+
+        let reattach_started = Instant::now();
+        runtime.attach_existing_session(&session).unwrap();
+        let reattach_us = reattach_started.elapsed().as_micros();
+
+        let close_started = Instant::now();
+        runtime.clear_active("project_closed").unwrap();
+        let close_us = close_started.elapsed().as_micros();
+
+        LifecycleRuntimeMeasurement {
+            open_us,
+            reattach_us,
+            close_us,
+            receipt_bytes: serde_json::to_vec(&opened).unwrap().len(),
+        }
     }
 }

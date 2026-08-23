@@ -1,4 +1,5 @@
 import { serializeOverrides } from "$lib/css/serializer";
+import type { EditableStyles } from "$lib/css/contracts";
 import { buildPreviewStatusDocument } from "$lib/preview/bridge";
 import { collectDomTree } from "$lib/preview/selection";
 import {
@@ -8,24 +9,27 @@ import {
 import {
   acknowledgeCanvasProjectionPhases,
   readPreviewDocument,
-  type CanvasProjectionIdentity,
-  type CanvasProjectionPlan,
-  type PreviewPhaseReceipt,
-  type PreviewRuntimeEventKind,
-  type PreviewStylesheetPromotionMetrics,
-} from "$lib/project/io";
+} from "$lib/preview/io";
 import type {
-  EditableStyles,
-  PageSection,
+  CanvasProjectionIdentity,
+  CanvasProjectionPlan,
+  PreviewPhaseReceipt,
+  PreviewRuntimeEventKind,
+  PreviewStylesheetPromotionMetrics,
+} from "$lib/contracts/canvas-projection";
+import type { PageSection } from "$lib/canvas/contracts";
+import type {
   ProjectFile,
   ProjectLifecycleSnapshot,
-} from "$lib/types";
+} from "$lib/project/lifecycle-contract";
 import {
   PreviewRuntimeTransportError,
   type PreviewRuntime,
 } from "$lib/editor-runtime/preview-runtime";
 import { errorMessage } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
+import type { EditorSelectionSessionController } from "$lib/state/editor-selection-session.svelte";
+import { sameCanvasProjectionIdentity as canvasIdentityMatches } from "$lib/contracts/canvas-identity";
 
 export type PreviewRefreshLeaseHost = {
   sessionProjectRoot: string;
@@ -35,45 +39,60 @@ export type PreviewRefreshLeaseHost = {
   previewDomTreeSerial: number;
 };
 
-export type PreviewControllerHost = PreviewRefreshLeaseHost & {
-  previewFrame: HTMLIFrameElement | undefined;
-  canvasSurfaceElement: HTMLIFrameElement | null;
-  canvasSurfaceGeneration: number;
-  previewSrc: string;
-  previewReloadSerial: number;
-  previewWorkspaceRevision: string | null;
-  pendingCanvasProjection: CanvasProjectionPlan | null;
-  activeCanvasIdentity: CanvasProjectionIdentity | null;
-  activeCanvasUrl: string;
-  previewNavigationGuardActive?: boolean;
-  previewNavigationRecoveryUrl?: string | null;
-  canvasProjectionConfirmation: CanvasProjectionConfirmation | null;
-  previewSyncTimer: number | null;
-  domTreeFetchTimer: number | null;
-  previewDocumentMarkup: string | null;
-  activeRenderedPreviewPageFile: ProjectFile | null;
-  isActiveRenderedPreviewPage: boolean;
-  templateWorkbenchActive?: boolean;
-  projectStatus: string;
-  projectLifecycle: ProjectLifecycleSnapshot;
-  overrideRules: Record<string, EditableStyles>;
-  variableOverrides: Record<string, string>;
-  pageSections: PageSection[];
-  previewRuntime?: PreviewRuntime;
-  previewUrlForScannedFile: (file: ProjectFile) => string;
-  recordCanvasProjectionRuntimeEvent?: (
-    kind: PreviewRuntimeEventKind,
-    identity: CanvasProjectionIdentity,
-    durationMs: number,
-    diagnostic: string | null,
-    stylesheetMetrics?: PreviewStylesheetPromotionMetrics | null,
-  ) => Promise<void>;
-  refreshEditorNavigationSnapshot?: (
-    identity?: CanvasProjectionIdentity,
-    previewUrl?: string,
-    options?: { strict?: boolean },
-  ) => Promise<void>;
-  setPageSections?: (sections: PageSection[]) => void;
+export type PreviewControllerHost = {
+  session: PreviewRefreshLeaseHost;
+  surface: {
+    frame: HTMLIFrameElement | undefined;
+    canvasElement: HTMLIFrameElement | null;
+    generation: number;
+  };
+  navigation: {
+    src: string;
+    reloadSerial: number;
+    activeUrl: string;
+    guardActive: boolean;
+    recoveryUrl: string | null;
+  };
+  projection: {
+    workspaceRevision: string | null;
+    pending: CanvasProjectionPlan | null;
+    activeIdentity: CanvasProjectionIdentity | null;
+    confirmation: CanvasProjectionConfirmation | null;
+  };
+  timers: {
+    previewSync: number | null;
+    domTreeFetch: number | null;
+  };
+  document: {
+    markup: string | null;
+    activePage: ProjectFile | null;
+    isActivePage: boolean;
+    projectStatus: string;
+  };
+  context: {
+    lifecycle: ProjectLifecycleSnapshot;
+    templateWorkbenchActive: boolean;
+  };
+  styles: {
+    overrideRules: Record<string, EditableStyles>;
+    variableOverrides: Record<string, string>;
+  };
+  sections: {
+    items: PageSection[];
+    set: (sections: PageSection[]) => void;
+  };
+  selection: Pick<EditorSelectionSessionController, "refreshNavigationSnapshot">;
+  runtime?: PreviewRuntime;
+  commands: {
+    urlForFile: (file: ProjectFile) => string;
+    recordRuntimeEvent?: (
+      kind: PreviewRuntimeEventKind,
+      identity: CanvasProjectionIdentity,
+      durationMs: number,
+      diagnostic: string | null,
+      stylesheetMetrics?: PreviewStylesheetPromotionMetrics | null,
+    ) => Promise<void>;
+  };
 };
 
 export type CanvasProjectionConfirmation = {
@@ -81,6 +100,7 @@ export type CanvasProjectionConfirmation = {
   surfaceGeneration: number;
   startedAt: number;
   lastPhase: "prepared";
+  acknowledgement: Promise<void> | null;
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
@@ -117,9 +137,9 @@ export function isCanvasProjectionSurfaceUnavailableError(
 
 export function hasMountedCanvasProjectionSurface(host: PreviewControllerHost) {
   return Boolean(
-    host.canvasSurfaceElement
-    && host.canvasSurfaceElement === host.previewFrame
-    && host.canvasSurfaceElement.contentWindow,
+    host.surface.canvasElement
+    && host.surface.canvasElement === host.surface.frame
+    && host.surface.canvasElement.contentWindow,
   );
 }
 
@@ -127,25 +147,25 @@ function beginGuardedPreviewNavigation(
   host: PreviewControllerHost,
   candidateUrl: string,
 ) {
-  const currentUrl = host.activeCanvasUrl && host.activeCanvasUrl !== "about:blank"
-    ? host.activeCanvasUrl
-    : host.previewSrc;
-  host.previewNavigationRecoveryUrl = host.activeCanvasIdentity
+  const currentUrl = host.navigation.activeUrl && host.navigation.activeUrl !== "about:blank"
+    ? host.navigation.activeUrl
+    : host.navigation.src;
+  host.navigation.recoveryUrl = host.projection.activeIdentity
     && currentUrl
     && currentUrl !== "about:blank"
     ? currentUrl
     : null;
-  host.previewNavigationGuardActive = true;
-  host.previewSrc = candidateUrl;
+  host.navigation.guardActive = true;
+  host.navigation.src = candidateUrl;
 }
 
 function restoreLastStyledPreviewAfterNavigationFailure(
   host: PreviewControllerHost,
 ) {
-  const recoveryUrl = host.previewNavigationRecoveryUrl;
-  if (!host.previewNavigationGuardActive || !recoveryUrl) return false;
-  host.previewNavigationRecoveryUrl = null;
-  host.previewSrc = recoveryUrl;
+  const recoveryUrl = host.navigation.recoveryUrl;
+  if (!host.navigation.guardActive || !recoveryUrl) return false;
+  host.navigation.recoveryUrl = null;
+  host.navigation.src = recoveryUrl;
   return true;
 }
 
@@ -153,13 +173,13 @@ export function settleGuardedPreviewNavigation(
   host: PreviewControllerHost,
   identity: CanvasProjectionIdentity | null,
 ) {
-  if (!host.previewNavigationGuardActive || !identity) return false;
+  if (!host.navigation.guardActive || !identity) return false;
   if (
-    !canvasIdentityMatches(identity, host.activeCanvasIdentity)
-    && !canvasIdentityMatches(identity, host.pendingCanvasProjection?.identity)
+    !canvasIdentityMatches(identity, host.projection.activeIdentity)
+    && !canvasIdentityMatches(identity, host.projection.pending?.identity)
   ) return false;
-  host.previewNavigationGuardActive = false;
-  host.previewNavigationRecoveryUrl = null;
+  host.navigation.guardActive = false;
+  host.navigation.recoveryUrl = null;
   return true;
 }
 
@@ -167,9 +187,9 @@ export function mountCanvasProjectionSurface(
   host: PreviewControllerHost,
   frame: HTMLIFrameElement,
 ) {
-  if (host.canvasSurfaceElement === frame) return host.canvasSurfaceGeneration;
-  if (host.canvasSurfaceElement) {
-    invalidatePreviewRefreshLease(host);
+  if (host.surface.canvasElement === frame) return host.surface.generation;
+  if (host.surface.canvasElement) {
+    invalidatePreviewRefreshLease(host.session);
     cancelCanvasProjectionConfirmation(
       host,
       new CanvasProjectionSurfaceUnavailableError(
@@ -177,30 +197,30 @@ export function mountCanvasProjectionSurface(
         t("preview-controller-surface-replaced"),
       ),
     );
-    host.pendingCanvasProjection = null;
-    host.previewWorkspaceRevision = null;
+    host.projection.pending = null;
+    host.projection.workspaceRevision = null;
   }
-  host.canvasSurfaceGeneration += 1;
-  host.canvasSurfaceElement = frame;
-  host.previewFrame = frame;
-  return host.canvasSurfaceGeneration;
+  host.surface.generation += 1;
+  host.surface.canvasElement = frame;
+  host.surface.frame = frame;
+  return host.surface.generation;
 }
 
 export function unmountCanvasProjectionSurface(
   host: PreviewControllerHost,
   frame: HTMLIFrameElement,
 ) {
-  if (host.canvasSurfaceElement !== frame) return false;
-  host.canvasSurfaceElement = null;
-  if (host.previewFrame === frame) host.previewFrame = undefined;
-  host.canvasSurfaceGeneration += 1;
-  invalidatePreviewRefreshLease(host);
+  if (host.surface.canvasElement !== frame) return false;
+  host.surface.canvasElement = null;
+  if (host.surface.frame === frame) host.surface.frame = undefined;
+  host.surface.generation += 1;
+  invalidatePreviewRefreshLease(host.session);
   cancelCanvasProjectionConfirmation(
     host,
     new CanvasProjectionSurfaceUnavailableError("surface_unmounted"),
   );
-  host.pendingCanvasProjection = null;
-  host.previewWorkspaceRevision = null;
+  host.projection.pending = null;
+  host.projection.workspaceRevision = null;
   return true;
 }
 
@@ -218,7 +238,7 @@ const PREVIEW_REVISION_DELAYS_MS = [120, 180, 260, 360, 520, 700, 900, 1200];
 export function previewReloadUrl(host: PreviewControllerHost, url: string) {
   if (url === "about:blank") return url;
   const next = new URL(url);
-  next.searchParams.set("__pana_reload", String(++host.previewReloadSerial));
+  next.searchParams.set("__pana_reload", String(++host.navigation.reloadSerial));
   return next.toString();
 }
 
@@ -298,17 +318,17 @@ async function waitForRenderedPreviewUrl(
   previewPage: ProjectFile,
   lease: PreviewRefreshLease,
 ): Promise<RenderedPreviewReady | null> {
-  const requiredRevision = host.previewWorkspaceRevision;
+  const requiredRevision = host.projection.workspaceRevision;
   let lastUrl = "";
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < PREVIEW_REVISION_ATTEMPTS; attempt += 1) {
     if (attempt > 0) {
       await wait(PREVIEW_REVISION_DELAYS_MS[Math.min(attempt, PREVIEW_REVISION_DELAYS_MS.length - 1)]);
-      if (!previewRefreshLeaseMatches(host, lease)) return null;
+      if (!previewRefreshLeaseMatches(host.session, lease)) return null;
     }
 
-    lastUrl = previewReloadUrl(host, host.previewUrlForScannedFile(previewPage));
+    lastUrl = previewReloadUrl(host, host.commands.urlForFile(previewPage));
     if (requiredRevision) {
       const stagedUrl = new URL(lastUrl);
       stagedUrl.searchParams.set("__pana_preview_revision", requiredRevision);
@@ -317,13 +337,13 @@ async function waitForRenderedPreviewUrl(
 
     try {
       const html = await readPreviewDocument(lastUrl);
-      if (!previewRefreshLeaseMatches(host, lease)) return null;
+      if (!previewRefreshLeaseMatches(host.session, lease)) return null;
       if (!requiredRevision || previewDocumentHasRevision(html, requiredRevision)) {
         return { url: lastUrl, revision: requiredRevision, html };
       }
       lastError = new Error(t("preview-controller-render-generation-pending"));
     } catch (error) {
-      if (!previewRefreshLeaseMatches(host, lease)) return null;
+      if (!previewRefreshLeaseMatches(host.session, lease)) return null;
       lastError = error;
     }
   }
@@ -343,12 +363,12 @@ async function waitForPreviewDocumentUrl(
   for (let attempt = 0; attempt < PREVIEW_REVISION_ATTEMPTS; attempt += 1) {
     if (attempt > 0) {
       await wait(PREVIEW_REVISION_DELAYS_MS[Math.min(attempt, PREVIEW_REVISION_DELAYS_MS.length - 1)]);
-      if (!previewRefreshLeaseMatches(host, lease)) return null;
+      if (!previewRefreshLeaseMatches(host.session, lease)) return null;
     }
     lastUrl = previewReloadUrl(host, previewUrl);
     try {
       const html = await readPreviewDocument(lastUrl);
-      if (!previewRefreshLeaseMatches(host, lease)) return null;
+      if (!previewRefreshLeaseMatches(host.session, lease)) return null;
       if (previewDocumentHasRevision(html, requiredRevision)) {
         return { url: lastUrl, revision: requiredRevision, html };
       }
@@ -356,7 +376,7 @@ async function waitForPreviewDocumentUrl(
         t("preview-controller-template-generation-pending"),
       );
     } catch (error) {
-      if (!previewRefreshLeaseMatches(host, lease)) return null;
+      if (!previewRefreshLeaseMatches(host.session, lease)) return null;
       lastError = error;
     }
   }
@@ -374,30 +394,10 @@ function samePreviewRoute(currentUrl: string, nextUrl: string) {
   }
 }
 
-function canvasIdentityMatches(
-  left: CanvasProjectionIdentity | null | undefined,
-  right: CanvasProjectionIdentity | null | undefined,
-) {
-  return Boolean(
-    left
-    && right
-    && left.projectRoot === right.projectRoot
-    && left.runtimeSessionId === right.runtimeSessionId
-    && left.workspaceRevision === right.workspaceRevision
-    && left.transactionId === right.transactionId
-    && left.previewRevision === right.previewRevision,
-  );
-}
-
-async function confirmPendingCanvasProjection(
-  host: PreviewControllerHost,
+function validateCanvasPhaseReceipts(
   plan: CanvasProjectionPlan,
   receipts: PreviewPhaseReceipt[],
 ) {
-  if (!canvasIdentityMatches(host.pendingCanvasProjection?.identity, plan.identity)) {
-    throw new Error(t("preview-controller-ack-stale"));
-  }
-
   const phases = receipts.map((receipt) => receipt.phase);
   const failed = phases.length === 1 && phases[0] === "failed";
   if (
@@ -422,7 +422,22 @@ async function confirmPendingCanvasProjection(
       throw new Error(t("preview-controller-ack-transaction-mismatch"));
     }
   }
+  return failed;
+}
+
+async function completePendingCanvasProjection(
+  host: PreviewControllerHost,
+  plan: CanvasProjectionPlan,
+  receipts: PreviewPhaseReceipt[],
+  failed: boolean,
+  confirmation: CanvasProjectionConfirmation,
+) {
   const confirmed = await acknowledgeCanvasProjectionPhases(receipts);
+  if (
+    host.projection.confirmation !== confirmation
+    || host.surface.generation !== confirmation.surfaceGeneration
+    || !canvasIdentityMatches(host.projection.pending?.identity, plan.identity)
+  ) throw new Error(t("preview-controller-ack-stale"));
   const expectedPhase = failed ? "failed" : "canonicalVerified";
   if (
     confirmed.phase !== expectedPhase
@@ -434,8 +449,8 @@ async function confirmPendingCanvasProjection(
   }
 
   if (failed) {
-    if (canvasIdentityMatches(host.pendingCanvasProjection?.identity, plan.identity)) {
-      host.pendingCanvasProjection = null;
+    if (canvasIdentityMatches(host.projection.pending?.identity, plan.identity)) {
+      host.projection.pending = null;
     }
     restoreLastStyledPreviewAfterNavigationFailure(host);
     throw new PreviewProjectionDiagnosticError(
@@ -446,22 +461,57 @@ async function confirmPendingCanvasProjection(
   if (!confirmed || confirmed.phase !== "canonicalVerified") {
     throw new Error(t("preview-controller-rust-transaction-unconfirmed"));
   }
-  host.activeCanvasIdentity = { ...plan.identity };
-  host.activeCanvasUrl = host.previewSrc;
-  host.previewNavigationGuardActive = false;
-  host.previewNavigationRecoveryUrl = null;
-  const readiness = host.projectLifecycle?.activeSession?.readiness.state ?? null;
+  host.projection.activeIdentity = { ...plan.identity };
+  host.navigation.activeUrl = host.navigation.src;
+  host.navigation.guardActive = false;
+  host.navigation.recoveryUrl = null;
+  const readiness = host.context.lifecycle?.activeSession?.readiness.state ?? null;
   if (!readiness || readiness === "ready" || readiness === "degraded") {
-    void host.refreshEditorNavigationSnapshot?.(plan.identity, host.previewSrc);
+    void host.selection.refreshNavigationSnapshot(plan.identity, host.navigation.src);
   }
-  if (canvasIdentityMatches(host.pendingCanvasProjection?.identity, plan.identity)) {
-    host.pendingCanvasProjection = null;
+  if (canvasIdentityMatches(host.projection.pending?.identity, plan.identity)) {
+    host.projection.pending = null;
   }
-  if (host.canvasProjectionConfirmation?.transactionId === plan.identity.transactionId) {
-    globalThis.clearTimeout(host.canvasProjectionConfirmation.timeout);
-    host.canvasProjectionConfirmation.resolve();
-    host.canvasProjectionConfirmation = null;
+  if (host.projection.confirmation === confirmation) {
+    globalThis.clearTimeout(confirmation.timeout);
+    confirmation.resolve();
+    host.projection.confirmation = null;
   }
+}
+
+async function confirmPendingCanvasProjection(
+  host: PreviewControllerHost,
+  plan: CanvasProjectionPlan,
+  receipts: PreviewPhaseReceipt[],
+) {
+  const failed = validateCanvasPhaseReceipts(plan, receipts);
+  if (
+    !failed
+    && !host.projection.pending
+    && canvasIdentityMatches(host.projection.activeIdentity, plan.identity)
+  ) return;
+  if (!canvasIdentityMatches(host.projection.pending?.identity, plan.identity)) {
+    throw new Error(t("preview-controller-ack-stale"));
+  }
+  const confirmation = host.projection.confirmation;
+  if (
+    !confirmation
+    || confirmation.transactionId !== plan.identity.transactionId
+    || confirmation.surfaceGeneration !== host.surface.generation
+  ) throw new Error(t("preview-controller-ack-stale"));
+  if (confirmation.acknowledgement) {
+    await confirmation.acknowledgement;
+    return;
+  }
+  const acknowledgement = completePendingCanvasProjection(
+    host,
+    plan,
+    receipts,
+    failed,
+    confirmation,
+  );
+  confirmation.acknowledgement = acknowledgement;
+  await acknowledgement;
 }
 
 function beginCanvasProjectionConfirmation(
@@ -475,7 +525,7 @@ function beginCanvasProjectionConfirmation(
     host,
     t("preview-controller-confirmation-superseded"),
   );
-  const surfaceGeneration = host.canvasSurfaceGeneration;
+  const surfaceGeneration = host.surface.generation;
   const startedAt = performance.now();
   let resolve!: () => void;
   let reject!: (error: Error) => void;
@@ -483,17 +533,21 @@ function beginCanvasProjectionConfirmation(
     resolve = accept;
     reject = deny;
   });
+  // Some confirmation owners fail before they can await the public barrier.
+  // Keep that rejection observable to explicit awaiters without leaking an
+  // unhandled promise from the internal cancellation path.
+  void promise.catch(() => undefined);
   const timeout = globalThis.setTimeout(() => {
-    const confirmation = host.canvasProjectionConfirmation;
+    const confirmation = host.projection.confirmation;
     if (
       confirmation?.transactionId !== plan.identity.transactionId
       || confirmation.surfaceGeneration !== surfaceGeneration
-      || host.canvasSurfaceGeneration !== surfaceGeneration
+      || host.surface.generation !== surfaceGeneration
       || !hasMountedCanvasProjectionSurface(host)
     ) return;
-    host.canvasProjectionConfirmation = null;
+    host.projection.confirmation = null;
     const durationMs = Math.max(0, performance.now() - startedAt);
-    void host.recordCanvasProjectionRuntimeEvent?.(
+    void host.commands.recordRuntimeEvent?.(
       "canvas_ack_timeout",
       plan.identity,
       durationMs,
@@ -502,11 +556,12 @@ function beginCanvasProjectionConfirmation(
     restoreLastStyledPreviewAfterNavigationFailure(host);
     reject(new Error(t("preview-controller-styled-ready-timeout")));
   }, 15_000);
-  host.canvasProjectionConfirmation = {
+  host.projection.confirmation = {
     transactionId: plan.identity.transactionId,
     surfaceGeneration,
     startedAt,
     lastPhase: "prepared",
+    acknowledgement: null,
     promise,
     resolve,
     reject,
@@ -527,8 +582,8 @@ export function prepareCanvasProjectionNavigation(
   if (!hasMountedCanvasProjectionSurface(host)) {
     throw new CanvasProjectionSurfaceUnavailableError("surface_not_mounted");
   }
-  host.pendingCanvasProjection = plan;
-  host.previewWorkspaceRevision = plan.identity.previewRevision;
+  host.projection.pending = plan;
+  host.projection.workspaceRevision = plan.identity.previewRevision;
   return beginCanvasProjectionConfirmation(host, plan);
 }
 
@@ -536,10 +591,10 @@ export function cancelCanvasProjectionConfirmation(
   host: PreviewControllerHost,
   reason: string | Error = t("preview-controller-confirmation-cancelled"),
 ) {
-  const confirmation = host.canvasProjectionConfirmation;
+  const confirmation = host.projection.confirmation;
   if (!confirmation) return;
   globalThis.clearTimeout(confirmation.timeout);
-  host.canvasProjectionConfirmation = null;
+  host.projection.confirmation = null;
   confirmation.reject(reason instanceof Error ? reason : new Error(reason));
 }
 
@@ -548,12 +603,12 @@ export async function confirmMountedCanvasProjection(
   documentCanvasIdentity: CanvasProjectionIdentity | null,
   phaseReceipts: PreviewPhaseReceipt[],
 ) {
-  const plan = host.pendingCanvasProjection;
-  const confirmation = host.canvasProjectionConfirmation;
+  const plan = host.projection.pending;
+  const confirmation = host.projection.confirmation;
   if (
     !plan
     || !confirmation
-    || confirmation.surfaceGeneration !== host.canvasSurfaceGeneration
+    || confirmation.surfaceGeneration !== host.surface.generation
     || !hasMountedCanvasProjectionSurface(host)
     || !canvasIdentityMatches(documentCanvasIdentity, plan.identity)
   ) return false;
@@ -561,12 +616,12 @@ export async function confirmMountedCanvasProjection(
     await confirmPendingCanvasProjection(host, plan, phaseReceipts);
     return true;
   } catch (error) {
-    if (host.canvasProjectionConfirmation?.transactionId === plan.identity.transactionId) {
-      globalThis.clearTimeout(host.canvasProjectionConfirmation.timeout);
-      host.canvasProjectionConfirmation.reject(
+    if (host.projection.confirmation === confirmation) {
+      globalThis.clearTimeout(confirmation.timeout);
+      confirmation.reject(
         error instanceof Error ? error : new Error(String(error)),
       );
-      host.canvasProjectionConfirmation = null;
+      host.projection.confirmation = null;
     }
     throw error;
   }
@@ -577,27 +632,27 @@ async function replaceMountedPreviewWithCanonicalDocument(
   ready: RenderedPreviewReady,
   lease: PreviewRefreshLease,
 ): Promise<InPlaceProjectionOutcome> {
-  if (!host.previewRuntime) return { kind: "unsupported", reason: "runtime_unavailable" };
-  if (!host.previewFrame?.contentWindow) return { kind: "unsupported", reason: "frame_unavailable" };
-  if (host.previewSrc === "about:blank") return { kind: "unsupported", reason: "initial_navigation" };
-  if (host.previewDocumentMarkup !== null) return { kind: "unsupported", reason: "markup_preview" };
-  if (!samePreviewRoute(host.previewSrc, ready.url)) {
+  if (!host.runtime) return { kind: "unsupported", reason: "runtime_unavailable" };
+  if (!host.surface.frame?.contentWindow) return { kind: "unsupported", reason: "frame_unavailable" };
+  if (host.navigation.src === "about:blank") return { kind: "unsupported", reason: "initial_navigation" };
+  if (host.document.markup !== null) return { kind: "unsupported", reason: "markup_preview" };
+  if (!samePreviewRoute(host.navigation.src, ready.url)) {
     return { kind: "unsupported", reason: "route_changed" };
   }
-  const plan = host.pendingCanvasProjection;
+  const plan = host.projection.pending;
   if (!plan || plan.identity.previewRevision !== ready.revision) {
     return { kind: "unsupported", reason: "plan_missing" };
   }
   let ack;
   try {
-    ack = await host.previewRuntime.sendAndWait(
+    ack = await host.runtime.sendAndWait(
       {
         type: "replace-document",
         html: ready.html,
-        liveCss: serializeOverrides(host.overrideRules, host.variableOverrides),
+        liveCss: serializeOverrides(host.styles.overrideRules, host.styles.variableOverrides),
         canvasIdentity: plan.identity,
       },
-      host.templateWorkbenchActive ? { ackTimeoutMs: 1_500 } : {},
+      host.context.templateWorkbenchActive ? { ackTimeoutMs: 1_500 } : {},
     );
   } catch (error) {
     if (error instanceof PreviewRuntimeTransportError) {
@@ -605,7 +660,7 @@ async function replaceMountedPreviewWithCanonicalDocument(
     }
     throw error;
   }
-  if (!previewRefreshLeaseMatches(host, lease)) return { kind: "stale" };
+  if (!previewRefreshLeaseMatches(host.session, lease)) return { kind: "stale" };
   if (!canvasIdentityMatches(ack.canvasIdentity, plan.identity)) {
     throw new PreviewProjectionDiagnosticError(
       "preview_canvas_identity_mismatch",
@@ -662,7 +717,7 @@ async function replaceMountedPreviewWithCanonicalDocument(
     && (((promotion.fontActivationErrorCount ?? 0) === 0)
       === (promotion.fontActivationDiagnostic == null))
   ) {
-    void host.recordCanvasProjectionRuntimeEvent?.(
+    void host.commands.recordRuntimeEvent?.(
       "canvas_stylesheets_promoted",
       plan.identity,
       promotion.activationToStyledMs,
@@ -690,34 +745,34 @@ async function replaceMountedPreviewWithCanonicalDocument(
       },
     );
   }
-  if (!previewRefreshLeaseMatches(host, lease)) return { kind: "stale" };
+  if (!previewRefreshLeaseMatches(host.session, lease)) return { kind: "stale" };
   return { kind: "committed" };
 }
 
 export function cancelPreviewSync(host: PreviewControllerHost) {
-  if (host.previewSyncTimer !== null) {
-    window.clearTimeout(host.previewSyncTimer);
-    host.previewSyncTimer = null;
+  if (host.timers.previewSync !== null) {
+    window.clearTimeout(host.timers.previewSync);
+    host.timers.previewSync = null;
   }
 }
 
 export function invalidatePreviewDomTreeProjection(host: PreviewControllerHost) {
-  host.previewDomTreeSerial += 1;
-  if (host.domTreeFetchTimer !== null) {
-    window.clearTimeout(host.domTreeFetchTimer);
-    host.domTreeFetchTimer = null;
+  host.session.previewDomTreeSerial += 1;
+  if (host.timers.domTreeFetch !== null) {
+    window.clearTimeout(host.timers.domTreeFetch);
+    host.timers.domTreeFetch = null;
   }
 }
 
 export function clearPreviewTimers(host: PreviewControllerHost) {
-  invalidatePreviewRefreshLease(host);
+  invalidatePreviewRefreshLease(host.session);
   invalidatePreviewDomTreeProjection(host);
   cancelPreviewSync(host);
   cancelCanvasProjectionConfirmation(host);
 }
 
 export function getPreviewDocument(host: PreviewControllerHost): Document | undefined {
-  const frame = host.previewFrame;
+  const frame = host.surface.frame;
   if (!frame || !previewFrameAllowsDocumentAccess(frame, window.location.href)) return undefined;
   try {
     const previewDocument = frame.contentDocument ?? undefined;
@@ -731,11 +786,11 @@ export function getPreviewDocument(host: PreviewControllerHost): Document | unde
 
 export function postPreviewMessage(host: PreviewControllerHost, payload: Record<string, unknown>) {
   const message = JSON.parse(JSON.stringify({ source: "pana-studio-app", ...payload }));
-  host.previewFrame?.contentWindow?.postMessage(message, "*");
+  host.surface.frame?.contentWindow?.postMessage(message, "*");
 }
 
 export function sendPreviewOperation(host: PreviewControllerHost, payload: Record<string, unknown> & { type: string }) {
-  if (host.previewRuntime) return host.previewRuntime.send(payload);
+  if (host.runtime) return host.runtime.send(payload);
   postPreviewMessage(host, payload);
   return null;
 }
@@ -744,45 +799,65 @@ export async function refreshRenderedPreviewDocument(
   host: PreviewControllerHost,
   providedLease?: PreviewRefreshLease,
 ) {
-  const lease = providedLease ?? beginPreviewRefreshLease(host);
-  if (!lease || !previewRefreshLeaseMatches(host, lease)) return false;
-  const previewPage = host.activeRenderedPreviewPageFile;
+  const lease = providedLease ?? beginPreviewRefreshLease(host.session);
+  if (!lease || !previewRefreshLeaseMatches(host.session, lease)) return false;
+  const previewPage = host.document.activePage;
   if (!previewPage) return false;
+  let confirmationPlan: CanvasProjectionPlan | null = null;
+  let confirmation: Promise<void> | null = null;
+  let confirmationOwner: CanvasProjectionConfirmation | null = null;
   try {
     const ready = await waitForRenderedPreviewUrl(host, previewPage, lease);
-    if (!ready || !previewRefreshLeaseMatches(host, lease)) return false;
+    if (!ready || !previewRefreshLeaseMatches(host.session, lease)) return false;
+    confirmationPlan = host.projection.pending;
+    if (
+      confirmationPlan
+      && confirmationPlan.identity.previewRevision === ready.revision
+    ) {
+      const activeConfirmation = host.projection.confirmation;
+      confirmation = activeConfirmation?.transactionId === confirmationPlan.identity.transactionId
+        && activeConfirmation.surfaceGeneration === host.surface.generation
+        ? activeConfirmation.promise
+        : beginCanvasProjectionConfirmation(host, confirmationPlan);
+      confirmationOwner = host.projection.confirmation;
+    }
     const inPlace = await replaceMountedPreviewWithCanonicalDocument(host, ready, lease);
-    if (!previewRefreshLeaseMatches(host, lease)) return false;
+    if (!previewRefreshLeaseMatches(host.session, lease)) return false;
     if (inPlace.kind === "stale") return false;
     if (inPlace.kind === "unsupported") {
-      const plan = host.pendingCanvasProjection;
-      if (plan) {
-        void host.recordCanvasProjectionRuntimeEvent?.(
+      if (confirmationPlan) {
+        void host.commands.recordRuntimeEvent?.(
           "canvas_fallback",
-          plan.identity,
+          confirmationPlan.identity,
           0,
           inPlace.reason,
         );
       }
-      const confirmation = plan && plan.identity.previewRevision === ready.revision
-        ? beginCanvasProjectionConfirmation(host, plan)
-        : null;
       beginGuardedPreviewNavigation(host, ready.url);
-      if (confirmation) await confirmation;
-      if (!previewRefreshLeaseMatches(host, lease)) return false;
     }
-    host.previewDocumentMarkup = null;
-    if (ready.revision && host.previewWorkspaceRevision === ready.revision) {
-      host.previewWorkspaceRevision = null;
+    if (confirmation) await confirmation;
+    if (!previewRefreshLeaseMatches(host.session, lease)) return false;
+    host.document.markup = null;
+    if (ready.revision && host.projection.workspaceRevision === ready.revision) {
+      host.projection.workspaceRevision = null;
     }
     return true;
   } catch (error) {
-    if (!previewRefreshLeaseMatches(host, lease)) return false;
+    if (
+      confirmationOwner
+      && host.projection.confirmation === confirmationOwner
+    ) {
+      cancelCanvasProjectionConfirmation(
+        host,
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+    if (!previewRefreshLeaseMatches(host.session, lease)) return false;
     const message = errorMessage(error);
-    host.projectStatus = t("preview-controller-render-failed", { message });
-    if (!host.previewSrc || host.previewSrc === "about:blank" || !host.previewFrame) {
-      host.previewSrc = "about:blank";
-      host.previewDocumentMarkup = buildPreviewStatusDocument(
+    host.document.projectStatus = t("preview-controller-render-failed", { message });
+    if (!host.navigation.src || host.navigation.src === "about:blank" || !host.surface.frame) {
+      host.navigation.src = "about:blank";
+      host.document.markup = buildPreviewStatusDocument(
         t("preview-controller-unavailable-title"),
         t("preview-controller-unavailable-message", { message }),
       );
@@ -815,9 +890,10 @@ export async function reconcileTemplateWorkbenchPreviewDocument(
     throw new Error(t("preview-controller-template-url-mismatch"));
   }
 
-  const lease = beginPreviewRefreshLease(host);
-  if (!lease || !previewRefreshLeaseMatches(host, lease)) return false;
+  const lease = beginPreviewRefreshLease(host.session);
+  if (!lease || !previewRefreshLeaseMatches(host.session, lease)) return false;
   const confirmation = prepareCanvasProjectionNavigation(host, plan);
+  const confirmationOwner = host.projection.confirmation;
   try {
     const ready = await waitForPreviewDocumentUrl(
       host,
@@ -825,11 +901,11 @@ export async function reconcileTemplateWorkbenchPreviewDocument(
       plan.identity.previewRevision,
       lease,
     );
-    if (!ready || !previewRefreshLeaseMatches(host, lease)) return false;
+    if (!ready || !previewRefreshLeaseMatches(host.session, lease)) return false;
     const inPlace = await replaceMountedPreviewWithCanonicalDocument(host, ready, lease);
-    if (!previewRefreshLeaseMatches(host, lease) || inPlace.kind === "stale") return false;
+    if (!previewRefreshLeaseMatches(host.session, lease) || inPlace.kind === "stale") return false;
     if (inPlace.kind === "unsupported") {
-      void host.recordCanvasProjectionRuntimeEvent?.(
+      void host.commands.recordRuntimeEvent?.(
         "canvas_fallback",
         plan.identity,
         0,
@@ -838,20 +914,20 @@ export async function reconcileTemplateWorkbenchPreviewDocument(
       beginGuardedPreviewNavigation(host, ready.url);
     }
     await confirmation;
-    if (!previewRefreshLeaseMatches(host, lease)) return false;
-    if (host.previewWorkspaceRevision === plan.identity.previewRevision) {
-      host.previewWorkspaceRevision = null;
+    if (!previewRefreshLeaseMatches(host.session, lease)) return false;
+    if (host.projection.workspaceRevision === plan.identity.previewRevision) {
+      host.projection.workspaceRevision = null;
     }
     return true;
   } catch (error) {
-    if (host.canvasProjectionConfirmation?.transactionId === plan.identity.transactionId) {
+    if (confirmationOwner && host.projection.confirmation === confirmationOwner) {
       cancelCanvasProjectionConfirmation(
         host,
         error instanceof Error ? error.message : String(error),
       );
     }
-    if (canvasIdentityMatches(host.pendingCanvasProjection?.identity, plan.identity)) {
-      host.pendingCanvasProjection = null;
+    if (canvasIdentityMatches(host.projection.pending?.identity, plan.identity)) {
+      host.projection.pending = null;
     }
     throw error;
   }
@@ -861,13 +937,13 @@ export async function reloadPreview(
   host: PreviewControllerHost,
   providedLease?: PreviewRefreshLease,
 ) {
-  const lease = providedLease ?? beginPreviewRefreshLease(host);
-  if (!lease || !previewRefreshLeaseMatches(host, lease)) return false;
+  const lease = providedLease ?? beginPreviewRefreshLease(host.session);
+  if (!lease || !previewRefreshLeaseMatches(host.session, lease)) return false;
   const rendered = await refreshRenderedPreviewDocument(host, lease);
-  if (!previewRefreshLeaseMatches(host, lease)) return false;
+  if (!previewRefreshLeaseMatches(host.session, lease)) return false;
   if (rendered) return true;
-  if (host.isActiveRenderedPreviewPage) return false;
-  const frame = host.previewFrame;
+  if (host.document.isActivePage) return false;
+  const frame = host.surface.frame;
   if (!frame) return false;
   if (previewFrameAllowsDocumentAccess(frame, window.location.href)) {
     try {
@@ -878,37 +954,37 @@ export async function reloadPreview(
       rememberPreviewFrameDocumentAccessFailure(frame);
     }
   }
-  if (host.previewSrc && host.previewSrc !== "about:blank") {
-    host.previewSrc = previewReloadUrl(host, host.previewSrc);
+  if (host.navigation.src && host.navigation.src !== "about:blank") {
+    host.navigation.src = previewReloadUrl(host, host.navigation.src);
     return true;
   }
   return false;
 }
 
 export function fetchDomTreeFromPreview(host: PreviewControllerHost) {
-  const url = host.previewSrc;
+  const url = host.navigation.src;
   if (!url || url === "about:blank") return;
-  const projectRoot = host.sessionProjectRoot.trim();
-  const runtimeSessionId = host.kernelProjectSessionId.trim();
+  const projectRoot = host.session.sessionProjectRoot.trim();
+  const runtimeSessionId = host.session.kernelProjectSessionId.trim();
   if (!projectRoot || !runtimeSessionId) return;
   const lease = {
     projectRoot,
     runtimeSessionId,
-    projectSessionEpoch: host.projectSessionEpoch,
-    serial: ++host.previewDomTreeSerial,
+    projectSessionEpoch: host.session.projectSessionEpoch,
+    serial: ++host.session.previewDomTreeSerial,
   };
   const leaseMatches = () => (
-    host.previewDomTreeSerial === lease.serial
-    && host.sessionProjectRoot === lease.projectRoot
-    && host.kernelProjectSessionId === lease.runtimeSessionId
-    && host.projectSessionEpoch === lease.projectSessionEpoch
-    && host.previewSrc === url
+    host.session.previewDomTreeSerial === lease.serial
+    && host.session.sessionProjectRoot === lease.projectRoot
+    && host.session.kernelProjectSessionId === lease.runtimeSessionId
+    && host.session.projectSessionEpoch === lease.projectSessionEpoch
+    && host.navigation.src === url
   );
-  if (host.domTreeFetchTimer !== null) {
-    window.clearTimeout(host.domTreeFetchTimer);
+  if (host.timers.domTreeFetch !== null) {
+    window.clearTimeout(host.timers.domTreeFetch);
   }
-  host.domTreeFetchTimer = window.setTimeout(() => {
-    host.domTreeFetchTimer = null;
+  host.timers.domTreeFetch = window.setTimeout(() => {
+    host.timers.domTreeFetch = null;
     if (!leaseMatches()) return;
     readPreviewDocument(url)
       .then((html) => {
@@ -917,8 +993,7 @@ export function fetchDomTreeFromPreview(host: PreviewControllerHost) {
         const doc = parser.parseFromString(html, "text/html");
         const sections = collectDomTree(doc);
         if (!leaseMatches()) return;
-        if (host.setPageSections) host.setPageSections(sections);
-        else host.pageSections = sections;
+        host.sections.set(sections);
       })
       .catch(() => {});
   }, 150);

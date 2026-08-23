@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-20T12:28:10.953Z",
+  "environment": {
+    "application": "Tauri dev",
+    "webview": "WebKitGTK remote inspector",
+    "url": "http://localhost:1430/",
+    "clockResolutionMs": 1
+  },
+  "baseline": {
+    "source": "docs/app-state-runtime-baseline-2026-08-15.json",
+    "cold": {
+      "constructionMs": 25,
+      "effectSettleFromConstructionStartMs": 583,
+      "effectSettleFromConstructionEndMs": 558
+    },
+    "warmSummary": {
+      "constructionMs": { "p50": 19, "p95": 25, "max": 25 },
+      "effectSettleFromConstructionStartMs": { "p50": 108, "p95": 125, "max": 125 },
+      "effectSettleFromConstructionEndMs": { "p50": 94, "p95": 108, "max": 108 }
+    }
+  },
+  "coldReloadIgnoringCache": {
+    "constructionMs": 23,
+    "effectSettleFromConstructionStartMs": 121,
+    "effectSettleFromConstructionEndMs": 98
+  },
+  "warmReloads": [
+    {
+      "constructionMs": 22,
+      "effectSettleFromConstructionStartMs": 153,
+      "effectSettleFromConstructionEndMs": 131
+    },
+    {
+      "constructionMs": 21,
+      "effectSettleFromConstructionStartMs": 122,
+      "effectSettleFromConstructionEndMs": 101
+    },
+    {
+      "constructionMs": 16,
+      "effectSettleFromConstructionStartMs": 69,
+      "effectSettleFromConstructionEndMs": 53
+    },
+    {
+      "constructionMs": 16,
+      "effectSettleFromConstructionStartMs": 118,
+      "effectSettleFromConstructionEndMs": 102
+    },
+    {
+      "constructionMs": 19,
+      "effectSettleFromConstructionStartMs": 117,
+      "effectSettleFromConstructionEndMs": 98
+    }
+  ],
+  "warmSummary": {
+    "sampleCount": 5,
+    "constructionMs": { "p50": 19, "p95": 22, "max": 22 },
+    "effectSettleFromConstructionStartMs": { "p50": 118, "p95": 153, "max": 153 },
+    "effectSettleFromConstructionEndMs": { "p50": 101, "p95": 131, "max": 131 }
+  },
+  "reactiveWorkspaceLayout": {
+    "sampleCount": 100,
+    "p50Ms": 0,
+    "p95Ms": 0,
+    "maxMs": 1
+  },
+  "comparison": {
+    "coldConstructionPercent": -8,
+    "coldSettleFromConstructionStartPercent": -79.25,
+    "coldSettleFromConstructionEndPercent": -82.44,
+    "warmConstructionP50Percent": 0,
+    "warmConstructionP95Percent": -12,
+    "warmSettleFromConstructionStartP50Percent": 9.26,
+    "warmSettleFromConstructionStartP95Percent": 22.4,
+    "warmSettleFromConstructionEndP50Percent": 7.45,
+    "warmSettleFromConstructionEndP95Percent": 21.3
+  },
+  "notes": [
+    "Cold reload, construction and the representative reactive update batch do not regress.",
+    "Warm settle p95 contains one 153 ms outlier; the remaining four start-settle samples are at or below the 125 ms baseline p95. This exception is retained instead of discarded."
+  ]
+}

@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // still receives the real reactive rune from the Svelte compiler.
 if (typeof globalThis.$state !== "function") {
   globalThis.$state = (value) => value;
+  globalThis.$state.raw = (value) => value;
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,3 +52,9 @@ registerHooks({
     return nextResolve(specifier, context);
   },
 });
+
+// Production initializes the selected Fluent catalog in +layout.ts before any
+// controller or component is instantiated. Node controller tests bypass that
+// lifecycle, so mirror it once in their shared bootstrap.
+const { initializeLocalization } = await import("$lib/i18n/runtime.svelte");
+await initializeLocalization("en-US");

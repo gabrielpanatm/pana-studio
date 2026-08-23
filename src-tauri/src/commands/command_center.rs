@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::{
@@ -73,7 +75,7 @@ fn current_project_model(
     state: &AppState,
     project_root: &str,
     runtime_session_id: &str,
-) -> Result<ProjectModel, LocalizedDiagnostic> {
+) -> Result<Arc<ProjectModel>, LocalizedDiagnostic> {
     {
         let workspace = state
             .project_workspace

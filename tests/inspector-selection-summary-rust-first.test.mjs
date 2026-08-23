@@ -9,8 +9,8 @@ function source(relativePath) {
 test("Rust owns the inspector summary state machine and exact physical identity", () => {
   const rust = source("../src-tauri/src/kernel/selection_coordinator.rs");
   const commands = source("../src-tauri/src/commands/editor_navigation.rs");
-  const io = source("../src/lib/project/io.ts");
-  const canvas = source("../src/lib/state/canvas-interaction-controller.ts");
+  const io = source("../src/lib/editor/selection-io.ts");
+  const canvas = source("../src/lib/state/canvas-interaction-selection.ts");
 
   for (const contract of [
     "InspectorSelectionSummaryState",
@@ -51,8 +51,11 @@ test("Rust owns the inspector summary state machine and exact physical identity"
 test("the selection card is a pure accessible renderer of the Rust snapshot", () => {
   const card = source("../src/lib/components/inspector/SelectionSummaryCard.svelte");
   const inspector = source("../src/lib/components/InspectorPane.svelte");
+  const htmlCoordinator = source("../src/lib/components/inspector/HtmlInspectorCoordinator.svelte");
+  const cssCoordinator = source("../src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const cssReader = source("../src/lib/inspector/css-inspector-reader.ts");
   const workspace = source("../src/lib/components/workspace/WorkspaceInspectorArea.svelte");
-  const app = source("../src/lib/state/app.svelte.ts");
+  const application = source("../src/lib/components/application/ApplicationWorkspace.svelte");
 
   assert.match(card, /InspectorSelectionSummarySnapshot/);
   assert.doesNotMatch(
@@ -82,31 +85,41 @@ test("the selection card is a pure accessible renderer of the Rust snapshot", ()
   assert.match(card, /data-summary-state=/);
   assert.match(card, /summary && summary\.state !== "empty"/);
   assert.match(card, /summary\.classes\.length/);
-  assert.match(card, /value\.subjectKind === "teraBoundary"/);
+  assert.match(card, /value\.subjectKind === "boundary"/);
+  assert.match(card, /value\.boundaryKind === "component"/);
+  assert.match(card, /data-entity-kind/);
   assert.match(card, /summary\.subjectKind === "runtimeElement"/);
 
   assert.match(inspector, /import SelectionSummaryCard/);
   assert.match(inspector, /summary=\{presentedInspectorSelectionSummary\}/);
-  assert.match(inspector, /advanceStableHtmlInspectorProjection/);
+  assert.match(htmlCoordinator, /advanceStableHtmlInspectorProjection/);
   assert.match(inspector, /aria-busy=\{htmlProjectionPending\}/);
   assert.match(inspector, /selectClass=\{selectClassForCss\}/);
   assert.doesNotMatch(inspector, /<section class="selection-card">/);
   assert.doesNotMatch(inspector, /^\s*\.selection-card\s*\{/m);
   const classIntent = inspector.slice(
     inspector.indexOf("async function selectClassForCss"),
-    inspector.indexOf("function selectCssVariant"),
+    inspector.indexOf("$effect", inspector.indexOf("async function selectClassForCss")),
   );
-  assert.match(classIntent, /expectedSelectionRevision/);
   assert.match(classIntent, /changeInspectorTab\("css"\)/);
-  assert.match(classIntent, /const resolution = await resolveCssInspectorContext/);
-  assert.match(classIntent, /expectedWorkspaceRevision:\s*workspaceRevision/);
-  assert.match(classIntent, /expectedSelection/);
-  assert.match(classIntent, /resolution\.state === "ambiguous"/);
-  assert.match(classIntent, /inspector-css-target-failed/);
-  assert.match(classIntent, /onCssCodeTargetChange\?\./);
   assert.match(classIntent, /return "blocked"/);
-  assert.match(classIntent, /return allowed \? "allowed" : "blocked"/);
-  assert.match(workspace, /inspectorSelectionSummary=\{app\.inspectorSelectionSummary\}/);
-  assert.match(app, /inspectorSelectionSummary = \$state<InspectorSelectionSummarySnapshot \| null>/);
-  assert.match(app, /this\.inspectorSelectionSummary = receipt\.inspectorSummary/);
+  assert.match(classIntent, /cssCoordinator\?\.selectClass\(className\)/);
+  const cssClassIntent = cssReader.slice(
+    cssReader.indexOf("async selectClass"),
+    cssReader.indexOf("captureCurrentSelection"),
+  );
+  assert.match(cssClassIntent, /expectedSelectionRevision/);
+  assert.match(cssClassIntent, /const resolution = await this\.resolve/);
+  assert.match(cssReader, /expectedWorkspaceRevision: input\.workspaceRevision/);
+  assert.match(cssClassIntent, /expectedSelection/);
+  assert.match(cssClassIntent, /resolution\.state === "ambiguous"/);
+  assert.match(cssClassIntent, /kind: "targetFailed"/);
+  assert.match(cssClassIntent, /this\.dependencies\.changeCodeTarget\?\./);
+  assert.match(cssClassIntent, /return "blocked"/);
+  assert.match(cssClassIntent, /return allowed \? "allowed" : "blocked"/);
+  const session = source("../src/lib/state/editor-selection-session.svelte.ts");
+  assert.match(application, /inspectorSelectionSummary:\s*selectionWorkspace\.session\.inspectorSummary/);
+  assert.match(session, /inspectorSummary = \$state<InspectorSelectionSummarySnapshot \| null>/);
+  assert.match(session, /this\.inspectorSummary = receipt\.inspectorSummary/);
+  assert.doesNotMatch(application, /^\s*inspectorSelectionSummary = \$state/m);
 });

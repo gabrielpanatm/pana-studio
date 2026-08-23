@@ -10,8 +10,8 @@
   import type {
     EditorNavigationNode,
     EditorSourceReference,
-    SourceGraphNode,
-  } from "$lib/types";
+  } from "$lib/editor/contracts";
+  import type { SourceGraphNode } from "$lib/source-graph/contracts";
   import {
     legacyTranslator,
     localeRevision,
@@ -21,12 +21,13 @@
 
   export let node: SourceGraphNode | null = null;
   export let navigationNode: EditorNavigationNode | null = null;
-  export let enterTeraBoundary: (scopeId: string) => void | Promise<void>;
+  export let enterBoundary: (scopeId: string) => void | Promise<void>;
   export let openSelectedTeraSource: () => void | Promise<void>;
   export let deleteSelectedTeraNode: () => void | Promise<void>;
 
   $: deleteCapability = deleteTeraNodeCapability(node);
-  $: selectedBoundary = navigationNode?.kind === "teraBoundary"
+  $: selectedBoundary = navigationNode?.kind === "boundary"
+    && navigationNode.boundary?.kind !== "markdown"
     && navigationNode.boundary?.sourceNodeId === node?.id
       ? navigationNode
       : null;
@@ -81,7 +82,10 @@
   }
 </script>
 
-<section class="tera-source-card">
+<section
+  class="tera-source-card"
+  class:component={selectedBoundary?.boundary?.kind === "component"}
+>
   {#if node}
     <div class="tera-card-head">
       <span class="tera-kind">
@@ -126,7 +130,7 @@
           disabled={!canEnterBoundary || !selectedBoundary}
           title={enterBoundaryReason}
           onclick={() => {
-            if (selectedBoundary) void enterTeraBoundary(selectedBoundary.id);
+            if (selectedBoundary) void enterBoundary(selectedBoundary.id);
           }}
         >
           <IconEdit size={13} stroke={2} />
@@ -161,13 +165,20 @@
 
 <style>
   .tera-source-card {
+    --boundary-color: var(--entity-template);
+    --boundary-soft: var(--entity-template-soft);
     display: flex;
     flex-direction: column;
     gap: 10px;
     padding: 10px;
-    border: 1px solid color-mix(in srgb, var(--source-origin-theme, #d97706) 34%, var(--border-2));
+    border: 1px solid color-mix(in srgb, var(--boundary-color) 34%, var(--border-2));
     border-radius: 9px;
-    background: color-mix(in srgb, var(--source-origin-theme-soft, rgba(217,119,6,0.08)) 58%, var(--surface-2));
+    background: color-mix(in srgb, var(--boundary-soft) 58%, var(--surface-2));
+  }
+
+  .tera-source-card.component {
+    --boundary-color: var(--entity-component);
+    --boundary-soft: var(--entity-component-soft);
   }
 
   .tera-card-head {
@@ -189,9 +200,9 @@
   .tera-kind {
     flex: 0 0 auto;
     padding: 4px 6px;
-    border: 1px solid color-mix(in srgb, var(--source-origin-theme, #d97706) 34%, transparent);
+    border: 1px solid color-mix(in srgb, var(--boundary-color) 34%, transparent);
     border-radius: 6px;
-    color: var(--source-origin-theme, #d97706);
+    color: var(--boundary-color);
     font-size: 12px;
     font-weight: 900;
     text-transform: uppercase;
@@ -254,19 +265,19 @@
   }
 
   .tera-actions button:hover:not(:disabled) {
-    border-color: var(--brand);
-    color: var(--brand-strong);
-    background: var(--brand-soft);
+    border-color: var(--boundary-color);
+    color: var(--boundary-color);
+    background: var(--boundary-soft);
   }
 
   .tera-actions button.danger {
-    color: #b91c1c;
+    color: var(--danger);
   }
 
   .tera-actions button.danger:hover:not(:disabled) {
-    border-color: rgba(185, 28, 28, 0.38);
-    color: #991b1b;
-    background: rgba(254, 242, 242, 0.96);
+    border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, var(--surface-2));
   }
 
   .tera-actions button:disabled {

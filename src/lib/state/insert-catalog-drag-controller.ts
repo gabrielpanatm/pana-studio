@@ -1,5 +1,5 @@
 import { buildHtmlSnippet } from "$lib/html/snippets";
-import type { HtmlPaletteElement } from "$lib/project/html-palette";
+import type { HtmlPaletteElement } from "$lib/html/palette";
 import {
   startElementPaletteDrag,
   type ElementPaletteDragHost,
@@ -14,7 +14,7 @@ import {
   type TeraPaletteItem,
 } from "$lib/tera/model";
 import { teraSnippetForItem } from "$lib/tera/palette";
-import type { InsertCatalogItem } from "$lib/types";
+import type { InsertCatalogItem } from "$lib/blocks/contracts";
 
 export type InsertCatalogDragHost = ElementPaletteDragHost & TeraPaletteDragHost;
 
@@ -77,11 +77,7 @@ function teraItemForCatalogItem(item: InsertCatalogItem): TeraPaletteItem | null
     result.snippet = teraSnippetForItem(result);
     return result;
   }
-  if (
-    payload.kind !== "component"
-    && payload.kind !== "tera"
-    && payload.kind !== "dynamicField"
-  ) return null;
+  if (payload.kind !== "component" && payload.kind !== "tera") return null;
   if (!isTeraConstructKind(payload.teraKind)) return null;
   const family = teraFamilies.has(payload.family as TeraPaletteFamily)
     ? payload.family as TeraPaletteFamily
@@ -93,11 +89,10 @@ function teraItemForCatalogItem(item: InsertCatalogItem): TeraPaletteItem | null
     label: item.label,
     description: item.description,
     snippet: "",
-    target: payload.kind === "dynamicField" ? undefined : payload.target ?? undefined,
-    name: payload.kind === "dynamicField" ? undefined : payload.name ?? undefined,
+    target: payload.target ?? undefined,
+    name: payload.name ?? undefined,
     expression: payload.expression ?? undefined,
     sourceNodeId: payload.kind === "component" ? payload.componentId : undefined,
-    dynamicBinding: payload.kind === "dynamicField" ? payload.binding : undefined,
   };
   result.snippet = teraSnippetForItem(result);
   return result;

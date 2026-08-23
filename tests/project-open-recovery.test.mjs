@@ -3,7 +3,6 @@ import { test } from "node:test";
 import {
   createProjectOpenRecoveryDecisionRequest,
   projectOpenRecoveryAbandonDecision,
-  projectOpenRecoveryReasonLabel,
 } from "$lib/project/open-recovery";
 
 function assessment(overrides = {}) {
@@ -59,12 +58,4 @@ test("abandonarea poartă exact tokenul preflight și decizia de tranziție cure
     action: "abandon",
     assessmentToken: "a".repeat(64),
   });
-});
-
-test("motivul înlocuirii rădăcinii este prezentat separat de driftul de conținut", () => {
-  assert.equal(projectOpenRecoveryReasonLabel(assessment()), "physical folder replaced");
-  assert.equal(
-    projectOpenRecoveryReasonLabel(assessment({ conflictReason: "disk_baseline_changed" })),
-    "disk content changed",
-  );
 });

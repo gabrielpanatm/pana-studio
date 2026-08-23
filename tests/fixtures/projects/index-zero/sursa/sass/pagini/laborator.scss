@@ -1,0 +1,284 @@
+@import '../css-framework/variabile';
+
+.laborator {
+  min-height: 80vh;
+  overflow: clip;
+}
+
+.laborator-antet {
+  padding-block: $space-2xl $space-xl;
+}
+
+.laborator-antet h1 {
+  margin: 0 0 $space-m;
+  font-family: $font-display;
+  font-size: clamp(4rem, 10vw, 10rem);
+  font-weight: 300;
+  line-height: 0.8;
+  text-transform: uppercase;
+}
+
+.laborator-antet > p:last-of-type {
+  max-width: 45rem;
+  color: $text-light;
+  font-size: $text-lg;
+}
+
+.matrice-stres {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(8rem, 1fr));
+  border-top: 1px solid $border-color;
+  border-left: 1px solid $border-color;
+}
+
+.celula-stres {
+  min-height: 9rem;
+  padding: 0.7rem;
+  border-right: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+  background: hsl(calc(var(--indice-stres, 0) * 0.73deg) 21% 12%);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 9rem;
+}
+
+.celula-stres > span {
+  color: $color-primary;
+  font-family: $font-mono;
+  font-size: 0.65rem;
+}
+
+.celula-stres h2 {
+  margin: 1.8rem 0 0.4rem;
+  font-family: $font-display;
+  font-size: 1.15rem;
+  font-weight: 430;
+  text-transform: uppercase;
+}
+
+.celula-stres p {
+  margin: 0;
+  color: $text-light;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.matrice-css {
+  display: grid;
+  grid-template-columns: repeat(18, minmax(4rem, 1fr));
+  border-top: 1px solid $border-color;
+  border-left: 1px solid $border-color;
+}
+
+.esantion-css {
+  position: relative;
+  display: grid;
+  min-height: 6rem;
+  place-items: center;
+  border-right: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+  overflow: hidden;
+  background: hsl(calc(var(--indice-stres, 0) * 1deg) 30% 13%);
+}
+
+.esantion-css span {
+  position: relative;
+  z-index: 1;
+  color: $text-heading;
+  font-family: $font-mono;
+  font-size: 0.63rem;
+}
+
+.esantion-css i {
+  position: absolute;
+  width: 2.8rem;
+  aspect-ratio: 1;
+  border: 1px solid $color-accent;
+  border-radius: 50%;
+  opacity: calc(0.25 + (var(--coloana-stres, 1) / 20));
+  transform: translate(calc((var(--coloana-stres, 1) - 6) * 0.14rem), calc((var(--rand-stres, 1) - 8) * 0.1rem));
+}
+
+.camp-motion {
+  position: relative;
+  min-height: 72rem;
+  border-block: 1px solid $border-color;
+  overflow: hidden;
+  background-image: linear-gradient(rgba(66, 63, 59, 0.45) 1px, transparent 1px), linear-gradient(90deg, rgba(66, 63, 59, 0.45) 1px, transparent 1px);
+  background-size: 5rem 5rem;
+  contain: layout paint;
+}
+
+.particula-motion {
+  position: absolute;
+  top: calc((var(--rand, 1) * 8.3%) + 1rem);
+  left: calc((var(--coloana, 1) * 7.6%) + 1rem);
+  display: grid;
+  width: 2rem;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: $color-accent;
+  font-family: $font-mono;
+  font-size: 0.48rem;
+  will-change: transform, opacity;
+  animation: puls-index-zero 3.6s ease-in-out infinite alternate;
+}
+
+.particula-tip-0 {
+  --rand: 1;
+  --coloana: 1;
+}
+
+.particula-tip-1 {
+  --rand: 3;
+  --coloana: 4;
+  color: $color-primary;
+  animation-duration: 2.7s;
+}
+
+.particula-tip-2 {
+  --rand: 5;
+  --coloana: 7;
+  animation-duration: 4.2s;
+}
+
+.particula-tip-3 {
+  --rand: 7;
+  --coloana: 10;
+  color: $color-primary;
+  animation-duration: 3.1s;
+}
+
+.particula-tip-4 {
+  --rand: 9;
+  --coloana: 2;
+  animation-duration: 5.3s;
+}
+
+.particula-tip-5 {
+  --rand: 11;
+  --coloana: 9;
+  color: $color-primary;
+  animation-duration: 2.3s;
+}
+
+.particula-motion:nth-child(7n + 1) {
+  margin: 0 0 0 5%;
+  animation-delay: -0.3s;
+}
+
+.particula-motion:nth-child(7n + 2) {
+  margin: 4% 0 0 13%;
+  animation-delay: -0.8s;
+}
+
+.particula-motion:nth-child(7n + 3) {
+  margin: 8% 0 0 21%;
+  animation-delay: -1.3s;
+}
+
+.particula-motion:nth-child(7n + 4) {
+  margin: 12% 0 0 29%;
+  animation-delay: -1.8s;
+}
+
+.particula-motion:nth-child(7n + 5) {
+  margin: 16% 0 0 37%;
+  animation-delay: -2.3s;
+}
+
+.particula-motion:nth-child(7n + 6) {
+  margin: 20% 0 0 45%;
+  animation-delay: -2.8s;
+}
+
+.particula-motion:nth-child(7n) {
+  margin: 24% 0 0 53%;
+  animation-delay: -3.3s;
+}
+
+.motion-oprit .particula-motion {
+  animation-play-state: paused;
+}
+
+@keyframes puls-index-zero {
+  0% {
+    opacity: 0.2;
+    transform: translate3d(-1.2rem, -0.4rem, 0) scale(0.65) rotate(0);
+  }
+
+  55% {
+    opacity: 0.95;
+  }
+
+  100% {
+    opacity: 0.36;
+    transform: translate3d(3.8rem, 2.2rem, 0) scale(1.35) rotate(180deg);
+  }
+}
+
+.grila-media-stres {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid $border-color;
+  border-left: 1px solid $border-color;
+}
+
+.grila-media-stres figure {
+  margin: 0;
+  padding: 0.65rem;
+  border-right: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 17rem;
+}
+
+.grila-media-stres img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 8 / 5;
+  object-fit: cover;
+}
+
+.grila-media-stres figcaption {
+  padding-top: 0.5rem;
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+}
+
+@media (max-width: $bp-tableta) {
+  .matrice-stres {
+    grid-template-columns: repeat(6, minmax(7rem, 1fr));
+  }
+
+  .matrice-css {
+    grid-template-columns: repeat(10, minmax(4rem, 1fr));
+  }
+
+  .grila-media-stres {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: $bp-mobil) {
+  .matrice-stres {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .matrice-css {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .grila-media-stres {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .particula-motion {
+    animation: none;
+  }
+}

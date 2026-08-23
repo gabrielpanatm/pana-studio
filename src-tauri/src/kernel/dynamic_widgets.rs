@@ -9,9 +9,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    kernel::content_models::{
-        ContentFieldDefinition, ContentFieldKind, ContentModelCatalog, ContentModelDefinition,
-        CustomFieldTemplateUsage,
+    kernel::content_schema::{
+        ContentFieldDefinition, ContentFieldKind, ContentModelDefinition, CustomFieldTemplateUsage,
     },
     source_graph::model::{
         SourceDataPathSegment, SourceDataValueKind, SourceGraph, SourceRange,
@@ -841,18 +840,85 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
     let definitions = dynamic_widget_registry();
     let value_catalog = dynamic_value_catalog(source_graph);
     let mut source_instances = Vec::new();
-    let mut diagnostics = Vec::new();
     let mut seen_ids = HashSet::new();
 
     for template in &source_graph.templates {
         if deleted_sources.contains(&template.file) {
             continue;
         }
-        let source = projected_sources.get(&template.file).cloned();
+        let source = projected_sources.get(&template.file);
         let Some(source) = source else {
             continue;
         };
-        for mut boundary in parse_widget_boundaries(&source, &template.file) {
+        source_instances.extend(project_dynamic_widget_template(
+            source,
+            &template.file,
+            source_graph,
+            &value_catalog,
+            &mut seen_ids,
+        ));
+    }
+    source_instances.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then_with(|| left.range.start.cmp(&right.range.start))
+    });
+    let diagnostics = source_instances
+        .iter()
+        .flat_map(|instance| instance.diagnostics.iter().cloned())
+        .collect();
+    DynamicWidgetGraph {
+        schema_version: DYNAMIC_WIDGET_SCHEMA_VERSION,
+        definitions,
+        value_catalog,
+        source_instances,
+        diagnostics,
+    }
+}
+
+pub(crate) fn upsert_dynamic_widget_graph_template(
+    projected_sources: &HashMap<String, String>,
+    source_graph: &SourceGraph,
+    graph: &mut DynamicWidgetGraph,
+    template_file: &str,
+) {
+    graph
+        .source_instances
+        .retain(|instance| instance.file != template_file);
+    if let Some(source) = projected_sources.get(template_file) {
+        graph
+            .source_instances
+            .extend(project_dynamic_widget_template(
+                source,
+                template_file,
+                source_graph,
+                &graph.value_catalog,
+                &mut HashSet::new(),
+            ));
+    }
+    graph.source_instances.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then_with(|| left.range.start.cmp(&right.range.start))
+    });
+    reconcile_dynamic_widget_duplicate_ids(&mut graph.source_instances);
+    graph.diagnostics = graph
+        .source_instances
+        .iter()
+        .flat_map(|instance| instance.diagnostics.iter().cloned())
+        .collect();
+}
+
+fn project_dynamic_widget_template(
+    source: &str,
+    template_file: &str,
+    source_graph: &SourceGraph,
+    value_catalog: &[DynamicValueDefinition],
+    seen_ids: &mut HashSet<String>,
+) -> Vec<DynamicWidgetSourceInstance> {
+    parse_widget_boundaries(source, template_file)
+        .into_iter()
+        .map(|mut boundary| {
             let mut instance_diagnostics = boundary.diagnostics;
             let provider_kind = DynamicWidgetProviderKind::parse(&boundary.provider_id);
             let mut status = if provider_kind.is_some() {
@@ -864,7 +930,7 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                         "Providerul dinamic {} nu este înregistrat.",
                         boundary.provider_id
                     ),
-                    &template.file,
+                    template_file,
                     &boundary.instance_id,
                 ));
                 DynamicWidgetResolutionStatus::UnknownProvider
@@ -879,7 +945,7 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                         "Instanța folosește schema {}, iar editorul acceptă schema {}.",
                         boundary.schema_version, DYNAMIC_WIDGET_SCHEMA_VERSION
                     ),
-                    &template.file,
+                    template_file,
                     &boundary.instance_id,
                 ));
                 status = DynamicWidgetResolutionStatus::InvalidContract;
@@ -888,7 +954,7 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                 instance_diagnostics.push(widget_diagnostic(
                     "dynamic_widget_duplicate_instance",
                     "InstanceId-ul apare de mai multe ori în proiect.".to_string(),
-                    &template.file,
+                    template_file,
                     &boundary.instance_id,
                 ));
                 status = DynamicWidgetResolutionStatus::InvalidContract;
@@ -901,7 +967,7 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                 instance_diagnostics.push(widget_diagnostic(
                     "dynamic_widget_provider_properties_mismatch",
                     "Tipul proprietăților nu corespunde providerului din marker.".to_string(),
-                    &template.file,
+                    template_file,
                     &boundary.instance_id,
                 ));
                 status = DynamicWidgetResolutionStatus::InvalidContract;
@@ -912,8 +978,8 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                     boundary.properties.as_mut()
                 {
                     if let Ok(resolved) = resolve_dynamic_value(
-                        &source_graph.content_models,
-                        &value_catalog,
+                        &source_graph.content_models.models,
+                        value_catalog,
                         properties,
                         true,
                     ) {
@@ -926,14 +992,14 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                 match boundary.properties.as_ref() {
                     Some(DynamicWidgetProperties::DynamicField(properties)) => {
                         match resolve_dynamic_value(
-                            &source_graph.content_models,
-                            &value_catalog,
+                            &source_graph.content_models.models,
+                            value_catalog,
                             properties,
                             false,
                         )
                         .and_then(|value| {
                             validate_dynamic_widget_source_context(
-                                &template.file,
+                                template_file,
                                 properties,
                                 source_graph,
                             )?;
@@ -944,7 +1010,7 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                                 instance_diagnostics.push(widget_diagnostic(
                                     "dynamic_widget_binding_incompatible",
                                     message,
-                                    &template.file,
+                                    template_file,
                                     &boundary.instance_id,
                                 ));
                                 status = DynamicWidgetResolutionStatus::Incompatible;
@@ -958,7 +1024,7 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                             instance_diagnostics.push(widget_diagnostic(
                                 "dynamic_widget_listing_incompatible",
                                 message,
-                                &template.file,
+                                template_file,
                                 &boundary.instance_id,
                             ));
                             status = DynamicWidgetResolutionStatus::Incompatible;
@@ -973,22 +1039,21 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
 
             let (source_node_ids, root_source_node_ids) = source_nodes_in_boundary(
                 source_graph,
-                &template.file,
+                template_file,
                 boundary.start_end,
                 boundary.end_start,
             );
-            let range = source_range(&source, boundary.start, boundary.end);
+            let range = source_range(source, boundary.start, boundary.end);
             let source_revision = source_revision(&source[boundary.start..boundary.end]);
-            diagnostics.extend(instance_diagnostics.clone());
-            source_instances.push(DynamicWidgetSourceInstance {
+            DynamicWidgetSourceInstance {
                 id: format!("dynamic_widget_source:{}", boundary.instance_id),
                 instance_id: boundary.instance_id,
                 provider_id: boundary.provider_id,
                 provider_kind,
-                file: template.file.clone(),
+                file: template_file.to_string(),
                 range,
-                start_marker_range: source_range(&source, boundary.start, boundary.start_end),
-                end_marker_range: source_range(&source, boundary.end_start, boundary.end),
+                start_marker_range: source_range(source, boundary.start, boundary.start_end),
+                end_marker_range: source_range(source, boundary.end_start, boundary.end),
                 source_node_ids,
                 root_source_node_ids,
                 status,
@@ -997,21 +1062,70 @@ pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
                 canonical_binding_expression,
                 source_revision,
                 diagnostics: instance_diagnostics,
-            });
+            }
+        })
+        .collect()
+}
+
+fn reconcile_dynamic_widget_duplicate_ids(instances: &mut [DynamicWidgetSourceInstance]) {
+    let mut seen_ids = HashSet::new();
+    for instance in instances {
+        instance
+            .diagnostics
+            .retain(|diagnostic| diagnostic.code != "dynamic_widget_duplicate_instance");
+        instance.status = dynamic_widget_status_without_duplicate(instance);
+        if seen_ids.insert(instance.instance_id.clone()) {
+            continue;
+        }
+        let diagnostic = widget_diagnostic(
+            "dynamic_widget_duplicate_instance",
+            "InstanceId-ul apare de mai multe ori în proiect.".to_string(),
+            &instance.file,
+            &instance.instance_id,
+        );
+        let position = instance
+            .diagnostics
+            .iter()
+            .position(|diagnostic| {
+                matches!(
+                    diagnostic.code.as_str(),
+                    "dynamic_widget_provider_properties_mismatch"
+                        | "dynamic_widget_binding_incompatible"
+                        | "dynamic_widget_listing_incompatible"
+                )
+            })
+            .unwrap_or(instance.diagnostics.len());
+        instance.diagnostics.insert(position, diagnostic);
+        if instance.status != DynamicWidgetResolutionStatus::Incompatible {
+            instance.status = DynamicWidgetResolutionStatus::InvalidContract;
         }
     }
-    source_instances.sort_by(|left, right| {
-        left.file
-            .cmp(&right.file)
-            .then_with(|| left.range.start.cmp(&right.range.start))
-    });
-    DynamicWidgetGraph {
-        schema_version: DYNAMIC_WIDGET_SCHEMA_VERSION,
-        definitions,
-        value_catalog,
-        source_instances,
-        diagnostics,
+}
+
+fn dynamic_widget_status_without_duplicate(
+    instance: &DynamicWidgetSourceInstance,
+) -> DynamicWidgetResolutionStatus {
+    let has = |code| {
+        instance
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == code)
+    };
+    let mut status = if has("dynamic_widget_unknown_provider") {
+        DynamicWidgetResolutionStatus::UnknownProvider
+    } else {
+        DynamicWidgetResolutionStatus::Resolved
+    };
+    if has("dynamic_widget_schema_mismatch") || has("dynamic_widget_provider_properties_mismatch") {
+        status = DynamicWidgetResolutionStatus::InvalidContract;
     }
+    if has("dynamic_widget_binding_incompatible") || has("dynamic_widget_listing_incompatible") {
+        status = DynamicWidgetResolutionStatus::Incompatible;
+    }
+    if instance.properties.is_none() {
+        status = DynamicWidgetResolutionStatus::InvalidContract;
+    }
+    status
 }
 
 pub fn validate_dynamic_widget_source_context(
@@ -1087,7 +1201,7 @@ pub fn validate_dynamic_widget_source_context(
 pub fn project_dynamic_field_usages(
     source: &str,
     template_file: &str,
-    catalog: &ContentModelCatalog,
+    models: &[ContentModelDefinition],
 ) -> Vec<CustomFieldTemplateUsage> {
     let mut usages = parse_widget_boundaries(source, template_file)
         .into_iter()
@@ -1106,7 +1220,7 @@ pub fn project_dynamic_field_usages(
                 return None;
             }
             let path = resolve_dynamic_value(
-                catalog,
+                models,
                 &[],
                 &properties,
                 boundary.schema_version == LEGACY_DYNAMIC_WIDGET_SCHEMA_VERSION,
@@ -1390,7 +1504,7 @@ struct ResolvedDynamicValue {
 }
 
 fn resolve_dynamic_value(
-    catalog: &ContentModelCatalog,
+    models: &[ContentModelDefinition],
     value_catalog: &[DynamicValueDefinition],
     properties: &DynamicFieldWidgetProperties,
     allow_legacy_type_mismatch: bool,
@@ -1408,8 +1522,7 @@ fn resolve_dynamic_value(
             }
         }
         DynamicValueSource::CustomField { model_id, field_id } => {
-            let model = catalog
-                .models
+            let model = models
                 .iter()
                 .find(|model| model.id == *model_id)
                 .ok_or_else(|| format!("Modelul {model_id} nu există."))?;
@@ -1729,7 +1842,7 @@ fn render_dynamic_field(
 ) -> Result<String, String> {
     let value_catalog = dynamic_value_catalog(source_graph);
     let resolved = resolve_dynamic_value(
-        &source_graph.content_models,
+        &source_graph.content_models.models,
         &value_catalog,
         properties,
         false,
@@ -2219,31 +2332,28 @@ mod tests {
         })
     }
 
-    fn field_catalog() -> ContentModelCatalog {
-        ContentModelCatalog {
-            models: vec![ContentModelDefinition {
-                schema_version: 1,
-                id: "service".to_string(),
-                label: "Serviciu".to_string(),
-                description: String::new(),
-                fields: vec![ContentFieldDefinition {
-                    id: "field-title".to_string(),
-                    key: "title".to_string(),
-                    label: "Titlu".to_string(),
-                    kind: ContentFieldKind::Text,
-                    required: false,
-                    help: String::new(),
-                    default_value: None,
-                    choices: Vec::new(),
-                    minimum: None,
-                    maximum: None,
-                    pattern: None,
-                    fields: Vec::new(),
-                }],
-                file: ".panastudio/content-models/service.toml".to_string(),
+    fn field_models() -> Vec<ContentModelDefinition> {
+        vec![ContentModelDefinition {
+            schema_version: 1,
+            id: "service".to_string(),
+            label: "Serviciu".to_string(),
+            description: String::new(),
+            fields: vec![ContentFieldDefinition {
+                id: "field-title".to_string(),
+                key: "title".to_string(),
+                label: "Titlu".to_string(),
+                kind: ContentFieldKind::Text,
+                required: false,
+                help: String::new(),
+                default_value: None,
+                choices: Vec::new(),
+                minimum: None,
+                maximum: None,
+                pattern: None,
+                fields: Vec::new(),
             }],
-            ..Default::default()
-        }
+            file: ".panastudio/content-models/service.toml".to_string(),
+        }]
     }
 
     fn test_workspace(root: &Path, relative_path: &str, source: &str) -> ProjectWorkspace {
@@ -2290,7 +2400,7 @@ mod tests {
                 size: source.len() as u64,
                 readonly: false,
             },
-            baseline_text: source.to_string(),
+            baseline_text: source.to_string().into(),
             draft: None,
             revision: 1,
         });
@@ -2420,7 +2530,7 @@ mod tests {
     #[test]
     fn optional_dynamic_values_follow_empty_fallback_and_hide_contracts() {
         let mut graph = empty_source_graph();
-        graph.content_models = field_catalog();
+        graph.content_models.models = field_models();
         let mut context = tera::Context::new();
         context.insert("item", &serde_json::json!({ "extra": {} }));
 
@@ -2498,9 +2608,9 @@ mod tests {
     #[test]
     fn custom_keys_use_safe_tera_bracket_access_and_parse() {
         let mut graph = empty_source_graph();
-        let mut catalog = field_catalog();
-        catalog.models[0].fields[0].key = "hero-title".into();
-        graph.content_models = catalog;
+        let mut models = field_models();
+        models[0].fields[0].key = "hero-title".into();
+        graph.content_models.models = models;
         let mut properties = field_properties();
         let DynamicWidgetProperties::DynamicField(ref mut field) = properties else {
             unreachable!()
@@ -2515,9 +2625,9 @@ mod tests {
     #[test]
     fn list_object_is_not_stringified_and_untrusted_custom_html_cannot_be_safe() {
         let mut graph = empty_source_graph();
-        let mut catalog = field_catalog();
-        catalog.models[0].fields[0].kind = ContentFieldKind::Repeater;
-        graph.content_models = catalog;
+        let mut models = field_models();
+        models[0].fields[0].kind = ContentFieldKind::Repeater;
+        graph.content_models.models = models;
         let mut properties = field_properties();
         if let DynamicWidgetProperties::DynamicField(field) = &mut properties {
             field.binding.context = DynamicFieldScope::Page;
@@ -2547,7 +2657,7 @@ mod tests {
         use crate::kernel::listing_items::{ListingItemDefinition, ListingItemStatus};
 
         let mut graph = empty_source_graph();
-        graph.content_models = field_catalog();
+        graph.content_models.models = field_models();
         graph.listing_items.items.push(ListingItemDefinition {
             id: "service-card".into(),
             label: "Card serviciu".into(),
@@ -2598,13 +2708,13 @@ mod tests {
     #[test]
     fn collection_item_marker_projects_a_typed_content_model_usage() {
         let mut graph = empty_source_graph();
-        graph.content_models = field_catalog();
+        graph.content_models.models = field_models();
         let source =
             render_dynamic_widget("dynamic-field-a1b2c3d4", &field_properties(), &graph).unwrap();
         let usages = project_dynamic_field_usages(
             &source,
             "templates/listing-items/service.html",
-            &graph.content_models,
+            &graph.content_models.models,
         );
         assert_eq!(usages.len(), 1);
         assert_eq!(usages[0].model_id, "service");

@@ -1,0 +1,24 @@
+schema_version = 1
+owner = "index-zero-generator-stres-v1"
+profil = "mare"
+seed = 20270821
+
+[continut]
+evenimente = 180
+artisti = 100
+locatii = 20
+articole = 50
+
+[stres]
+celule_dom = 1250
+noduri_dom_aproximate = 5000
+reguli_css = 1200
+elemente_motion = 240
+
+[inventar]
+fisiere = 464
+directoare = 31
+intrari = 495
+text_bytes = 922190
+max_text_bytes = 252085
+max_text_path = "sursa/templates/generat/laborator-densitate.html"

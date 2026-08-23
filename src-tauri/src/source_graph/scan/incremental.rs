@@ -48,9 +48,38 @@ pub(crate) struct SourceGraphIncrementalTemplateReport {
     pub(crate) replaced_nodes: usize,
     pub(crate) reused_nodes: usize,
     pub(crate) reused_relations: usize,
-    pub(crate) template_parse_ms: u64,
-    pub(crate) component_graph_ms: u64,
-    pub(crate) block_graph_ms: u64,
+    pub(crate) template_parse_us: u64,
+    pub(crate) component_graph_us: u64,
+    pub(crate) block_graph_us: u64,
+    pub(crate) content_model_us: u64,
+    pub(crate) listing_items_us: u64,
+    pub(crate) listing_items_reused: bool,
+    pub(crate) dynamic_widget_us: u64,
+    pub(crate) markdown_us: u64,
+    pub(crate) node_index_us: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LocalTemplateDerivedInvalidationPlan<'a> {
+    component_graph_file: &'a str,
+    block_graph_file: &'a str,
+    content_model_usages_file: &'a str,
+    listing_items_reused: bool,
+    dynamic_widgets_file: &'a str,
+    markdown_file: &'a str,
+}
+
+impl<'a> LocalTemplateDerivedInvalidationPlan<'a> {
+    fn stable_dependency_contract(template_file: &'a str) -> Self {
+        Self {
+            component_graph_file: template_file,
+            block_graph_file: template_file,
+            content_model_usages_file: template_file,
+            listing_items_reused: true,
+            dynamic_widgets_file: template_file,
+            markdown_file: template_file,
+        }
+    }
 }
 
 pub(crate) fn rebuild_local_template_graph(
@@ -133,7 +162,7 @@ pub(crate) fn rebuild_local_template_graph(
         .first()
         .cloned()
         .ok_or(SourceGraphIncrementalFallback::MissingTemplate)?;
-    let template_parse_ms = elapsed_ms(template_parse_started);
+    let template_parse_us = elapsed_us(template_parse_started);
     if fragment
         .diagnostics
         .iter()
@@ -147,6 +176,8 @@ pub(crate) fn rebuild_local_template_graph(
     if !same_dependency_contract(&previous_template, &next_template) {
         return Err(SourceGraphIncrementalFallback::DependencyContractChanged);
     }
+    let invalidation =
+        LocalTemplateDerivedInvalidationPlan::stable_dependency_contract(relative_path);
 
     let old_node_indexes = graph
         .nodes
@@ -197,37 +228,64 @@ pub(crate) fn rebuild_local_template_graph(
         .splice(first_node_index..=last_node_index, fragment.nodes);
     graph.templates[template_index] = next_template;
     let component_graph_started = Instant::now();
-    graph.component_graph = crate::source_graph::component_graph::build_component_graph(&graph);
-    let component_graph_ms = elapsed_ms(component_graph_started);
+    let previous_component_graph = std::mem::take(&mut graph.component_graph);
+    graph.component_graph = crate::source_graph::component_graph::upsert_component_graph_template(
+        &graph,
+        previous_component_graph,
+        invalidation.component_graph_file,
+    );
+    let component_graph_us = elapsed_us(component_graph_started);
     let block_graph_started = Instant::now();
-    graph.block_graph = crate::blocks::graph::build_block_graph(&graph);
-    let block_graph_ms = elapsed_ms(block_graph_started);
+    let mut block_graph = std::mem::take(&mut graph.block_graph);
+    crate::blocks::graph::upsert_block_graph_template(
+        &graph,
+        &mut block_graph,
+        invalidation.block_graph_file,
+    );
+    graph.block_graph = block_graph;
+    let block_graph_us = elapsed_us(block_graph_started);
+    let content_model_started = Instant::now();
     let mut content_models = std::mem::take(&mut graph.content_models);
-    crate::kernel::content_models::refresh_content_model_template_usages(
-        project_root,
+    crate::kernel::content_models::upsert_content_model_template_usages(
         projected_sources,
         &graph,
         &mut content_models,
+        invalidation.content_model_usages_file,
     );
     graph.content_models = content_models;
-    graph.listing_items =
-        crate::kernel::listing_items::build_listing_item_catalog_from_workspace_projection(
-            project_root,
-            projected_sources,
-            &HashSet::new(),
-            &graph,
-        );
-    graph.dynamic_widget_graph =
-        crate::kernel::dynamic_widgets::build_dynamic_widget_graph_from_workspace_projection(
-            project_root,
-            projected_sources,
-            &HashSet::new(),
-            &graph,
-        );
-    graph.markdown_projections = crate::source_graph::markdown::build_markdown_projections(&graph);
+    let content_model_us = elapsed_us(content_model_started);
+    let listing_items_started = Instant::now();
+    // The dependency contract above proves the listing inputs (template
+    // identity/includes/content assignments) are unchanged for this lane.
+    let listing_items_us = elapsed_us(listing_items_started);
+    let dynamic_widget_started = Instant::now();
+    let mut dynamic_widget_graph = std::mem::take(&mut graph.dynamic_widget_graph);
+    crate::kernel::dynamic_widgets::upsert_dynamic_widget_graph_template(
+        projected_sources,
+        &graph,
+        &mut dynamic_widget_graph,
+        invalidation.dynamic_widgets_file,
+    );
+    graph.dynamic_widget_graph = dynamic_widget_graph;
+    let dynamic_widget_us = elapsed_us(dynamic_widget_started);
+    let markdown_started = Instant::now();
+    let mut markdown_projections = std::mem::take(&mut graph.markdown_projections);
+    let markdown_template = graph
+        .templates
+        .iter()
+        .find(|template| template.file == invalidation.markdown_file)
+        .expect("invalidation plan references the replaced template");
+    crate::source_graph::markdown::upsert_markdown_template(
+        &mut markdown_projections,
+        markdown_template,
+    );
+    graph.markdown_projections = markdown_projections;
+    let markdown_us = elapsed_us(markdown_started);
+    let node_index_started = Instant::now();
     graph
         .rebuild_node_index()
         .map_err(|_| SourceGraphIncrementalFallback::IdentityCollision)?;
+    let node_index_us = elapsed_us(node_index_started);
 
     Ok((
         graph,
@@ -237,15 +295,21 @@ pub(crate) fn rebuild_local_template_graph(
             replaced_nodes,
             reused_nodes,
             reused_relations,
-            template_parse_ms,
-            component_graph_ms,
-            block_graph_ms,
+            template_parse_us,
+            component_graph_us,
+            block_graph_us,
+            content_model_us,
+            listing_items_us,
+            listing_items_reused: invalidation.listing_items_reused,
+            dynamic_widget_us,
+            markdown_us,
+            node_index_us,
         },
     ))
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
-    started.elapsed().as_millis().min(u64::MAX as u128) as u64
+fn elapsed_us(started: Instant) -> u64 {
+    started.elapsed().as_micros().min(u64::MAX as u128) as u64
 }
 
 fn same_dependency_contract(previous: &SourceGraphTemplate, next: &SourceGraphTemplate) -> bool {

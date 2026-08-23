@@ -618,8 +618,8 @@ mod tests {
             runtime_session_id: runtime_session_id.clone(),
             revision: 4,
             workspace_transaction_id: None,
-            source_texts,
-            resource_bytes: HashMap::new(),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::new(),
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -632,7 +632,8 @@ mod tests {
                     max_files: 1_000,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         }
     }
 

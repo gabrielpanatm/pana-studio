@@ -1,6 +1,9 @@
 import type { MessageId } from "$lib/i18n/generated/catalog";
 import { t } from "$lib/i18n/runtime.svelte";
-import type { SourceCapabilities, SourceCapabilityReason } from "$lib/types";
+import type {
+  SourceCapabilities,
+  SourceCapabilityReason,
+} from "$lib/source-graph/contracts";
 
 const reasonMessageIds: Record<SourceCapabilityReason, MessageId> = {
   structuredConfig: "source-capability-reason-structured-config",

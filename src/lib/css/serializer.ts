@@ -1,4 +1,4 @@
-import type { EditableStyles } from "$lib/types";
+import type { EditableStyles } from "$lib/css/contracts";
 
 export const editableStylePropertyMap: Record<keyof EditableStyles, string> = {
   color: "color",
@@ -15,20 +15,6 @@ export const editableStylePropertyMap: Record<keyof EditableStyles, string> = {
   justifyContent: "justify-content",
   alignItems: "align-items",
 };
-
-export function buildDirtyStyleProperties(
-  dirty: ReadonlySet<keyof EditableStyles>,
-  styles: EditableStyles,
-): Record<string, string> {
-  const properties: Record<string, string> = {};
-  for (const key of dirty) {
-    const cssProperty = editableStylePropertyMap[key];
-    if (cssProperty && styles[key]) {
-      properties[cssProperty] = styles[key];
-    }
-  }
-  return properties;
-}
 
 export function serializeOverrides(
   rules: Record<string, EditableStyles>,

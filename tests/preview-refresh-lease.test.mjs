@@ -3,32 +3,33 @@ import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { createControlledPreviewState } from "$lib/preview/controlled";
 import { PreviewRuntimeTransportError } from "$lib/editor-runtime/preview-runtime";
 import {
   confirmMountedCanvasProjection,
+  beginPreviewRefreshLease,
   fetchDomTreeFromPreview,
   isCanvasProjectionSurfaceUnavailableError,
   mountCanvasProjectionSurface,
   prepareCanvasProjectionNavigation,
+  previewRefreshLeaseMatches,
   refreshRenderedPreviewDocument,
   reloadPreview,
   settleGuardedPreviewNavigation,
   unmountCanvasProjectionSurface,
 } from "$lib/state/preview-controller";
-import {
-  requestControlledPreviewRefresh,
-  runZolaValidation,
-} from "$lib/state/controlled-preview-controller";
+import { ControlledPreviewWorkspaceState } from "$lib/preview/controlled-state.svelte";
 import {
   refreshSourceGraph,
   isPreviewControlPlaneMessage,
 } from "$lib/state/app-preview-runtime-controller";
 import {
-  bindCanvasCandidateIdentityToPreviewUrl,
-  openCurrentProjectInBrowser,
   startPreviewAfterOpen,
-} from "$lib/state/project-controller";
+} from "$lib/state/project-preview-bootstrap-controller";
+import {
+  synchronizeActiveCanvasSurfaceRoute,
+} from "$lib/state/project-template-workbench-controller";
+import { bindCanvasCandidateIdentityToPreviewUrl } from "$lib/project/preview-url";
+import { openCurrentProjectInBrowser } from "$lib/state/project-browser-preview-controller";
 
 if (!globalThis.window) globalThis.window = globalThis;
 if (!globalThis.location) globalThis.location = new URL("http://app.local/");
@@ -82,7 +83,7 @@ function canvasPhaseReceipts(identity) {
 }
 
 function host(overrides = {}) {
-  return {
+  const active = {
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     projectSessionEpoch: 7,
@@ -94,6 +95,10 @@ function host(overrides = {}) {
     previewDiskRevision: null,
     previewWorkspaceRevision: null,
     pendingCanvasProjection: null,
+    activeCanvasIdentity: null,
+    activeCanvasUrl: "about:blank",
+    previewNavigationGuardActive: false,
+    previewNavigationRecoveryUrl: null,
     canvasProjectionConfirmation: null,
     previewSyncTimer: null,
     domTreeFetchTimer: null,
@@ -101,21 +106,101 @@ function host(overrides = {}) {
     activeRenderedPreviewPageFile: previewFile(),
     isActiveRenderedPreviewPage: true,
     projectStatus: "Project A",
+    projectLifecycle: { activeSession: null },
+    templateWorkbenchActive: false,
     overrideRules: {},
     variableOverrides: {},
     pageSections: [],
+    editorSelection: {
+      selectionSnapshot: null,
+      reset() {},
+      async refreshNavigationSnapshot() {},
+    },
     previewUrlForScannedFile(file) {
       return `http://127.0.0.1:1111/${file.relativePath}`;
     },
     ...overrides,
   };
+  return Object.assign(active, {
+    session: {
+      get sessionProjectRoot() { return active.sessionProjectRoot; },
+      get kernelProjectSessionId() { return active.kernelProjectSessionId; },
+      get projectSessionEpoch() { return active.projectSessionEpoch; },
+      get previewRefreshSerial() { return active.previewRefreshSerial; },
+      set previewRefreshSerial(serial) { active.previewRefreshSerial = serial; },
+      get previewDomTreeSerial() { return active.previewDomTreeSerial; },
+      set previewDomTreeSerial(serial) { active.previewDomTreeSerial = serial; },
+    },
+    surface: {
+      get frame() { return active.previewFrame; },
+      set frame(frame) { active.previewFrame = frame; },
+      get canvasElement() { return active.canvasSurfaceElement ?? null; },
+      set canvasElement(element) { active.canvasSurfaceElement = element; },
+      get generation() { return active.canvasSurfaceGeneration ?? 0; },
+      set generation(generation) { active.canvasSurfaceGeneration = generation; },
+    },
+    navigation: {
+      get src() { return active.previewSrc; },
+      set src(src) { active.previewSrc = src; },
+      get reloadSerial() { return active.previewReloadSerial; },
+      set reloadSerial(serial) { active.previewReloadSerial = serial; },
+      get activeUrl() { return active.activeCanvasUrl; },
+      set activeUrl(url) { active.activeCanvasUrl = url; },
+      get guardActive() { return active.previewNavigationGuardActive; },
+      set guardActive(value) { active.previewNavigationGuardActive = value; },
+      get recoveryUrl() { return active.previewNavigationRecoveryUrl; },
+      set recoveryUrl(url) { active.previewNavigationRecoveryUrl = url; },
+    },
+    projection: {
+      get workspaceRevision() { return active.previewWorkspaceRevision; },
+      set workspaceRevision(revision) { active.previewWorkspaceRevision = revision; },
+      get pending() { return active.pendingCanvasProjection; },
+      set pending(plan) { active.pendingCanvasProjection = plan; },
+      get activeIdentity() { return active.activeCanvasIdentity; },
+      set activeIdentity(identity) { active.activeCanvasIdentity = identity; },
+      get confirmation() { return active.canvasProjectionConfirmation; },
+      set confirmation(confirmation) { active.canvasProjectionConfirmation = confirmation; },
+    },
+    timers: {
+      get previewSync() { return active.previewSyncTimer; },
+      set previewSync(timer) { active.previewSyncTimer = timer; },
+      get domTreeFetch() { return active.domTreeFetchTimer; },
+      set domTreeFetch(timer) { active.domTreeFetchTimer = timer; },
+    },
+    document: {
+      get markup() { return active.previewDocumentMarkup; },
+      set markup(markup) { active.previewDocumentMarkup = markup; },
+      get activePage() { return active.activeRenderedPreviewPageFile; },
+      get isActivePage() { return active.isActiveRenderedPreviewPage; },
+      get projectStatus() { return active.projectStatus; },
+      set projectStatus(status) { active.projectStatus = status; },
+    },
+    context: {
+      get lifecycle() { return active.projectLifecycle; },
+      get templateWorkbenchActive() { return active.templateWorkbenchActive; },
+    },
+    styles: {
+      get overrideRules() { return active.overrideRules; },
+      get variableOverrides() { return active.variableOverrides; },
+    },
+    sections: {
+      get items() { return active.pageSections; },
+      set: (sections) => {
+        if (active.setPageSections) active.setPageSections(sections);
+        else active.pageSections = sections;
+      },
+    },
+    selection: active.editorSelection,
+    runtime: active.previewRuntime,
+    commands: {
+      urlForFile: (file) => active.previewUrlForScannedFile(file),
+      recordRuntimeEvent: (...args) => active.recordCanvasProjectionRuntimeEvent?.(...args),
+    },
+  });
 }
 
 function controlledHost(overrides = {}) {
-  return host({
-    controlledPreview: createControlledPreviewState(),
-    zolaValidationTimer: null,
-    zolaValidationSerial: 0,
+  const activeHost = host({
     scannedProject: { root: "/project-a" },
     statuses: [],
     async reloadPreview(lease) {
@@ -126,6 +211,18 @@ function controlledHost(overrides = {}) {
     },
     ...overrides,
   });
+  activeHost.controlledPreviewState = new ControlledPreviewWorkspaceState({
+    context: () => ({
+      projectPresent: Boolean(activeHost.scannedProject),
+      projectStatus: activeHost.projectStatus,
+    }),
+    beginRefreshLease: () => beginPreviewRefreshLease(activeHost),
+    refreshLeaseCurrent: (lease) => previewRefreshLeaseMatches(activeHost, lease),
+    reloadPreview: (lease) => activeHost.reloadPreview(lease),
+    setProjectStatus: (status) => { activeHost.projectStatus = status; },
+    setGlobalStatus: (text, kind) => activeHost.setGlobalStatus(text, kind),
+  });
+  return activeHost;
 }
 
 afterEach(() => {
@@ -186,6 +283,59 @@ test("bootstrap Canvas promovează numai identitatea completă a documentului mo
     canvasPhaseReceipts(identity),
   ), true);
   await mounted;
+  assert.equal(activeHost.pendingCanvasProjection, null);
+  assert.equal(activeHost.canvasProjectionConfirmation, null);
+});
+
+test("ACK-urile concurente pentru aceeași identitate Canvas folosesc o singură confirmare Rust", async () => {
+  const identity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 8,
+    transactionId: "canvas-workspace-coalesced-8",
+    previewRevision: "workspace-coalesced-8",
+  };
+  const plan = {
+    schemaVersion: 1,
+    identity,
+    workspaceTransactionId: "workspace-edit-coalesced-8",
+    phase: "prepared",
+    impact: { kinds: ["fullDocument"], paths: [], requiresFullDocument: true },
+    resources: { schemaVersion: 1, previewRevision: identity.previewRevision, totalBytes: 0, entries: [] },
+  };
+  const acknowledgeGate = deferred();
+  let acknowledgeCount = 0;
+  mockIPC(async (command) => {
+    assert.equal(command, "acknowledge_canvas_projection_phases");
+    acknowledgeCount += 1;
+    await acknowledgeGate.promise;
+    return { ...plan, phase: "canonicalVerified" };
+  });
+  const frame = { contentWindow: {} };
+  const activeHost = host({
+    previewFrame: frame,
+    canvasSurfaceElement: frame,
+    canvasSurfaceGeneration: 1,
+  });
+  const mounted = prepareCanvasProjectionNavigation(activeHost, plan);
+  const first = confirmMountedCanvasProjection(
+    activeHost,
+    identity,
+    canvasPhaseReceipts(identity),
+  );
+  await nextTurn();
+  const second = confirmMountedCanvasProjection(
+    activeHost,
+    identity,
+    canvasPhaseReceipts(identity),
+  );
+
+  assert.equal(acknowledgeCount, 1);
+  acknowledgeGate.resolve();
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  await mounted;
+  assert.equal(acknowledgeCount, 1);
+  assert.deepEqual(activeHost.activeCanvasIdentity, identity);
   assert.equal(activeHost.pendingCanvasProjection, null);
   assert.equal(activeHost.canvasProjectionConfirmation, null);
 });
@@ -288,6 +438,65 @@ test("înlocuirea directă a iframe-ului închide confirmarea generației preced
   assert.equal(activeHost.pendingCanvasProjection, null);
   assert.equal(activeHost.canvasProjectionConfirmation, null);
   assert.equal(unmountCanvasProjectionSurface(activeHost, oldFrame), false);
+});
+
+test("ACK-ul întârziat al suprafeței vechi nu anulează confirmarea noii generații", async () => {
+  const identity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 10,
+    transactionId: "canvas-remounted-10",
+    previewRevision: "workspace-remounted-10",
+  };
+  const plan = {
+    schemaVersion: 1,
+    identity,
+    workspaceTransactionId: "workspace-edit-remounted-10",
+    phase: "prepared",
+    impact: { kinds: ["fullDocument"], paths: [], requiresFullDocument: true },
+    resources: { schemaVersion: 1, previewRevision: identity.previewRevision, totalBytes: 0, entries: [] },
+  };
+  const oldAcknowledgeGate = deferred();
+  let acknowledgeCount = 0;
+  mockIPC(async (command) => {
+    assert.equal(command, "acknowledge_canvas_projection_phases");
+    acknowledgeCount += 1;
+    if (acknowledgeCount === 1) await oldAcknowledgeGate.promise;
+    return { ...plan, phase: "canonicalVerified" };
+  });
+  const oldFrame = { contentWindow: {} };
+  const activeHost = host({
+    previewFrame: oldFrame,
+    canvasSurfaceElement: oldFrame,
+    canvasSurfaceGeneration: 4,
+  });
+  const oldBarrier = prepareCanvasProjectionNavigation(activeHost, plan);
+  const oldBarrierRejected = assert.rejects(oldBarrier, isCanvasProjectionSurfaceUnavailableError);
+  const oldAcknowledgement = confirmMountedCanvasProjection(
+    activeHost,
+    identity,
+    canvasPhaseReceipts(identity),
+  );
+  await nextTurn();
+
+  const newFrame = { contentWindow: {} };
+  assert.equal(mountCanvasProjectionSurface(activeHost, newFrame), 5);
+  await oldBarrierRejected;
+  const newBarrier = prepareCanvasProjectionNavigation(activeHost, plan);
+  const newConfirmation = activeHost.canvasProjectionConfirmation;
+  oldAcknowledgeGate.resolve();
+  await assert.rejects(oldAcknowledgement, /stale/);
+
+  assert.equal(activeHost.canvasProjectionConfirmation, newConfirmation);
+  assert.equal(activeHost.pendingCanvasProjection, plan);
+  assert.equal(await confirmMountedCanvasProjection(
+    activeHost,
+    identity,
+    canvasPhaseReceipts(identity),
+  ), true);
+  await newBarrier;
+  assert.equal(acknowledgeCount, 2);
+  assert.deepEqual(activeHost.activeCanvasIdentity, identity);
 });
 
 test("timeout-ul autentic este raportat numai pentru generația Canvas încă montată", async () => {
@@ -536,6 +745,54 @@ test("browser preview nu publică URL-ul unei generații AcceptedDisk depășite
   assert.deepEqual(activeHost.notifications, []);
 });
 
+test("browser preview vechi nu se redeschide după ciclul complet al unei tranziții", async () => {
+  const startGate = deferred();
+  let openedUrl = null;
+  const activeHost = {
+    scannedProject: { root: "/project-a", acceptedDiskGeneration: 8 },
+    sessionProjectRoot: "/project-a",
+    kernelProjectSessionId: "session-a:runtime-1",
+    projectTransitionFrontendLeaseActive: false,
+    projectTransitionFrontendLeaseGeneration: 1,
+    currentStatus: "",
+    notifications: [],
+    setGlobalStatus(text, kind) {
+      this.currentStatus = `${kind}:${text}`;
+    },
+    clearNotification() {
+      throw new Error("continuarea stale nu poate curăța notificări");
+    },
+    escalateGlobalStatus(notification) {
+      this.notifications.push(notification);
+    },
+  };
+
+  const opening = openCurrentProjectInBrowser(activeHost, {
+    start() {
+      return startGate.promise;
+    },
+    async openUrl(url) {
+      openedUrl = url;
+    },
+  });
+  await nextTurn();
+  activeHost.projectTransitionFrontendLeaseActive = true;
+  activeHost.projectTransitionFrontendLeaseGeneration = 2;
+  activeHost.projectTransitionFrontendLeaseActive = false;
+  activeHost.currentStatus = "restored:tranziția 2 încheiată";
+  startGate.resolve({
+    url: "http://127.0.0.1:43105",
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    acceptedDiskGeneration: 8,
+  });
+
+  await opening;
+  assert.equal(openedUrl, null);
+  assert.equal(activeHost.currentStatus, "restored:tranziția 2 încheiată");
+  assert.deepEqual(activeHost.notifications, []);
+});
+
 test("preview embedded întârziat nu se publică după redeschiderea aceluiași root", async () => {
   const startGate = deferred();
   let capturedIdentity = null;
@@ -653,7 +910,7 @@ test("bootstrap-ul cu eroare Zola deschide sesiunea degradată fără a repeta r
   assert.equal(activeHost.projectLifecycle, lifecycle);
 });
 
-test("Project Transition invalidează preview-ul embedded înainte de schimbarea proiecției UI", async () => {
+test("o generație Project Transition nouă invalidează Preview vechi și după release", async () => {
   const startGate = deferred();
   let loadCount = 0;
   const activeHost = {
@@ -665,6 +922,7 @@ test("Project Transition invalidează preview-ul embedded înainte de schimbarea
     },
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
+    projectTransitionFrontendLeaseGeneration: 1,
     projectTransitionFrontendLeaseActive: false,
     activeScannedPath: "templates/index.html",
     async loadScannedProjectFile() {
@@ -678,6 +936,7 @@ test("Project Transition invalidează preview-ul embedded înainte de schimbarea
   const identity = {
     expectedProjectRoot: "/project-a",
     expectedSessionId: "session-a:runtime-1",
+    expectedProjectTransitionGeneration: 1,
   };
   const starting = startPreviewAfterOpen(activeHost, identity, {
     start() {
@@ -686,6 +945,8 @@ test("Project Transition invalidează preview-ul embedded înainte de schimbarea
   });
   await nextTurn();
   activeHost.projectTransitionFrontendLeaseActive = true;
+  activeHost.projectTransitionFrontendLeaseGeneration = 2;
+  activeHost.projectTransitionFrontendLeaseActive = false;
   startGate.resolve({
     url: "http://127.0.0.1:43201",
     projectRoot: "/project-a",
@@ -738,6 +999,11 @@ test("prima montare Canvas folosește direct lease-ul exact fără preflight Pre
     previewWorkspaceRevision: null,
     activeCanvasIdentity: null,
     activeCanvasUrl: "",
+    editorSelection: {
+      selectionSnapshot: null,
+      reset() {},
+      async refreshNavigationSnapshot() {},
+    },
     prepareCanvasProjectionNavigation(plan) {
       this.pendingCanvasProjection = plan;
       return Promise.resolve().then(() => {
@@ -752,6 +1018,9 @@ test("prima montare Canvas folosește direct lease-ul exact fără preflight Pre
       loadCount += 1;
     },
     markCanvasProjectionSurfaceCurrent() {},
+    async synchronizeProjectCanvasSurfaceRoute(previewSrc, identity) {
+      await synchronizeActiveCanvasSurfaceRoute(this, previewSrc, identity);
+    },
     clearNotification() {},
     setGlobalStatus() {},
     scheduleZolaValidation() {},
@@ -835,6 +1104,8 @@ test("restaurarea unui template așteaptă publicarea Canvas principal înainte 
     previewWorkspaceRevision: null,
     activeCanvasIdentity: null,
     activeCanvasUrl: "",
+    deferWorkspacePreviewProjection() { events.push("resume-armed"); },
+    markCanvasProjectionSurfaceCurrent() { events.push("surface-current"); },
     prepareCanvasProjectionNavigation(plan) {
       events.push("main-prepared");
       this.pendingCanvasProjection = plan;
@@ -876,15 +1147,26 @@ test("restaurarea unui template așteaptă publicarea Canvas principal înainte 
     },
   });
   await nextTurn();
-  assert.deepEqual(events, ["main-prepared"]);
+  assert.deepEqual(events, ["resume-armed", "main-prepared"]);
 
   mainCanvasGate.resolve();
   const outcome = await starting;
   assert.equal(outcome.status, "canonical");
-  assert.deepEqual(events, ["main-prepared", "main-canonical", "workbench:template"]);
+  assert.deepEqual(events, [
+    "resume-armed",
+    "main-prepared",
+    "main-canonical",
+    "surface-current",
+    "workbench:template",
+  ]);
 });
 
 test("pornirea cu activitatea Șabloane amână Canvas-ul fără warning sau activare prematură", async () => {
+  const ipcCommands = [];
+  mockIPC((command) => {
+    ipcCommands.push(command);
+    throw new Error(`IPC neașteptat: ${command}`);
+  });
   const template = {
     name: "index.html",
     relativePath: "templates/index.html",
@@ -912,6 +1194,13 @@ test("pornirea cu activitatea Șabloane amână Canvas-ul fără warning sau act
     resources: { schemaVersion: 1, previewRevision: "preview-main-5", totalBytes: 0, entries: [] },
   };
   const events = [];
+  const awaitingCanvasLifecycle = {
+    activeSession: {
+      projectRoot: "/project-a",
+      runtimeSessionId: "session-a:runtime-1",
+      readiness: { state: "awaiting_canvas" },
+    },
+  };
   const activeHost = {
     scannedProject: {
       root: "/project-a",
@@ -922,6 +1211,7 @@ test("pornirea cu activitatea Șabloane amână Canvas-ul fără warning sau act
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     projectTransitionFrontendLeaseActive: false,
+    projectLifecycle: awaitingCanvasLifecycle,
     activeScannedPath: template.relativePath,
     activePreviewPath: "about:blank",
     previewSrc: "about:blank",
@@ -930,6 +1220,11 @@ test("pornirea cu activitatea Șabloane amână Canvas-ul fără warning sau act
     previewWorkspaceRevision: null,
     activeCanvasIdentity: null,
     activeCanvasUrl: "",
+    editorSelection: {
+      selectionSnapshot: null,
+      reset() {},
+      async refreshNavigationSnapshot() {},
+    },
     hasMountedCanvasProjectionSurface() { return false; },
     deferWorkspacePreviewProjection() { events.push("deferred"); },
     prepareCanvasProjectionNavigation() {
@@ -961,6 +1256,7 @@ test("pornirea cu activitatea Șabloane amână Canvas-ul fără warning sau act
         canvasProjection,
       };
     },
+    async readLifecycle() { return awaitingCanvasLifecycle; },
   });
 
   assert.equal(outcome.status, "deferred");
@@ -968,10 +1264,12 @@ test("pornirea cu activitatea Șabloane amână Canvas-ul fără warning sau act
   assert.equal(activeHost.scannedProject.previewWarning, null);
   assert.equal(activeHost.pendingCanvasProjection, null);
   assert.equal(activeHost.previewWorkspaceRevision, null);
+  assert.equal(activeHost.projectLifecycle, awaitingCanvasLifecycle);
+  assert.deepEqual(ipcCommands, []);
   assert.deepEqual(events, [
     "deferred",
     "clear:project.preview.warning",
-    "restored:The Zola Preview engine is running; Canvas will resume when you return to Editor.",
+    "restored:The Zola Preview engine is running; Canvas will resume automatically when its surface is ready.",
   ]);
 });
 
@@ -1013,6 +1311,11 @@ test("reatașarea unui Canvas Rust deja canonic amână numai suprafața și Tem
     previewWorkspaceRevision: null,
     activeCanvasIdentity: null,
     activeCanvasUrl: "",
+    editorSelection: {
+      selectionSnapshot: null,
+      reset() {},
+      async refreshNavigationSnapshot() {},
+    },
     hasMountedCanvasProjectionSurface() { return false; },
     deferWorkspacePreviewProjection() { events.push("deferred"); },
     previewUrlForScannedFile() { return "http://127.0.0.1:43222/"; },
@@ -1277,19 +1580,22 @@ test("eșecul reconcilerului pe aceeași rută păstrează ultimul document și 
     }
     throw new Error(`Comandă IPC neașteptată: ${command}`);
   });
+  const frame = {
+    contentWindow: {},
+    getAttribute(name) {
+      if (name === "src") return canonicalUrl;
+      return null;
+    },
+    hasAttribute() { return false; },
+  };
   const activeHost = host({
     previewSrc: canonicalUrl,
     previewDocumentMarkup: null,
     previewWorkspaceRevision: "workspace-9",
     pendingCanvasProjection: plan,
-    previewFrame: {
-      contentWindow: {},
-      getAttribute(name) {
-        if (name === "src") return canonicalUrl;
-        return null;
-      },
-      hasAttribute() { return false; },
-    },
+    previewFrame: frame,
+    canvasSurfaceElement: frame,
+    canvasSurfaceGeneration: 1,
     previewRuntime: {
       async sendAndWait(payload) {
         return {
@@ -1421,16 +1727,16 @@ test("latest-wins păstrează numai al doilea refresh și starea canonical afere
   });
 
   const activeHost = controlledHost();
-  const first = requestControlledPreviewRefresh(activeHost, "manual");
+  const first = activeHost.controlledPreviewState.requestRefresh("manual");
   await firstStarted.promise;
-  const second = requestControlledPreviewRefresh(activeHost, "external-change");
+  const second = activeHost.controlledPreviewState.requestRefresh("external-change");
   await secondStarted.promise;
 
   secondGate.resolve("<html><body>Al doilea refresh</body></html>");
   assert.equal(await second, true);
   const winningSrc = activeHost.previewSrc;
   const winningStatus = activeHost.projectStatus;
-  const winningState = activeHost.controlledPreview;
+  const winningState = activeHost.controlledPreviewState.snapshot;
   assert.match(winningSrc, /__pana_reload=2/);
   assert.equal(winningState.freshness, "canonical");
   assert.equal(winningState.refreshReason, "external-change");
@@ -1439,11 +1745,11 @@ test("latest-wins păstrează numai al doilea refresh și starea canonical afere
   assert.equal(await first, false);
   assert.equal(activeHost.previewSrc, winningSrc);
   assert.equal(activeHost.projectStatus, winningStatus);
-  assert.equal(activeHost.controlledPreview, winningState);
+  assert.equal(activeHost.controlledPreviewState.snapshot, winningState);
 
-  if (activeHost.zolaValidationTimer !== null) {
-    window.clearTimeout(activeHost.zolaValidationTimer);
-    activeHost.zolaValidationTimer = null;
+  if (activeHost.controlledPreviewState.validationTimer !== null) {
+    window.clearTimeout(activeHost.controlledPreviewState.validationTimer);
+    activeHost.controlledPreviewState.validationTimer = null;
   }
 });
 
@@ -1456,13 +1762,12 @@ test("un refresh de proiecție poate păstra eșecul intern fără notificare gl
     },
   });
 
-  assert.equal(await requestControlledPreviewRefresh(
-    activeHost,
+  assert.equal(await activeHost.controlledPreviewState.requestRefresh(
     "workspace-mutation",
     { publishFailure: false },
   ), false);
   assert.deepEqual(activeHost.statuses, []);
-  assert.equal(activeHost.controlledPreview.freshness, "error");
+  assert.equal(activeHost.controlledPreviewState.snapshot.freshness, "error");
   assert.match(activeHost.projectStatus, /404 Not Found/);
 });
 
@@ -1475,10 +1780,10 @@ test("validarea automată păstrează în coadă o revizie care așteaptă Previ
   });
   const activeHost = controlledHost();
 
-  assert.equal(await runZolaValidation(activeHost, "refresh"), false);
-  assert.equal(activeHost.controlledPreview.validation, "queued");
+  assert.equal(await activeHost.controlledPreviewState.runValidation("refresh"), false);
+  assert.equal(activeHost.controlledPreviewState.snapshot.validation, "queued");
   assert.equal(
-    activeHost.controlledPreview.validationMessage,
+    activeHost.controlledPreviewState.snapshot.validationMessage,
     "Generația Preview nu confirmă încă revizia ProjectWorkspace 42.",
   );
   assert.equal(activeHost.statuses.at(-1)?.kind, "unsaved");
@@ -1557,23 +1862,13 @@ test("Source Graph întârziat nu poate fi publicat într-un runtime redeschis p
   assert.equal(activeHost.sourceGraph, runtimeTwoGraph);
 });
 
-test("Project Transition și reset invalidează lease-ul înaintea continuărilor asincrone", () => {
+test("reset invalidează lease-ul Preview înaintea următoarei continuări", () => {
   const source = readFileSync(fileURLToPath(new URL(
-    "../src/lib/state/app.svelte.ts",
+    "../src/lib/preview/workspace-state.svelte.ts",
     import.meta.url,
   )), "utf8");
-
-  const transition = source.slice(source.indexOf("async beginProjectTransitionFrontendLease()"));
-  const transitionInvalidation = transition.indexOf("invalidatePreviewRefreshLease(");
-  const transitionFirstAwait = transition.indexOf("await ");
-  assert.ok(transitionInvalidation >= 0, "Project Transition trebuie să invalideze refresh-ul activ");
-  assert.ok(
-    transitionInvalidation < transitionFirstAwait,
-    "invalidarea Preview trebuie să se producă înainte de primul await din tranziție",
-  );
-
-  const reset = source.slice(source.indexOf("resetControlledPreviewState()"));
+  const reset = source.slice(source.indexOf("resetControlled()"));
   const resetInvalidation = reset.indexOf("invalidatePreviewRefreshLease(");
-  const nextMethod = reset.indexOf("\n  scheduleZolaValidation(");
+  const nextMethod = reset.indexOf("\n  setInteractiveEnabled(");
   assert.ok(resetInvalidation >= 0 && resetInvalidation < nextMethod);
 });

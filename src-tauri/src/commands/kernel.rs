@@ -41,12 +41,11 @@ use crate::{
             read_kernel_project_transition_blocked_audit_snapshot,
             read_kernel_project_transition_decision_journal_snapshot,
             read_kernel_project_transition_decision_recovery_ack_journal_snapshot,
-            scan_project_transition_decision_retention_hot_journals, KernelProjectStateSnapshot,
-            KernelProjectTransitionAction, KernelProjectTransitionBlockedAuditSnapshot,
+            KernelProjectStateSnapshot, KernelProjectTransitionAction,
+            KernelProjectTransitionBlockedAuditSnapshot,
             KernelProjectTransitionDecisionJournalSnapshot,
             KernelProjectTransitionDecisionRecoveryAckJournalSnapshot,
-            KernelProjectTransitionDecisionRetentionHotJournal, KernelProjectTransitionPolicy,
-            KernelProjectTransitionPolicyMatrixSnapshot,
+            KernelProjectTransitionPolicy, KernelProjectTransitionPolicyMatrixSnapshot,
         },
         write_authority::{
             WriteAuthorityRecoveryResolutionInput, WriteAuthorityRecoveryResolutionReceipt,
@@ -559,16 +558,4 @@ pub fn read_kernel_project_transition_decision_recovery_ack_journal(
     };
 
     read_kernel_project_transition_decision_recovery_ack_journal_snapshot(&session, limit).map(Some)
-}
-
-#[tauri::command]
-pub fn read_kernel_project_transition_decision_retention_hot_journals(
-    state: State<AppState>,
-) -> Result<Option<Vec<KernelProjectTransitionDecisionRetentionHotJournal>>, String> {
-    let session = current_project_session(&state)?;
-    let Some(session) = session else {
-        return Ok(None);
-    };
-
-    scan_project_transition_decision_retention_hot_journals(&session).map(Some)
 }

@@ -6,18 +6,25 @@ function source(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
 }
 
-test("proveniența sursei este proiectată tipizat de Rust până în Canvas", () => {
-  const navigation = source("../src-tauri/src/kernel/editor_navigation.rs");
-  const interaction = source("../src-tauri/src/kernel/canvas_interaction.rs");
-  const types = source("../src/lib/types.ts");
+function editorNavigationSource() {
+  return ["contracts", "provenance", "snapshot"]
+    .map((module) => source(`../src-tauri/src/kernel/editor_navigation/${module}.rs`))
+    .join("\n");
+}
 
-  assert.match(navigation, /EDITOR_NAVIGATION_SCHEMA_VERSION:\s*u32\s*=\s*3/);
+test("proveniența sursei este proiectată tipizat de Rust până în Canvas", () => {
+  const navigation = editorNavigationSource();
+  const interaction = source("../src-tauri/src/kernel/canvas_interaction.rs");
+  const types = source("../src/lib/editor/contracts.ts")
+    + source("../src/lib/canvas/contracts.ts");
+
+  assert.match(navigation, /EDITOR_NAVIGATION_SCHEMA_VERSION:\s*u32\s*=\s*4/);
   assert.match(navigation, /pub struct EditorSourceProvenance/);
   assert.match(navigation, /pub definition:\s*Option<EditorSourceReference>/);
   assert.match(navigation, /pub composition:\s*Option<EditorSourceReference>/);
   assert.match(navigation, /component_graph\.invocations/);
   assert.match(navigation, /resolved_definition_ids/);
-  assert.match(interaction, /CANVAS_INTERACTION_SCHEMA_VERSION:\s*u32\s*=\s*2/);
+  assert.match(interaction, /CANVAS_INTERACTION_SCHEMA_VERSION:\s*u32\s*=\s*3/);
   assert.match(interaction, /pub source_provenance:\s*EditorSourceProvenance/);
   assert.match(interaction, /source_provenance:\s*node\.source_provenance\.clone\(\)/);
   assert.match(types, /export type EditorSourceProvenance/);
@@ -25,9 +32,9 @@ test("proveniența sursei este proiectată tipizat de Rust până în Canvas", (
 });
 
 test("proveniența selecției alimentează Inspectorul și indicatorul din dreapta", () => {
-  const route = source("../src/routes/+page.svelte");
+  const route = source("../src/lib/components/application/ApplicationWorkspace.svelte");
   const chrome = source("../src/lib/components/workspace/AppChrome.svelte");
-  const derived = source("../src/lib/state/app-derived.ts");
+  const derived = source("../src/lib/editor/selection-workspace.svelte.ts");
   const provenance = source("../src/lib/source-provenance.ts");
   const inspectorArea = source("../src/lib/components/workspace/WorkspaceInspectorArea.svelte");
   const inspector = source("../src/lib/components/InspectorPane.svelte");
@@ -43,9 +50,10 @@ test("proveniența selecției alimentează Inspectorul și indicatorul din dreap
   assert.match(status, /globalStatus\?:\s*GlobalStatusEvent/);
   assert.match(status, /sourceStatus\?:\s*WorkbenchSourceStatus/);
   assert.match(status, /class="selection-source"/);
-  assert.match(chrome, /sourceStatus=\{app\.workbenchSourceStatus\}/);
+  assert.match(route, /sourceStatus:\s*selectionWorkspace\.workbenchSourceStatus/);
+  assert.match(chrome, /sourceStatus=\{surface\.sourceStatus\}/);
   assert.match(chrome, /openSource=\{openWorkbenchSource\}/);
-  assert.match(derived, /workbenchSourceStatusFromSelection\(app\.selectionSnapshot\)/);
+  assert.match(derived, /workbenchSourceStatusFromSelection\(this\.session\.selectionSnapshot\)/);
   assert.match(provenance, /primarySelectionEntry\(selection\)\?\.provenance/);
   assert.match(provenance, /selectionResolution\(selection\) === "cleared"/);
   assert.match(provenance, /const source = definition \?\? composition/);
@@ -62,7 +70,7 @@ test("proveniența selecției alimentează Inspectorul și indicatorul din dreap
 
 test("Code, Status și AI publică primary plus setul opac bounded, fără fapte DOM per membru", () => {
   const readModel = source("../src/lib/kernel/selection-read-model.ts");
-  const ai = source("../src/lib/state/ai-context-controller.ts");
+  const ai = source("../src/lib/ai/context-state.svelte.ts");
   const rustContext = source("../src-tauri/src/commands/mcp.rs");
 
   assert.match(readModel, /memberIds:\s*selection\?\.members\.map/);
@@ -87,28 +95,27 @@ test("Cod deschide definiția, iar ștergerea păstrează call-site-ul selecție
   );
   assert.match(selection, /editorSourceReferenceLocation\(source\)/);
   assert.doesNotMatch(selection, /selectedTemplateSourceNode;\s*if \(!node\)/);
-  assert.match(teraActions, /host\.selectedTemplateSourceNode/);
+  assert.match(teraActions, /host\.context\(\)\.selectedTemplateSourceNode/);
   assert.doesNotMatch(teraActions, /sourceProvenance\.definition/);
 });
 
 test("comutatorul Vizual-Cod păstrează documentul activ", () => {
-  const app = source("../src/lib/state/app.svelte.ts");
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
+  const navigation = source("../src/lib/workbench/document-navigation.ts");
   const selection = source("../src/lib/state/app-selection-controller.ts");
 
   assert.match(
     center,
-    /async function setWorkbenchSurface\(surface: WorkbenchSurface\)\s*\{\s*await app\.setCenterView\(centerViewForSurface\(surface\)\);\s*\}/,
+    /const setWorkbenchSurface:[\s\S]*?\(\s*surface,[\s\S]*?\) => workbenchDocuments\.setSurface\(surface\)/,
   );
-  assert.doesNotMatch(app, /prepareHtmlCodeRevealTargetForCodeEntry/);
-  assert.match(
-    app,
-    /if \(enteringCode\) \{[\s\S]*this\.requestCodeSelectionReveal\(\);[\s\S]*\}/,
+  assert.match(center, /\{setWorkbenchSurface\}/);
+  assert.match(navigation, /setCenterView\(surface === "code" \? "code" : "preview"\)/);
+  const surfaceSwitch = navigation.slice(
+    navigation.indexOf("async setSurface("),
+    navigation.indexOf("\n  }", navigation.indexOf("async setSurface(")) + 4,
   );
-  assert.match(
-    app,
-    /setActiveDocumentSurface\(this\.activeScannedPath, view\)/,
-  );
+  assert.doesNotMatch(surfaceSwitch, /loadProjectFile|OpenDocument|requestSelectionReveal/);
+  assert.match(surfaceSwitch, /setCenterView\(surface === "code" \? "code" : "preview"\)/);
   assert.match(
     selection,
     /openSelectedTeraSource[\s\S]*openSourceLocation\(editorSourceReferenceLocation\(source\)\)/,

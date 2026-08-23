@@ -3,14 +3,18 @@ import {
   readWorkbenchState,
   workbenchIdentity,
 } from "$lib/workbench/io";
+import type { CenterView } from "$lib/application/contracts";
+import type { ProjectFile } from "$lib/project/lifecycle-contract";
 import type {
-  CenterView,
-  ProjectFile,
   WorkbenchCommandReceipt,
   WorkbenchIntent,
   WorkbenchSnapshot,
   WorkbenchSurface,
-} from "$lib/types";
+} from "$lib/workbench/contracts";
+import {
+  patchExactWorkbenchActivityChange,
+  patchExactWorkbenchDocumentActivation,
+} from "$lib/workbench/activation-projection";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export type WorkbenchProjectionHost = {
@@ -80,7 +84,22 @@ export class WorkbenchProjectionController {
       ) {
         throw new Error(t("workbench-closed-session-receipt"));
       }
-      current.workbenchSnapshot = receipt.snapshot;
+      const patched = intent.kind === "activate_document"
+        ? patchExactWorkbenchDocumentActivation(
+          current.workbenchSnapshot,
+          receipt.snapshot,
+          intent,
+        )
+        : intent.kind === "set_activity"
+          ? patchExactWorkbenchActivityChange(
+            current.workbenchSnapshot,
+            receipt.snapshot,
+            intent,
+          )
+          : false;
+      if (!patched) {
+        current.workbenchSnapshot = receipt.snapshot;
+      }
       return receipt;
     });
     this.commandTail = operation.then(() => undefined, () => undefined);

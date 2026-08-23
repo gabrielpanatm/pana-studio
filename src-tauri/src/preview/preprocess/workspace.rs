@@ -1259,11 +1259,11 @@ mod tests {
             runtime_session_id: "session".to_string(),
             revision: 1,
             workspace_transaction_id: Some("projection-test-1".to_string()),
-            source_texts,
-            resource_bytes: std::collections::HashMap::new(),
+            source_texts: source_texts.into(),
+            resource_bytes: std::collections::HashMap::new().into(),
             deleted_sources: std::collections::HashSet::from(["templates/index.html".to_string()]),
             changed_paths: std::collections::HashSet::new(),
-            accepted_disk,
+            accepted_disk: accepted_disk.into(),
         };
         assert!(require_disjoint_projection(&projection).is_err());
     }

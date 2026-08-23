@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const appState = readFileSync(
-  new URL("../src/lib/state/app.svelte.ts", import.meta.url),
+const htmlDraftSession = readFileSync(
+  new URL("../src/lib/state/html-draft-session.svelte.ts", import.meta.url),
   "utf8",
 );
 const htmlActions = readFileSync(
-  new URL("../src/lib/state/html-actions-controller.ts", import.meta.url),
+  new URL("../src/lib/editor/html-actions/execution.ts", import.meta.url),
   "utf8",
 );
 const rustExecutor = readFileSync(
@@ -17,27 +17,27 @@ const rustExecutor = readFileSync(
 
 test("HTML attribute completion is single-flight across inspector and Save flush", () => {
   assert.match(
-    appState,
+    htmlDraftSession,
     /finishPromise:\s*Promise<EditorActionOutcome \| null> \| null/,
   );
   assert.match(
-    appState,
+    htmlDraftSession,
     /if \(session\.finishPromise\) return await session\.finishPromise;[\s\S]*session\.finishPromise = operation/,
   );
   assert.match(
-    appState,
-    /while \(this\.activeHtmlAttributeEditSession\?\.id === session\.id\)/,
+    htmlDraftSession,
+    /while \(this\.activeAttributeSession\?\.id === session\.id\)/,
   );
   assert.doesNotMatch(
-    appState,
-    /return await this\.finishActiveHtmlAttributeEditSession\(\)/,
+    htmlDraftSession,
+    /return await this\.finishActiveAttributeSession\(\)/,
   );
 });
 
 test("an identical attribute intent settles as noop before canonical projection", () => {
   const noopGuard = htmlActions.indexOf("!receipt.workspaceMutation.changed");
   const canonicalProjection = htmlActions.indexOf(
-    "await projectCommittedPreviewStructuralMutation",
+    "await commitHtmlStructuralPatch",
     noopGuard,
   );
   assert.ok(noopGuard >= 0, "lipsește gardul workspace no-op");

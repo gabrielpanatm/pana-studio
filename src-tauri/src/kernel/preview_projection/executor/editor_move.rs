@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use crate::{
     kernel::{
@@ -38,7 +38,7 @@ pub(crate) fn execute_editor_move(
     plan_token: &str,
     operation: EditorMoveOperation,
     execution: EditorMoveExecution,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
 ) -> Result<EditorMoveExecutionOutcome, String> {
     match execution {
         EditorMoveExecution::Html {
@@ -210,10 +210,15 @@ fn editor_move_internal_timings(
         project_model_reused_nodes: build.reused_nodes,
         project_model_reused_relations: build.reused_relations,
         project_model_clone_ms: build.model_clone_ms,
-        project_model_template_parse_ms: build.template_parse_ms,
-        project_model_component_graph_ms: build.component_graph_ms,
-        project_model_block_graph_ms: build.block_graph_ms,
-        project_model_tera_graph_ms: build.tera_graph_ms,
+        project_model_template_parse_us: build.template_parse_us,
+        project_model_component_graph_us: build.component_graph_us,
+        project_model_block_graph_us: build.block_graph_us,
+        project_model_content_model_us: build.content_model_us,
+        project_model_listing_items_us: build.listing_items_us,
+        project_model_listing_items_reused: build.listing_items_reused,
+        project_model_dynamic_widget_us: build.dynamic_widget_us,
+        project_model_markdown_us: build.markdown_us,
+        project_model_node_index_us: build.node_index_us,
     }
 }
 

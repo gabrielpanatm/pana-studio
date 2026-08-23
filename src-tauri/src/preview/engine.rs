@@ -9,6 +9,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
 use tauri_utils::html::{parse, serialize_node};
 use tera::Context;
@@ -67,7 +68,7 @@ impl PersistentPreviewOwner {
 
 pub(crate) struct PersistentPreviewCandidate {
     generation: Arc<ActivePreviewGeneration>,
-    project_model: ProjectModel,
+    project_model: Arc<ProjectModel>,
     pub projected_paths: Vec<String>,
     pub projection_publication: crate::kernel::write_authority::PreviewProjectionPublicationStats,
     pub timings: PersistentPreviewCandidateTimings,
@@ -94,9 +95,30 @@ pub(crate) struct PersistentPreviewCandidateTimings {
 pub(crate) struct TemplateWorkbenchPublication {
     pub route: String,
     pub preview_url: String,
+    pub reuse_token: String,
     pub workspace_revision: u64,
     pub preview_revision: String,
     pub canvas_plan: crate::preview::CanvasProjectionPlan,
+    pub cache_reused: bool,
+    pub timings: TemplateWorkbenchPublicationTimings,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TemplateWorkbenchReuseConfirmation {
+    pub route: String,
+    pub preview_url: String,
+    pub workspace_revision: u64,
+    pub preview_revision: String,
+    pub canvas_transaction_id: String,
+    pub reuse_token: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct TemplateWorkbenchPublicationTimings {
+    pub total_us: u64,
+    pub render_us: u64,
+    pub graph_us: u64,
+    pub prepare_us: u64,
 }
 
 impl PersistentPreviewCandidate {
@@ -104,8 +126,8 @@ impl PersistentPreviewCandidate {
         self.generation.canvas_transaction.plan()
     }
 
-    pub fn project_model(&self) -> &ProjectModel {
-        &self.project_model
+    pub fn project_model_arc(&self) -> Arc<ProjectModel> {
+        self.project_model.clone()
     }
 }
 
@@ -207,6 +229,62 @@ impl PersistentZolaPreviewEngine {
             .generation_for_canvas_identity(identity)
     }
 
+    /// Confirms a previously materialized Workbench projection without
+    /// rebuilding ProjectWorkspace/ProjectModel or serializing their plans.
+    /// Every field belongs to the Rust-issued generation and cache entry; a
+    /// mismatch is a cache miss and must fall back to full publication.
+    pub fn confirm_template_workbench_reuse(
+        &self,
+        workspace_revision: u64,
+        template_path: &str,
+        preferred_page_path: Option<&str>,
+        preferred_route: Option<&str>,
+        reuse_token: &str,
+        expected_preview_revision: &str,
+        expected_canvas_transaction_id: &str,
+    ) -> Result<Option<TemplateWorkbenchReuseConfirmation>, String> {
+        let Some(generation) = self.generation_for_workspace_revision(workspace_revision)? else {
+            return Ok(None);
+        };
+        if generation.preview_revision != expected_preview_revision
+            || generation.canvas_transaction.identity.transaction_id
+                != expected_canvas_transaction_id
+        {
+            return Ok(None);
+        }
+        let workbench_content = generation
+            .workbench_content
+            .read()
+            .map_err(|_| "Registrul Context de template este indisponibil.".to_string())?;
+        let Some((route, projection)) = workbench_content.iter().find(|(_, projection)| {
+            projection.reuse_token == reuse_token
+                && projection.template_path == template_path
+                && projection.selected_page_path.as_deref() == preferred_page_path
+                && projection.selected_route.as_deref() == preferred_route
+        }) else {
+            return Ok(None);
+        };
+        let preview_url = format!(
+            "{}{}?__pana_preview_revision={}&__pana_canvas_transaction={}",
+            self.url()?,
+            route,
+            generation.preview_revision,
+            generation.canvas_transaction.identity.transaction_id,
+        );
+        Ok(Some(TemplateWorkbenchReuseConfirmation {
+            route: route.clone(),
+            preview_url,
+            workspace_revision,
+            preview_revision: generation.preview_revision.clone(),
+            canvas_transaction_id: generation
+                .canvas_transaction
+                .identity
+                .transaction_id
+                .clone(),
+            reuse_token: projection.reuse_token.clone(),
+        }))
+    }
+
     /// Randă template-ul ales în motorul Zola deja încărcat și îl publică în
     /// generația exactă a projection-ului. Generația poate fi încă staged: astfel
     /// Workbench-ul montat poate confirma chiar candidatul canonic, fără să
@@ -217,7 +295,6 @@ impl PersistentZolaPreviewEngine {
         model: &ProjectModel,
         plan: &TemplateWorkbenchPlan,
     ) -> Result<TemplateWorkbenchPublication, String> {
-        #[cfg(debug_assertions)]
         let started = Instant::now();
         self.require_projection_owner(projection)?;
         if model.project_root != Path::new(&projection.project_root) {
@@ -242,12 +319,13 @@ impl PersistentZolaPreviewEngine {
             })?;
         let route = template_workbench_route(&plan.active_template.source_id);
         let context_key = template_workbench_projection_key(plan);
-        let projection_is_cached = generation
+        let cached_reuse_token = generation
             .workbench_content
             .read()
             .map_err(|_| "Registrul Context de template este indisponibil.".to_string())?
             .get(&route)
-            .is_some_and(|projection| projection.context_key == context_key);
+            .filter(|projection| projection.context_key == context_key)
+            .map(|projection| projection.reuse_token.clone());
         let preview_url = format!(
             "{}{}?__pana_preview_revision={}&__pana_canvas_transaction={}",
             self.url()?,
@@ -255,32 +333,35 @@ impl PersistentZolaPreviewEngine {
             generation.preview_revision,
             generation.canvas_transaction.identity.transaction_id
         );
-        if projection_is_cached {
+        if let Some(reuse_token) = cached_reuse_token {
+            let timings = TemplateWorkbenchPublicationTimings {
+                total_us: elapsed_us(started),
+                ..TemplateWorkbenchPublicationTimings::default()
+            };
             #[cfg(debug_assertions)]
             eprintln!(
-                "[Pană Studio][perf] template_projection source={} cache_hit=true total_ms={}",
-                plan.active_template.file,
-                elapsed_ms(started)
+                "[Pană Studio][perf] template_projection source={} cache_hit=true total_us={}",
+                plan.active_template.file, timings.total_us,
             );
             return Ok(TemplateWorkbenchPublication {
                 route,
                 preview_url,
+                reuse_token,
                 workspace_revision: projection.revision,
                 preview_revision: generation.preview_revision.clone(),
                 canvas_plan: generation.canvas_transaction.plan(),
+                cache_reused: true,
+                timings,
             });
         }
         let site = self.site.as_ref().ok_or_else(|| {
             "Motorul Zola embedded nu are site activ pentru Workbench.".to_string()
         })?;
-        #[cfg(debug_assertions)]
         let render_started = Instant::now();
         let (rendered, _canvas_route) = with_zola_engine("Context de template Preview", || {
             render_template_workbench_document(site, &self.raw_content, model, plan)
         })?;
-        #[cfg(debug_assertions)]
-        let render_ms = elapsed_ms(render_started);
-        #[cfg(debug_assertions)]
+        let render_us = elapsed_us(render_started);
         let graph_started = Instant::now();
         let annotated = CanvasGraph::annotate_rendered_document(model, &route, &rendered)?;
         let graph = CanvasGraph::from_rendered_documents(
@@ -289,9 +370,7 @@ impl PersistentZolaPreviewEngine {
             &generation.preview_revision,
             [(route.as_str(), annotated.as_str())],
         )?;
-        #[cfg(debug_assertions)]
-        let graph_ms = elapsed_ms(graph_started);
-        #[cfg(debug_assertions)]
+        let graph_us = elapsed_us(graph_started);
         let prepare_started = Instant::now();
         let resource_versions = PreviewResourceVersions::from_entries(
             generation
@@ -314,8 +393,8 @@ impl PersistentZolaPreviewEngine {
             &mut prepared,
             &generation.canvas_transaction.identity,
         )?;
-        #[cfg(debug_assertions)]
-        let prepare_ms = elapsed_ms(prepare_started);
+        let prepare_us = elapsed_us(prepare_started);
+        let reuse_token = template_workbench_reuse_token(&generation, &route, &context_key);
 
         generation
             .workbench_content
@@ -325,44 +404,52 @@ impl PersistentZolaPreviewEngine {
                 route.clone(),
                 crate::preview::server::TemplateWorkbenchProjection {
                     context_key,
+                    reuse_token: reuse_token.clone(),
+                    template_path: plan.active_template.file.clone(),
+                    selected_page_path: plan
+                        .selected_context
+                        .as_ref()
+                        .map(|context| context.page_file.clone()),
+                    selected_route: plan
+                        .selected_route
+                        .as_ref()
+                        .map(|context| context.url.clone()),
                     content: RenderedPreviewContent::Html(prepared),
                     graph,
                 },
             );
+        let timings = TemplateWorkbenchPublicationTimings {
+            total_us: elapsed_us(started),
+            render_us,
+            graph_us,
+            prepare_us,
+        };
         #[cfg(debug_assertions)]
         eprintln!(
-            "[Pană Studio][perf] template_projection source={} cache_hit=false render_ms={} graph_ms={} prepare_ms={} total_ms={}",
+            "[Pană Studio][perf] template_projection source={} cache_hit=false render_us={} graph_us={} prepare_us={} total_us={}",
             plan.active_template.file,
-            render_ms,
-            graph_ms,
-            prepare_ms,
-            elapsed_ms(started)
+            timings.render_us,
+            timings.graph_us,
+            timings.prepare_us,
+            timings.total_us,
         );
         Ok(TemplateWorkbenchPublication {
             route,
             preview_url,
+            reuse_token,
             workspace_revision: projection.revision,
             preview_revision: generation.preview_revision.clone(),
             canvas_plan: generation.canvas_transaction.plan(),
+            cache_reused: false,
+            timings,
         })
-    }
-
-    #[allow(dead_code)]
-    pub fn render_candidate<R: Runtime>(
-        &mut self,
-        app: &AppHandle<R>,
-        projection: &WorkspaceProjectionSnapshot,
-    ) -> Result<PersistentPreviewCandidate, String> {
-        self.render_candidate_with_project_model_and_pending_authority(
-            app, projection, None, None, None,
-        )
     }
 
     pub fn render_candidate_with_project_model<R: Runtime>(
         &mut self,
         app: &AppHandle<R>,
         projection: &WorkspaceProjectionSnapshot,
-        project_model: &ProjectModel,
+        project_model: Arc<ProjectModel>,
         project_model_cache_hit: bool,
     ) -> Result<PersistentPreviewCandidate, String> {
         self.render_candidate_with_project_model_and_pending_authority(
@@ -393,7 +480,7 @@ impl PersistentZolaPreviewEngine {
         &mut self,
         app: &AppHandle<R>,
         projection: &WorkspaceProjectionSnapshot,
-        project_model: Option<&ProjectModel>,
+        project_model: Option<Arc<ProjectModel>>,
         pending_project_authority: Option<&PendingProjectAuthority>,
         project_model_cache_hit: Option<bool>,
     ) -> Result<PersistentPreviewCandidate, String> {
@@ -410,7 +497,7 @@ impl PersistentZolaPreviewEngine {
         &mut self,
         app: &AppHandle<R>,
         projection: &WorkspaceProjectionSnapshot,
-        project_model: Option<&ProjectModel>,
+        project_model: Option<Arc<ProjectModel>>,
         pending_project_authority: Option<&PendingProjectAuthority>,
         project_model_cache_hit: Option<bool>,
     ) -> Result<PersistentPreviewCandidate, String> {
@@ -425,13 +512,13 @@ impl PersistentZolaPreviewEngine {
         // mutation command. Resolve it before materialization so a parser-local
         // reconstruction can never become a second identity authority.
         let project_model = if let Some(project_model) = project_model {
-            project_model.clone()
+            project_model
         } else {
             let model_started = Instant::now();
             let model_root = PathBuf::from(&projection.project_root);
             let model = build_project_model_from_workspace_projection(&model_root, projection)?;
             timings.project_model_build_ms = elapsed_ms(model_started);
-            model
+            Arc::new(model)
         };
 
         let source_publication_started = Instant::now();
@@ -599,9 +686,9 @@ impl PersistentZolaPreviewEngine {
         artifact_root: &Path,
         projection: &WorkspaceProjectionSnapshot,
         preview_revision: &str,
-        project_model: ProjectModel,
+        project_model: Arc<ProjectModel>,
         timings: &mut PersistentPreviewCandidateTimings,
-    ) -> Result<(ActivePreviewGeneration, ProjectModel), String> {
+    ) -> Result<(ActivePreviewGeneration, Arc<ProjectModel>), String> {
         let base_url = self.url()?;
         let previous_generation = self.active_generation()?;
         let impact = projection_render_impact(
@@ -801,6 +888,10 @@ fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().min(u64::MAX as u128) as u64
 }
 
+fn elapsed_us(started: Instant) -> u64 {
+    started.elapsed().as_micros().min(u64::MAX as u128) as u64
+}
+
 fn template_workbench_projection_key(plan: &TemplateWorkbenchPlan) -> String {
     let page_context = plan
         .selected_context
@@ -820,6 +911,31 @@ fn template_workbench_projection_key(plan: &TemplateWorkbenchPlan) -> String {
         page_context,
         route_context,
     )
+}
+
+fn template_workbench_reuse_token(
+    generation: &ActivePreviewGeneration,
+    route: &str,
+    context_key: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    for field in [
+        generation.project_root.as_str(),
+        generation.runtime_session_id.as_str(),
+        generation.preview_revision.as_str(),
+        generation
+            .canvas_transaction
+            .identity
+            .transaction_id
+            .as_str(),
+        route,
+        context_key,
+    ] {
+        digest.update((field.len() as u64).to_le_bytes());
+        digest.update(field.as_bytes());
+    }
+    digest.update(generation.workspace_revision.to_le_bytes());
+    format!("sha256:{:x}", digest.finalize())
 }
 
 fn render_template_workbench_document(
@@ -2479,20 +2595,23 @@ Conținut draft vizibil în editor.
                 runtime_session_id: session_id.to_string(),
                 revision,
                 workspace_transaction_id: Some(format!("runtime-preview-{revision}")),
-                source_texts,
-                resource_bytes: HashMap::new(),
+                source_texts: source_texts.into(),
+                resource_bytes: HashMap::new().into(),
                 deleted_sources: HashSet::new(),
                 changed_paths,
-                accepted_disk: accepted_disk.clone(),
+                accepted_disk: accepted_disk.clone().into(),
             };
         let owner = PersistentPreviewOwner::new(&project_root, session_id);
         let mut engine =
             PersistentZolaPreviewEngine::start(&app_handle, &zola_root, owner).unwrap();
 
         let first = engine
-            .render_candidate(
+            .render_candidate_with_project_model_and_pending_authority(
                 &app_handle,
                 &projection(1, source_texts.clone(), HashSet::new()),
+                None,
+                None,
+                None,
             )
             .unwrap();
         assert_eq!(first.projection_publication.logical_publications, 1);
@@ -2526,7 +2645,13 @@ Conținut draft vizibil în editor.
             HashSet::from([template_path.clone()]),
         );
         let second = engine
-            .render_candidate(&app_handle, &second_projection)
+            .render_candidate_with_project_model_and_pending_authority(
+                &app_handle,
+                &second_projection,
+                None,
+                None,
+                None,
+            )
             .unwrap();
         assert_eq!(second.generation.assets_root, first_assets_root);
         assert!(second.generation.inherited_assets.is_some());
@@ -2572,6 +2697,8 @@ Conținut draft vizibil în editor.
         let workbench = engine
             .publish_template_workbench_view(&second_projection, &second_model, &workbench_plan)
             .unwrap();
+        assert!(!workbench.cache_reused);
+        assert!(workbench.timings.total_us > 0);
         assert_eq!(workbench.workspace_revision, 2);
         assert_eq!(workbench.preview_revision, second_identity.preview_revision);
         assert_eq!(workbench.canvas_plan.identity, second_identity);
@@ -2583,6 +2710,87 @@ Conținut draft vizibil în editor.
         assert!(read_http_document(&workbench.preview_url)
             .unwrap()
             .contains("data-draft=\"two\""));
+        let cached_workbench = engine
+            .publish_template_workbench_view(&second_projection, &second_model, &workbench_plan)
+            .unwrap();
+        assert!(cached_workbench.cache_reused);
+        assert_eq!(cached_workbench.route, workbench.route);
+        assert_eq!(cached_workbench.preview_url, workbench.preview_url);
+        assert_eq!(cached_workbench.reuse_token, workbench.reuse_token);
+        assert_eq!(cached_workbench.timings.render_us, 0);
+        assert_eq!(cached_workbench.timings.graph_us, 0);
+        assert_eq!(cached_workbench.timings.prepare_us, 0);
+        let selected_page_path = workbench_plan
+            .selected_context
+            .as_ref()
+            .map(|context| context.page_file.as_str());
+        let selected_route = workbench_plan
+            .selected_route
+            .as_ref()
+            .map(|context| context.url.as_str());
+        let confirmed = engine
+            .confirm_template_workbench_reuse(
+                2,
+                &template_path,
+                selected_page_path,
+                selected_route,
+                &workbench.reuse_token,
+                &second_identity.preview_revision,
+                &second_identity.transaction_id,
+            )
+            .unwrap()
+            .expect("exact Workbench generation must be reusable");
+        assert_eq!(confirmed.route, workbench.route);
+        assert_eq!(confirmed.preview_url, workbench.preview_url);
+        assert_eq!(confirmed.reuse_token, workbench.reuse_token);
+        assert!(engine
+            .confirm_template_workbench_reuse(
+                2,
+                &template_path,
+                Some("content/other.md"),
+                selected_route,
+                &workbench.reuse_token,
+                &second_identity.preview_revision,
+                &second_identity.transaction_id,
+            )
+            .unwrap()
+            .is_none());
+        assert!(engine
+            .confirm_template_workbench_reuse(
+                2,
+                &template_path,
+                selected_page_path,
+                selected_route,
+                &workbench.reuse_token,
+                &second_identity.preview_revision,
+                "canvas-stale",
+            )
+            .unwrap()
+            .is_none());
+        assert!(engine
+            .confirm_template_workbench_reuse(
+                3,
+                &template_path,
+                selected_page_path,
+                selected_route,
+                &workbench.reuse_token,
+                &second_identity.preview_revision,
+                &second_identity.transaction_id,
+            )
+            .unwrap()
+            .is_none());
+        assert!(engine
+            .confirm_template_workbench_reuse(
+                2,
+                &template_path,
+                selected_page_path,
+                selected_route,
+                "sha256:foreign-session",
+                &second_identity.preview_revision,
+                &second_identity.transaction_id,
+            )
+            .unwrap()
+            .is_none());
         let second_generation = confirm_staged(&mut engine, &app_handle, second_identity.clone());
         assert_eq!(
             second_generation.canvas_transaction.identity,
@@ -2598,7 +2806,7 @@ Conținut draft vizibil în editor.
             "$accent: #a32952; body { color: $accent; main { display: flex; } }\n".to_string(),
         );
         let third = engine
-            .render_candidate(
+            .render_candidate_with_project_model_and_pending_authority(
                 &app_handle,
                 &projection(
                     3,
@@ -2608,6 +2816,9 @@ Conținut draft vizibil în editor.
                     // revision-to-revision Sass delta.
                     HashSet::from([template_path.clone(), sass_path.clone()]),
                 ),
+                None,
+                None,
+                None,
             )
             .unwrap();
         assert!(third.generation.inherited_assets.is_none());
@@ -2623,9 +2834,12 @@ Conținut draft vizibil în editor.
 
         source_texts.insert(template_path.clone(), "{% if %}".to_string());
         assert!(engine
-            .render_candidate(
+            .render_candidate_with_project_model_and_pending_authority(
                 &app_handle,
                 &projection(4, source_texts, HashSet::from([template_path])),
+                None,
+                None,
+                None,
             )
             .is_err());
         assert!(read_http_document(&format!("{url}/"))

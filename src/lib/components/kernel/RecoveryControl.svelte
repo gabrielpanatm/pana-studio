@@ -4,17 +4,19 @@
   import RecoveryProjectTransitionDecisionJournalCard from "$lib/components/kernel/RecoveryProjectTransitionDecisionJournalCard.svelte";
   import RecoveryProjectWorkspaceSaveJournalCard from "$lib/components/kernel/RecoveryProjectWorkspaceSaveJournalCard.svelte";
   import {
-    readRecoveryCoordinator,
-    recoverProjectTransitionDecisionRetentionHotJournal,
-    recoverProjectWorkspaceSave,
-  } from "$lib/project/io";
+  readRecoveryCoordinator,
+  recoverProjectTransitionDecisionRetentionHotJournal,
+  recoverProjectWorkspaceSave,
+} from "$lib/kernel/recovery-io";
   import type {
-    KernelProjectTransitionDecisionRetentionHotJournal,
-    KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction,
     ProjectWorkspaceSaveHotJournal,
     ProjectWorkspaceSaveRecoveryAction,
     RecoveryCoordinatorScan,
-  } from "$lib/types";
+  } from "$lib/kernel/recovery-contract";
+  import type {
+    KernelProjectTransitionDecisionRetentionHotJournal,
+    KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction,
+  } from "$lib/project/transition-contract";
   import {
     formatRecoveryTime,
     normalizeRecoveryDiagnostic,

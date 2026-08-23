@@ -2741,8 +2741,9 @@ mod tests {
             source_texts: HashMap::from([
                 ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
                 ("templates/index.html".to_string(), template.to_string()),
-            ]),
-            resource_bytes: HashMap::new(),
+            ])
+            .into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::from(["templates/index.html".to_string()]),
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -2755,7 +2756,8 @@ mod tests {
                     max_files: 100,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         let model = build_project_model_from_workspace_projection(&root, &projection).unwrap();
         let source_id = model
@@ -3026,8 +3028,9 @@ mod tests {
             source_texts: HashMap::from([
                 ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
                 ("templates/index.html".to_string(), template.to_string()),
-            ]),
-            resource_bytes: HashMap::new(),
+            ])
+            .into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::from(["templates/index.html".to_string()]),
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -3040,7 +3043,8 @@ mod tests {
                     max_files: 100,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         let model = build_project_model_from_workspace_projection(&root, &projection).unwrap();
         let source_id = model
@@ -3129,8 +3133,9 @@ mod tests {
                     "static/js/custom.js".to_string(),
                     "window.customRuntime = true;".to_string(),
                 ),
-            ]),
-            resource_bytes: HashMap::new(),
+            ])
+            .into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::from([
                 "templates/index.html".to_string(),
@@ -3148,7 +3153,8 @@ mod tests {
                     max_files: 100,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         let model = build_project_model_from_workspace_projection(&root, &projection).unwrap();
         let graph = CanvasGraph::from_rendered_documents(
@@ -3423,8 +3429,8 @@ mod tests {
             runtime_session_id: session.clone(),
             revision,
             workspace_transaction_id: Some(format!("canvas-test-{revision}")),
-            source_texts,
-            resource_bytes: HashMap::new(),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths,
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -3437,7 +3443,8 @@ mod tests {
                     max_files: 100,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         build_project_model_from_workspace_projection(root, &projection).unwrap()
     }

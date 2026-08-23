@@ -19,15 +19,68 @@ pub(crate) fn build_block_graph(source_graph: &SourceGraph) -> BlockGraph {
         .iter()
         .map(native_block_contract_definition)
         .collect::<Vec<_>>();
+    let source_instances = project_block_source_instances(source_graph, &definitions, None);
+    let diagnostics = source_instances
+        .iter()
+        .flat_map(|instance| instance.diagnostics.iter().cloned())
+        .collect();
+
+    BlockGraph {
+        schema_version: BLOCK_GRAPH_SCHEMA_VERSION,
+        definitions,
+        source_instances,
+        diagnostics,
+    }
+}
+
+pub(crate) fn upsert_block_graph_template(
+    source_graph: &SourceGraph,
+    graph: &mut BlockGraph,
+    template_file: &str,
+) {
+    graph
+        .source_instances
+        .retain(|instance| instance.file != template_file);
+    graph
+        .source_instances
+        .extend(project_block_source_instances(
+            source_graph,
+            &graph.definitions,
+            Some(template_file),
+        ));
+    let node_order = source_graph
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    graph.source_instances.sort_by_key(|instance| {
+        node_order
+            .get(instance.source_node_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    graph.diagnostics = graph
+        .source_instances
+        .iter()
+        .flat_map(|instance| instance.diagnostics.iter().cloned())
+        .collect();
+}
+
+fn project_block_source_instances(
+    source_graph: &SourceGraph,
+    definitions: &[crate::source_graph::model::BlockDefinition],
+    template_file: Option<&str>,
+) -> Vec<BlockSourceInstance> {
     let definition_by_provider = definitions
         .iter()
         .map(|definition| (definition.provider_id.as_str(), definition.id.as_str()))
         .collect::<HashMap<_, _>>();
-    let mut diagnostics = Vec::new();
-    let source_instances = source_graph
+    source_graph
         .nodes
         .iter()
         .filter(|node| node.kind == SourceNodeKind::BlockMarker)
+        .filter(|node| template_file.is_none_or(|file| node.file == file))
         .map(|node| {
             let provider_id = node.label.trim().to_string();
             let definition_id = definition_by_provider
@@ -52,7 +105,6 @@ pub(crate) fn build_block_graph(source_graph: &SourceGraph) -> BlockGraph {
                     source_node_id: Some(node.id.clone()),
                 }]
             };
-            diagnostics.extend(instance_diagnostics.iter().cloned());
             BlockSourceInstance {
                 id: block_graph_id("source-instance", &[node.id.as_str()]),
                 definition_id,
@@ -63,14 +115,7 @@ pub(crate) fn build_block_graph(source_graph: &SourceGraph) -> BlockGraph {
                 diagnostics: instance_diagnostics,
             }
         })
-        .collect();
-
-    BlockGraph {
-        schema_version: BLOCK_GRAPH_SCHEMA_VERSION,
-        definitions,
-        source_instances,
-        diagnostics,
-    }
+        .collect()
 }
 
 fn block_graph_id(prefix: &str, parts: &[&str]) -> String {

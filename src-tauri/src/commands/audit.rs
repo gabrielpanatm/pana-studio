@@ -146,7 +146,7 @@ pub fn apply_audit_fix(
         )?;
         (
             root,
-            workspace.clone(),
+            workspace.fork_candidate(),
             workspace.documents.diagnostics.clone(),
         )
     };
@@ -786,7 +786,7 @@ mod tests {
                 size: source.len() as u64,
                 readonly: false,
             },
-            baseline_text: source.to_string(),
+            baseline_text: source.to_string().into(),
             draft: None,
             revision: 1,
         });

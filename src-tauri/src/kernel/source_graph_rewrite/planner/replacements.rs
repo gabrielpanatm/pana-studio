@@ -400,7 +400,7 @@ fn clean_baseline_text(store: &FileBufferStore, relative_path: &str) -> Result<S
             "SourceGraphRewrite blocat pentru {relative_path}: fișierul are draft nesalvat în FileBufferStore."
         ));
     }
-    Ok(entry.baseline_text.clone())
+    Ok(entry.baseline_text.to_string())
 }
 
 fn tera_node_kind_for_relation(kind: &SourceRelationKind) -> SourceNodeKind {

@@ -21,37 +21,48 @@
   } from "@tabler/icons-svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import {
-    createListingItem,
-    createSemanticTemplate,
-    deleteListingItem,
-    deleteTemplate,
-    duplicateTemplate,
-    overrideThemeTemplate,
-    readTemplateCatalog,
-    renameTemplate,
-    setTemplateAssignment,
-    setTemplateParent,
-  } from "$lib/project/io";
-  import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
-  import type { AppState } from "$lib/state/app.svelte";
+  createListingItem,
+  createSemanticTemplate,
+  deleteListingItem,
+  deleteTemplate,
+  duplicateTemplate,
+  overrideThemeTemplate,
+  readTemplateCatalog,
+  renameTemplate,
+  setTemplateAssignment,
+  setTemplateParent,
+} from "$lib/templates/io";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
   import type {
     FileBufferRequestIdentity,
+    WorkspaceEntryMutationReceipt,
+  } from "$lib/project/workspace-contract";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
+  import type {
     TemplateAssignmentSource,
     TemplateResource,
     TemplateSemanticCategory,
     TemplateSemanticCreateRole,
     TemplateSemanticEntry,
     TemplateSemanticRole,
-    WorkspaceEntryMutationReceipt,
-    WorkspaceSourceOpenOptions,
-  } from "$lib/types";
+  } from "$lib/templates/contracts";
+  import type { WorkspaceSourceOpenOptions } from "$lib/workbench/contracts";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    globalStatus,
+    workspaceMutations,
+    sourceGraph,
+    activeScannedPath,
+    openEditor,
     openWorkspaceSource,
   }: {
-    app: AppState;
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    sourceGraph: SourceGraph | null;
+    activeScannedPath: string | null;
+    openEditor: () => void | Promise<void>;
     openWorkspaceSource: (
       path: string,
       options?: WorkspaceSourceOpenOptions,
@@ -64,7 +75,7 @@
 
   const NEW_SECTION_TARGET = "__new_section__";
 
-  function diagnosticText(diagnostic: import("$lib/types").LocalizedDiagnostic | null | undefined) {
+  function diagnosticText(diagnostic: import("$lib/contracts/localized-diagnostic").LocalizedDiagnostic | null | undefined) {
     return diagnostic ? errorMessage(diagnostic) : "";
   }
 
@@ -187,11 +198,11 @@
   const localResourceCount = $derived(resources.filter((resource) => resource.editable).length);
   const themeResourceCount = $derived(resources.filter((resource) => !resource.editable).length);
   const createTargets = $derived(targetsForRole(createRole));
-  const listingModels = $derived(app.sourceGraph?.contentModels.models ?? []);
+  const listingModels = $derived(sourceGraph?.contentModels.models ?? []);
   const listingPreviewPages = $derived(
-    (app.sourceGraph?.contentModels.pageBindings ?? [])
+    (sourceGraph?.contentModels.pageBindings ?? [])
       .filter((binding) => binding.modelId === listingModelId)
-      .map((binding) => app.sourceGraph?.pages.find((page) => page.file === binding.pageFile))
+      .map((binding) => sourceGraph?.pages.find((page) => page.file === binding.pageFile))
       .filter((page): page is NonNullable<typeof page> => Boolean(page)),
   );
   const creatingNewArchiveSection = $derived(
@@ -203,9 +214,9 @@
   );
 
   $effect(() => {
-    const root = app.sessionProjectRoot.trim();
-    const sessionId = app.kernelProjectSessionId.trim();
-    const revision = app.projectWorkspaceSnapshot?.revision ?? 0;
+    const root = workspaceMutations.snapshot?.projectRoot.trim() ?? "";
+    const sessionId = workspaceMutations.snapshot?.runtimeSessionId.trim() ?? "";
+    const revision = workspaceMutations.snapshot?.revision ?? 0;
     const key = `${root}:${sessionId}:${revision}`;
     if (!root || !sessionId || loading || loadedKey === key) return;
     loadedKey = key;
@@ -229,9 +240,9 @@
   });
 
   async function loadCatalog(
-    root = app.sessionProjectRoot,
-    sessionId = app.kernelProjectSessionId,
-    expectedWorkspaceRevision = app.projectWorkspaceSnapshot?.revision ?? 0,
+    root = workspaceMutations.snapshot?.projectRoot ?? "",
+    sessionId = workspaceMutations.snapshot?.runtimeSessionId ?? "",
+    expectedWorkspaceRevision = workspaceMutations.snapshot?.revision ?? 0,
   ) {
     loading = true;
     loadError = "";
@@ -241,19 +252,19 @@
         expectedSessionId: sessionId,
       }, expectedWorkspaceRevision);
       if (
-        root !== app.sessionProjectRoot
-        || sessionId !== app.kernelProjectSessionId
-        || app.projectWorkspaceSnapshot?.revision !== expectedWorkspaceRevision
+        root !== (workspaceMutations.snapshot?.projectRoot ?? "")
+        || sessionId !== (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+        || workspaceMutations.snapshot?.revision !== expectedWorkspaceRevision
       ) return;
       catalog = snapshot;
       const activeResource = snapshot.resources.find(
-        (resource) => resource.effective && resource.file === app.activeScannedPath,
+        (resource) => resource.effective && resource.file === activeScannedPath,
       );
       const activeSemantic = snapshot.semanticEntries.find(
         (entry) => (
           entry.id === selectedId
           || entry.assignment.resourceId === activeResource?.id
-          || entry.target.file === app.activeScannedPath
+          || entry.target.file === activeScannedPath
         ),
       );
       if (activeSemantic) {
@@ -265,11 +276,17 @@
         selectedId = snapshot.semanticEntries.find((entry) => entry.category === activeView)?.id ?? null;
       }
     } catch (error) {
-      if (root === app.sessionProjectRoot && sessionId === app.kernelProjectSessionId) {
+      if (
+        root === (workspaceMutations.snapshot?.projectRoot ?? "")
+        && sessionId === (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+      ) {
         loadError = errorMessage(error);
       }
     } finally {
-      if (root === app.sessionProjectRoot && sessionId === app.kernelProjectSessionId) {
+      if (
+        root === (workspaceMutations.snapshot?.projectRoot ?? "")
+        && sessionId === (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+      ) {
         loading = false;
       }
     }
@@ -277,8 +294,8 @@
 
   function identity(): FileBufferRequestIdentity {
     return {
-      expectedProjectRoot: app.sessionProjectRoot,
-      expectedSessionId: app.kernelProjectSessionId,
+      expectedProjectRoot: workspaceMutations.snapshot?.projectRoot ?? "",
+      expectedSessionId: workspaceMutations.snapshot?.runtimeSessionId ?? "",
     };
   }
 
@@ -295,10 +312,10 @@
         receipt = await operation();
       } catch (error) {
         formError = errorMessage(error);
-        app.setGlobalStatus(t("templates-operation-failed", { error: formError }), "error");
+        globalStatus.set(t("templates-operation-failed", { error: formError }), "error");
         return null;
       }
-      const settlement = await settleProjectWorkspaceMutation(app, receipt, {
+      const settlement = await workspaceMutations.settle(receipt, {
         preferredRelativePath: receipt.relativePath,
         warningLabel: t("templates-operation-label"),
       });
@@ -313,7 +330,7 @@
         activeView = next.category;
         selectedId = next.id;
       }
-      app.setGlobalStatus(t(
+      globalStatus.set(t(
         settlement.warnings.length ? "templates-saved-status-warning" : "templates-saved-status",
         { message: successMessage },
       ), "unsaved");
@@ -460,7 +477,7 @@
       listingLabel = "";
       createName = "";
       listingModelId = listingModels[0]?.id ?? "";
-      listingPreviewPageFile = (app.sourceGraph?.contentModels.pageBindings ?? [])
+      listingPreviewPageFile = (sourceGraph?.contentModels.pageBindings ?? [])
         .find((binding) => binding.modelId === listingModelId)?.pageFile ?? "";
     }
     includePageContent = false;
@@ -544,7 +561,7 @@
 
   function changeListingModel(modelId: string) {
     listingModelId = modelId;
-    listingPreviewPageFile = (app.sourceGraph?.contentModels.pageBindings ?? [])
+    listingPreviewPageFile = (sourceGraph?.contentModels.pageBindings ?? [])
       .find((binding) => binding.modelId === modelId)?.pageFile ?? "";
   }
 
@@ -685,7 +702,7 @@
     } else {
       await openWorkspaceSource(resource.file);
     }
-    await app.setWorkbenchActivity("editor");
+    await openEditor();
   }
 
   async function overrideResource(resource: TemplateResource) {

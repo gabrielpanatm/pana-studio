@@ -274,7 +274,7 @@ fn wraps_multiline_block_with_template_source_markers() {
 }
 
 #[test]
-fn set_assignment_extends_matching_loop_gate_to_prelude() {
+fn set_assignment_does_not_extend_matching_loop_gate_across_html() {
     let source = "{% block content %}\n{% set items = section.pages %}\n<section>\n{% for page in items %}\n<article></article>\n{% endfor %}\n</section>\n{% endblock %}";
     let index = SourceIdIndex::for_template_source("templates/index.html", source);
 
@@ -287,12 +287,12 @@ fn set_assignment_extends_matching_loop_gate_to_prelude() {
         .lines()
         .find(|line| line.contains("<section"))
         .expect("wrapper line is present");
+    assert!(!result.contains("{% set items = section.pages %}<!-- pana-template-source-start:"));
     let for_marker_id = result
-        .split("{% set items = section.pages %}<!-- pana-template-source-start:")
+        .split("{% for page in items %}<!-- pana-template-source-start:")
         .nth(1)
         .and_then(|tail| tail.split(" -->").next())
-        .expect("for prelude marker id is present");
-    assert!(!result.contains("{% for page in items %}<!-- pana-template-source-start:"));
+        .expect("for marker id is present");
     let article_template_id = article_line
         .split("data-pana-template-source-id=\"")
         .nth(1)
@@ -305,7 +305,28 @@ fn set_assignment_extends_matching_loop_gate_to_prelude() {
         .expect("wrapper template source id is present");
 
     assert_eq!(article_template_id, for_marker_id);
-    assert_eq!(wrapper_template_id, for_marker_id);
+    assert_ne!(wrapper_template_id, for_marker_id);
+}
+
+#[test]
+fn adjacent_set_assignment_extends_matching_loop_gate_to_prelude() {
+    let source = "{% block content %}\n{% set items = section.pages %}\n{% for page in items %}\n<article></article>\n{% endfor %}\n{% endblock %}";
+    let index = SourceIdIndex::for_template_source("templates/index.html", source);
+
+    let result = preprocess_template(source, "templates/index.html", Some(&index));
+    let for_marker_id = result
+        .split("{% set items = section.pages %}<!-- pana-template-source-start:")
+        .nth(1)
+        .and_then(|tail| tail.split(" -->").next())
+        .expect("adjacent for prelude marker id is present");
+    assert!(!result.contains("{% for page in items %}<!-- pana-template-source-start:"));
+    let article_template_id = result
+        .lines()
+        .find(|line| line.contains("<article"))
+        .and_then(|line| line.split("data-pana-template-source-id=\"").nth(1))
+        .and_then(|tail| tail.split('"').next())
+        .expect("article template source id is present");
+    assert_eq!(article_template_id, for_marker_id);
 }
 
 #[test]
@@ -338,7 +359,7 @@ fn unrelated_set_does_not_capture_following_loop_html() {
 }
 
 #[test]
-fn set_prelude_is_consumed_by_first_matching_loop() {
+fn intervening_html_prevents_set_prelude_from_being_reused_by_later_loops() {
     let source = "{% block content %}\n{% set items = section.pages %}\n<section>\n{% for page in items %}\n<article class=\"first\"></article>\n{% endfor %}\n</section>\n<aside>\n{% for page in items %}\n<article class=\"second\"></article>\n{% endfor %}\n</aside>\n{% endblock %}";
     let index = SourceIdIndex::for_template_source("templates/index.html", source);
 
@@ -349,9 +370,9 @@ fn set_prelude_is_consumed_by_first_matching_loop() {
         .collect::<Vec<_>>();
 
     assert_eq!(for_lines.len(), 2);
-    assert!(!for_lines[0].contains("pana-template-source-start"));
+    assert!(for_lines[0].contains("pana-template-source-start"));
     assert!(for_lines[1].contains("pana-template-source-start"));
-    assert!(result.contains("{% set items = section.pages %}<!-- pana-template-source-start:"));
+    assert!(!result.contains("{% set items = section.pages %}<!-- pana-template-source-start:"));
 }
 
 #[test]

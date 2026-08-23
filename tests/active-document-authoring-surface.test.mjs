@@ -6,16 +6,22 @@ function source(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
 }
 
+function editorNavigationSource() {
+  return ["contracts", "snapshot", "view"]
+    .map((module) => source(`../src-tauri/src/kernel/editor_navigation/${module}.rs`))
+    .join("\n");
+}
+
 test("Rust proiectează explicit rădăcina persistentă a documentului activ", () => {
   const kernel = source("../src-tauri/src/kernel/canvas_interaction.rs");
-  const navigation = source("../src-tauri/src/kernel/editor_navigation.rs");
-  const types = source("../src/lib/types.ts");
-  const io = source("../src/lib/project/io.ts");
+  const navigation = editorNavigationSource();
+  const types = source("../src/lib/canvas/contracts.ts");
+  const io = source("../src/lib/canvas/interaction-io.ts");
 
   assert.match(kernel, /struct CanvasInteractionAuthoringSurface[\s\S]*source_node_id[\s\S]*boundary_instance_id[\s\S]*render_instance_id: Option<String>/);
   assert.match(
     kernel,
-    /active_document_authoring_surfaces[\s\S]*active_document_path: Option<&str>[\s\S]*EditorNavigationNodeKind::TeraBoundary[\s\S]*active_document_authoring_source_kind[\s\S]*requires_edit_scope_id\.is_none\(\)[\s\S]*EditorNavigationOrigin::Project[\s\S]*normalized_canvas_document_path\(file\) == active_document_path/,
+    /active_document_authoring_surfaces[\s\S]*active_document_path: Option<&str>[\s\S]*EditorNavigationNodeKind::Boundary[\s\S]*active_document_authoring_source_kind[\s\S]*requires_edit_scope_id\.is_none\(\)[\s\S]*EditorNavigationOrigin::Project[\s\S]*normalized_canvas_document_path\(file\) == active_document_path/,
   );
   assert.match(kernel, /SourceNodeKind::Block \| SourceNodeKind::Template \| SourceNodeKind::Partial/);
   assert.match(kernel, /focused_authoring_context[\s\S]*root_render_instance_ids[\s\S]*render_instance_id: None/);
@@ -72,13 +78,13 @@ test("Straturi și Inspector prezintă rădăcina locală drept document editabi
 });
 
 test("CanvasAgent prioritizează boundary-ul activ în zona vizuală extinsă", () => {
-  const controller = source("../src/lib/state/canvas-interaction-controller.ts");
+  const session = source("../src/lib/state/canvas-interaction-session.ts");
   const agent = source("../src-tauri/src/preview/bridge/03_canvas_agent.js");
   const emptyZones = source("../src-tauri/src/preview/bridge/06_empty_zones.js");
   const dragDrop = source("../src-tauri/src/preview/bridge/07_drag_drop.js");
   const geometry = source("../src-tauri/src/preview/bridge/03_overlay_geometry.js");
 
-  assert.equal(controller.match(/authoringSurfaces: (?:binding|receipt)\.authoringSurfaces/g)?.length, 2);
+  assert.equal(session.match(/authoringSurfaces: (?:binding|receipt)\.authoringSurfaces/g)?.length, 2);
   assert.match(agent, /configureActiveDocumentAuthoringSurfaces\(data\.authoringSurfaces\)/);
   assert.match(
     agent,

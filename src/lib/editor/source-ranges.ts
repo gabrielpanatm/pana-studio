@@ -1,4 +1,4 @@
-import type { SourceRange } from "$lib/types";
+import type { SourceRange } from "$lib/source-graph/contracts";
 
 export type CodeSelectionRange = {
   from: number;

@@ -1,13 +1,16 @@
 <script lang="ts">
   import { IconAlertTriangle, IconCircleCheck, IconRefresh, IconRestore, IconShieldLock } from "@tabler/icons-svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import { readWriteAuthorityRecoveryScan, resolveWriteAuthorityRecovery } from "$lib/project/io";
+  import {
+  readWriteAuthorityRecoveryScan,
+  resolveWriteAuthorityRecovery,
+} from "$lib/kernel/recovery-io";
   import type {
     WriteAuthorityRecoveryClassification,
     WriteAuthorityRecoveryItem,
     WriteAuthorityRecoveryResolutionAction,
     WriteAuthorityRecoveryScan,
-  } from "$lib/types";
+  } from "$lib/kernel/recovery-contract";
 
   let {
     refreshToken = 0,

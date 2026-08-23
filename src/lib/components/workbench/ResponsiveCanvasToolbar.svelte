@@ -14,7 +14,7 @@
   import type {
     WorkbenchCanvasPreset,
     WorkbenchCanvasViewportSnapshot,
-  } from "$lib/types";
+  } from "$lib/workbench/contracts";
 
   let {
     viewport,

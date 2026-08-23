@@ -19,15 +19,15 @@ use crate::kernel::{
     publish_preflight::{PublishBuildReceipt, PublishPreflightReceipt},
     recovery_coordinator::RecoveryCoordinatorScan,
     selection_coordinator::SelectionCoordinatorRuntime,
-    workbench::WorkbenchRuntime,
+    workbench::{WorkbenchProjectionPersistence, WorkbenchRuntime},
 };
 use crate::preview::{PersistentZolaPreviewEngine, SourceBrowserEngine};
 use crate::project::{ProjectDiskWatchHandle, ProjectLifecycleRuntime, StartupFlowRuntime};
-use crate::versioning::VersionNetworkOperationControl;
+use crate::versioning::VersionNetworkOperationRuntime;
 
-pub struct McpServerHandle {
-    pub cancellation_token: CancellationToken,
-    pub thread: Option<JoinHandle<()>>,
+pub(crate) struct McpServerHandle {
+    pub(crate) cancellation_token: CancellationToken,
+    pub(crate) thread: Option<JoinHandle<()>>,
 }
 
 #[derive(Clone)]
@@ -73,39 +73,40 @@ impl Drop for McpServerHandle {
     }
 }
 
-pub struct AppState {
-    pub ai_coordination: AiCoordinationRuntime,
-    pub ai_coordination_deadline_generation: AtomicU64,
-    pub canvas_interaction: CanvasInteractionRuntime,
-    pub context_hub: ContextHubRuntime,
-    pub editor_navigation: EditorNavigationRuntime,
-    pub file_explorer: FileExplorerRuntime,
-    pub global_status: GlobalStatusRuntime,
-    pub selection_coordinator: SelectionCoordinatorRuntime,
-    pub startup_flow: StartupFlowRuntime,
-    pub project_lifecycle: ProjectLifecycleRuntime,
-    pub project_lifecycle_transition: Mutex<()>,
-    pub mcp_access_token: Mutex<Option<String>>,
-    pub current_root: Mutex<Option<PathBuf>>,
-    pub project_disk_watch: Mutex<Option<ProjectDiskWatchHandle>>,
-    pub project_disk_watch_transition: Mutex<()>,
-    pub project_workspace: Mutex<Option<ProjectWorkspace>>,
+pub(crate) struct AppState {
+    pub(crate) ai_coordination: AiCoordinationRuntime,
+    pub(crate) ai_coordination_deadline_generation: AtomicU64,
+    pub(crate) canvas_interaction: CanvasInteractionRuntime,
+    pub(crate) context_hub: ContextHubRuntime,
+    pub(crate) editor_navigation: EditorNavigationRuntime,
+    pub(crate) file_explorer: FileExplorerRuntime,
+    pub(crate) global_status: GlobalStatusRuntime,
+    pub(crate) selection_coordinator: SelectionCoordinatorRuntime,
+    pub(crate) startup_flow: StartupFlowRuntime,
+    pub(crate) project_lifecycle: ProjectLifecycleRuntime,
+    pub(crate) project_lifecycle_transition: Mutex<()>,
+    pub(crate) mcp_access_token: Mutex<Option<String>>,
+    pub(crate) current_root: Mutex<Option<PathBuf>>,
+    pub(crate) project_disk_watch: Mutex<Option<ProjectDiskWatchHandle>>,
+    pub(crate) project_disk_watch_transition: Mutex<()>,
+    pub(crate) project_workspace: Mutex<Option<ProjectWorkspace>>,
     pub(crate) project_audit_authority: Mutex<Option<ProjectAuditAuthority>>,
-    pub workbench: WorkbenchRuntime,
-    pub publish_operation: Mutex<Option<PublishOperationControl>>,
-    pub publish_authorization_gate: Mutex<()>,
-    pub publish_preflight_receipt: Mutex<Option<PublishPreflightReceipt>>,
-    pub publish_build_receipt: Mutex<Option<PublishBuildReceipt>>,
-    pub versioning_operation: Mutex<()>,
-    pub versioning_network_operation: Mutex<Option<VersionNetworkOperationControl>>,
-    pub recovery_coordinator_scan: Mutex<Option<RecoveryCoordinatorScan>>,
-    pub preview_workspace_operation: Mutex<()>,
-    pub preview_engine: Mutex<Option<PersistentZolaPreviewEngine>>,
-    pub source_browser_operation: Mutex<()>,
-    pub source_browser_engine: Mutex<Option<SourceBrowserEngine>>,
-    pub version_preview_operation: Mutex<()>,
-    pub version_preview_engine: Mutex<Option<SourceBrowserEngine>>,
-    pub mcp_server: Mutex<Option<McpServerHandle>>,
+    pub(crate) workbench: WorkbenchRuntime,
+    pub(crate) workbench_projection_persistence: WorkbenchProjectionPersistence,
+    pub(crate) publish_operation: Mutex<Option<PublishOperationControl>>,
+    pub(crate) publish_authorization_gate: Mutex<()>,
+    pub(crate) publish_preflight_receipt: Mutex<Option<PublishPreflightReceipt>>,
+    pub(crate) publish_build_receipt: Mutex<Option<PublishBuildReceipt>>,
+    pub(crate) versioning_operation: Mutex<()>,
+    pub(crate) versioning_network_operation: VersionNetworkOperationRuntime,
+    pub(crate) recovery_coordinator_scan: Mutex<Option<RecoveryCoordinatorScan>>,
+    pub(crate) preview_workspace_operation: Mutex<()>,
+    pub(crate) preview_engine: Mutex<Option<PersistentZolaPreviewEngine>>,
+    pub(crate) source_browser_operation: Mutex<()>,
+    pub(crate) source_browser_engine: Mutex<Option<SourceBrowserEngine>>,
+    pub(crate) version_preview_operation: Mutex<()>,
+    pub(crate) version_preview_engine: Mutex<Option<SourceBrowserEngine>>,
+    pub(crate) mcp_server: Mutex<Option<McpServerHandle>>,
 }
 
 impl Default for AppState {
@@ -129,12 +130,13 @@ impl Default for AppState {
             project_workspace: Mutex::new(None),
             project_audit_authority: Mutex::new(None),
             workbench: WorkbenchRuntime::default(),
+            workbench_projection_persistence: WorkbenchProjectionPersistence::default(),
             publish_operation: Mutex::new(None),
             publish_authorization_gate: Mutex::new(()),
             publish_preflight_receipt: Mutex::new(None),
             publish_build_receipt: Mutex::new(None),
             versioning_operation: Mutex::new(()),
-            versioning_network_operation: Mutex::new(None),
+            versioning_network_operation: VersionNetworkOperationRuntime::default(),
             recovery_coordinator_scan: Mutex::new(None),
             preview_workspace_operation: Mutex::new(()),
             preview_engine: Mutex::new(None),
@@ -148,7 +150,7 @@ impl Default for AppState {
 }
 
 impl AppState {
-    pub fn clear_publish_authorization(&self) -> Result<(), String> {
+    pub(crate) fn clear_publish_authorization(&self) -> Result<(), String> {
         self.publish_preflight_receipt
             .lock()
             .map_err(|_| "Nu am putut invalida Publish Preflight.".to_string())?

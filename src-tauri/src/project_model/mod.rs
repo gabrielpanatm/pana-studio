@@ -11,13 +11,11 @@ pub mod insert_engine;
 pub(crate) mod managed_head_engine;
 pub mod model;
 pub mod move_engine;
-mod ranges;
 pub(crate) mod structural_edit;
 mod structural_envelope;
 pub mod tag_engine;
 pub mod template_workbench;
 pub mod tera_delete_engine;
-mod tera_graph;
 pub mod tera_insert_engine;
 pub mod tera_move_engine;
 #[cfg(test)]
@@ -31,7 +29,6 @@ use crate::{
     project_model::{
         files::{collect_project_model_files_from_workspace_sources, model_revision},
         model::ProjectModel,
-        tera_graph::build_tera_graph,
     },
 };
 
@@ -40,8 +37,6 @@ pub(crate) use incremental::{
     rebuild_project_model_after_workspace_change_with_source_changes,
     ProjectModelIncrementalBuildReport, ProjectModelIncrementalIntent,
 };
-pub use model::ProjectModelSnapshot;
-
 /// Builds the editable model exclusively from one immutable ProjectWorkspace
 /// projection. No clean text file is filled from the live project disk.
 pub fn build_project_model_from_workspace_projection(
@@ -66,7 +61,6 @@ pub fn build_project_model_from_workspace_projection(
     )?;
     let source_graph =
         crate::source_graph::build_source_graph_from_workspace_projection(&root, projection)?;
-    let tera_graph = build_tera_graph(&source_graph, &files);
     let revision = model_revision(&files);
     let workspace_paths = workspace_paths_from_projection(projection);
 
@@ -77,7 +71,6 @@ pub fn build_project_model_from_workspace_projection(
         files,
         workspace_paths,
         source_graph,
-        tera_graph,
         diagnostics: Vec::new(),
     })
 }
@@ -108,7 +101,6 @@ pub(crate) fn build_project_model_for_audit_from_workspace_projection(
     let source_graph = crate::source_graph::build_source_graph_for_audit_from_workspace_projection(
         &root, projection,
     )?;
-    let tera_graph = build_tera_graph(&source_graph, &files);
     let revision = model_revision(&files);
     let workspace_paths = workspace_paths_from_projection(projection);
 
@@ -119,7 +111,6 @@ pub(crate) fn build_project_model_for_audit_from_workspace_projection(
         files,
         workspace_paths,
         source_graph,
-        tera_graph,
         diagnostics: Vec::new(),
     })
 }
@@ -159,7 +150,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builds_project_model_with_tera_graph_from_drafts() {
+    fn builds_project_model_source_graph_from_drafts() {
         let root = unique_test_dir();
         let mut fixture = ProjectModelTestFixture::standard_zola(
             root.clone(),
@@ -179,14 +170,14 @@ mod tests {
             .files
             .iter()
             .any(|file| { file.relative_path == "templates/index.html" && file.from_draft }));
-        assert!(model.tera_graph.templates.iter().any(|template| {
+        assert!(model.source_graph.templates.iter().any(|template| {
             template.name == "index.html"
                 && template
                     .includes
                     .contains(&"partials/header.html".to_string())
         }));
         assert!(model
-            .tera_graph
+            .source_graph
             .nodes
             .iter()
             .any(|node| node.kind == SourceNodeKind::For));
@@ -221,8 +212,9 @@ mod tests {
                     "templates/index.html".to_string(),
                     "<main>Workspace snapshot</main>".to_string(),
                 ),
-            ]),
-            resource_bytes: HashMap::new(),
+            ])
+            .into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::from(["templates/index.html".to_string()]),
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -235,7 +227,8 @@ mod tests {
                     max_files: 1000,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
 
         let model = build_project_model_from_workspace_projection(&root, &projection).unwrap();

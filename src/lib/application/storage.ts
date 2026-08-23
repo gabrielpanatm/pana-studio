@@ -3,7 +3,7 @@ import type {
   ApplicationStorageSnapshot,
   DeleteStorageSessionsRequest,
   StorageCleanupReceipt,
-} from "$lib/types";
+} from "$lib/application/contracts";
 
 export function readApplicationStorageInventory(): Promise<ApplicationStorageSnapshot> {
   return invoke<ApplicationStorageSnapshot>("read_application_storage_inventory");

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { CssPropertySuggestion, InstalledFontVariationAxis, ScssVariable } from "$lib/types";
+  import type { CssPropertySuggestion, ScssVariable } from "$lib/css/contracts";
+  import type { InstalledFontVariationAxis } from "$lib/fonts/contracts";
   import { t } from "$lib/i18n/runtime.svelte";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import { variablesForProperty } from "$lib/editor/controls";
@@ -12,7 +13,6 @@
     IconAlignCenter,
     IconAlignRight,
     IconAlignJustified,
-    IconBold,
     IconItalic,
     IconUnderline,
     IconStrikethrough,

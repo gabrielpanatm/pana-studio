@@ -1,13 +1,29 @@
 use std::{collections::BTreeMap, fs, path::Path, time::UNIX_EPOCH};
 
+#[cfg(test)]
+use std::cell::Cell;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::scope::is_derived_or_internal_dir;
-
-const MAX_MANIFEST_FILES: usize = 1000;
-const MAX_INSPECTION_ENTRIES: usize = 2_000;
+use super::PROJECT_CAPACITY;
 pub const ACCEPTED_PROJECT_DISK_MANIFEST_SCHEMA_VERSION: u32 = 2;
+
+#[cfg(test)]
+thread_local! {
+    static PROJECT_DISK_MANIFEST_TRAVERSALS: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_project_disk_manifest_traversals() {
+    PROJECT_DISK_MANIFEST_TRAVERSALS.with(|counter| counter.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn project_disk_manifest_traversals() -> u64 {
+    PROJECT_DISK_MANIFEST_TRAVERSALS.with(Cell::get)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -200,28 +216,9 @@ pub(crate) fn project_disk_metadata_version_token(metadata: &fs::Metadata) -> St
 }
 
 pub fn read_project_disk_manifest(root: &Path) -> Result<ProjectDiskManifest, String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("Nu am putut rezolva rădăcina proiectului: {}", error))?;
-    let mut files = Vec::new();
-    let mut truncated = false;
-    let output_root = crate::deploy::resolve_artifact_root(&root, &root).ok();
-
-    collect_manifest_entries(
-        &root,
-        &root,
-        &mut files,
-        &mut truncated,
-        output_root.as_deref(),
-    )?;
-    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-
-    Ok(ProjectDiskManifest {
-        root: root.to_string_lossy().to_string(),
-        files,
-        truncated,
-        max_files: MAX_MANIFEST_FILES,
-    })
+    #[cfg(test)]
+    PROJECT_DISK_MANIFEST_TRAVERSALS.with(|counter| counter.set(counter.get().saturating_add(1)));
+    Ok(inspect_project_disk(root)?.manifest)
 }
 
 /// Captures the startup inventory and accepted-disk manifest in one sorted
@@ -257,7 +254,7 @@ pub(crate) fn inspect_project_disk(root: &Path) -> Result<ProjectDiskInspection,
             root: root.to_string_lossy().to_string(),
             files,
             truncated: manifest_truncated,
-            max_files: MAX_MANIFEST_FILES,
+            max_files: PROJECT_CAPACITY.max_tracked_files,
         },
         entry_count: inventory_records.len(),
         inventory_truncated,
@@ -287,7 +284,7 @@ fn collect_inspection_entries(
     entries.sort_by_key(|entry| entry.file_name());
 
     for entry in entries {
-        if inventory_records.len() >= MAX_INSPECTION_ENTRIES {
+        if inventory_records.len() >= PROJECT_CAPACITY.max_disk_inventory_entries {
             *inventory_truncated = true;
             *manifest_truncated = true;
             break;
@@ -330,7 +327,7 @@ fn collect_inspection_entries(
         if !metadata.is_file() || !project_disk_manifest_tracks_relative_file(&relative_path) {
             continue;
         }
-        if files.len() >= MAX_MANIFEST_FILES {
+        if files.len() >= PROJECT_CAPACITY.max_tracked_files {
             *manifest_truncated = true;
             continue;
         }
@@ -391,87 +388,6 @@ pub(crate) fn project_disk_manifest_changed_paths(
         .collect())
 }
 
-fn collect_manifest_entries(
-    root: &Path,
-    current: &Path,
-    files: &mut Vec<ProjectDiskManifestEntry>,
-    truncated: &mut bool,
-    output_root: Option<&Path>,
-) -> Result<(), String> {
-    if files.len() >= MAX_MANIFEST_FILES {
-        *truncated = true;
-        return Ok(());
-    }
-
-    let entries = fs::read_dir(current).map_err(|error| {
-        format!(
-            "Nu am putut citi folderul pentru manifest {}: {}",
-            current.display(),
-            error
-        )
-    })?;
-
-    for entry in entries {
-        if files.len() >= MAX_MANIFEST_FILES {
-            *truncated = true;
-            break;
-        }
-
-        let entry =
-            entry.map_err(|error| format!("Nu am putut citi o intrare din manifest: {}", error))?;
-        let path = entry.path();
-        let relative_path = relative_project_path(root, &path)?;
-        let file_type = entry.file_type().map_err(|error| {
-            format!(
-                "Nu am putut citi tipul intrării {}: {}",
-                path.display(),
-                error
-            )
-        })?;
-
-        // The external-change manifest is evidence, not a filesystem crawler.
-        // Never follow project symlinks into another authority root.
-        if file_type.is_symlink() {
-            continue;
-        }
-
-        if file_type.is_dir() {
-            if should_skip_dir(&path, output_root) {
-                continue;
-            }
-            collect_manifest_entries(root, &path, files, truncated, output_root)?;
-            continue;
-        }
-
-        if !file_type.is_file() || !project_disk_manifest_tracks_relative_file(&relative_path) {
-            continue;
-        }
-
-        let metadata = path.metadata().map_err(|error| {
-            format!(
-                "Nu am putut citi metadata pentru {}: {}",
-                path.display(),
-                error
-            )
-        })?;
-        let modified_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_millis())
-            .unwrap_or(0);
-
-        files.push(ProjectDiskManifestEntry {
-            relative_path,
-            modified_ms,
-            size: metadata.len(),
-            version_token: project_disk_metadata_version_token(&metadata),
-        });
-    }
-
-    Ok(())
-}
-
 fn relative_project_path(root: &Path, path: &Path) -> Result<String, String> {
     Ok(path
         .strip_prefix(root)
@@ -526,7 +442,7 @@ mod tests {
     use super::{
         inspect_project_disk, project_disk_manifest_changed_paths,
         project_disk_metadata_version_token, read_project_disk_manifest,
-        AcceptedProjectDiskManifest,
+        AcceptedProjectDiskManifest, PROJECT_CAPACITY,
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -651,6 +567,23 @@ mod tests {
                 .files
                 .iter()
                 .any(|entry| entry.relative_path == "content/_index.md"));
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn manifest_accepts_exactly_one_thousand_files_and_rejects_the_next_file() {
+        for (count, expected_truncated) in [(1_000, false), (1_001, true)] {
+            let root = test_root(&format!("file-capacity-{count}"));
+            for index in 0..count {
+                fs::write(root.join(format!("file-{index:04}.txt")), "x").unwrap();
+            }
+
+            let manifest = read_project_disk_manifest(&root).unwrap();
+
+            assert_eq!(manifest.max_files, PROJECT_CAPACITY.max_tracked_files);
+            assert_eq!(manifest.files.len(), PROJECT_CAPACITY.max_tracked_files);
+            assert_eq!(manifest.truncated, expected_truncated);
             fs::remove_dir_all(root).unwrap();
         }
     }

@@ -21,7 +21,8 @@ test("File Explorer has one Rust tree, capability and operation authority", () =
     assert.match(kernel, new RegExp(`(?:struct|enum) ${contract}\\b`));
   }
   assert.match(kernel, /hierarchy_order\(entries\)/);
-  assert.match(kernel, /PROJECT_SCAN_MAX_ENTRIES/);
+  assert.match(kernel, /PROJECT_CAPACITY\.max_projected_entries/);
+  assert.doesNotMatch(kernel, /PROJECT_SCAN_MAX_ENTRIES/);
   assert.match(kernel, /EditAuthorityUnavailable/);
   assert.match(commands, /plan_file_explorer_operation/);
   assert.match(commands, /commit_file_explorer_operation/);
@@ -48,7 +49,7 @@ test("legacy TypeScript tree and mutation authorities are removed", () => {
 
 test("Explorer selection, reveal, drag plan and accessibility stay frontend projections", () => {
   const frontend = source("../src/lib/components/project/ProjectFilesTab.svelte");
-  const app = source("../src/lib/state/app.svelte.ts");
+  const state = source("../src/lib/workbench/file-explorer-state.svelte.ts");
 
   assert.match(frontend, /role="tree"/);
   assert.match(frontend, /role="treeitem"/);
@@ -62,20 +63,21 @@ test("Explorer selection, reveal, drag plan and accessibility stay frontend proj
   assert.match(frontend, /event\.key === "ArrowUp"/);
   assert.match(frontend, /event\.key === "ArrowRight"/);
   assert.match(frontend, /event\.key === "ArrowLeft"/);
-  assert.match(frontend, /scrollIntoView\(\{ block: "nearest" \}\)/);
+  assert.match(frontend, /focus\(\{ preventScroll: true \}\)/);
+  assert.doesNotMatch(frontend, /getBoundingClientRect|scrollIntoView/);
   assert.match(
     frontend,
-    /snapshot\?\.activeDocumentPath[\s\S]*snapshot\?\.selectedEntry\?\.relativePath/,
+    /activeDocumentPath[\s\S]*snapshot\?\.selectedEntry\?\.relativePath/,
   );
   assert.match(frontend, /data-active-document=/);
   assert.match(frontend, /aria-current=/);
   assert.match(frontend, /distance < 6/);
   assert.match(frontend, /dragPlanSerial/);
   assert.match(frontend, /resolvedPlan\?\.allowed \|\| !resolvedPlan\.commitToken/);
-  assert.match(app, /selectFileExplorerEntryInRust/);
-  assert.match(app, /fileExplorerSelectionTail/);
-  assert.match(app, /this\.workbenchSnapshot = receipt\.workbench\.snapshot/);
-  assert.match(app, /this\.fileExplorerSnapshot = receipt\.snapshot/);
+  assert.match(state, /selectFileExplorerEntryInRust/);
+  assert.match(state, /selectionTail/);
+  assert.match(state, /this\.commands\.acceptWorkbench\(receipt\.workbench\.snapshot\)/);
+  assert.match(state, /this\.snapshot = receipt\.snapshot/);
 });
 
 test("a file selection reuses its immutable Explorer namespace after Workbench commit", () => {
@@ -103,7 +105,8 @@ test("hover and active rows share the requested outline-only visual contract", (
   assert.match(frontend, /data-ui-selected=/);
   assert.doesNotMatch(frontend, /hoveredPath|onmouseenter|onmouseleave/);
   assert.match(frontend, /\.file-row:hover \.row-actions/);
-  assert.match(frontend, /\{#each flatTree as node \(node\.entry\?\.id \?\? node\.path\)\}/);
+  assert.match(frontend, /projectFileExplorerVirtualWindow/);
+  assert.match(frontend, /\{#each visibleTree as node, visibleIndex \(node\.entry\?\.id \?\? node\.path\)\}/);
   assert.match(frontend, /<IconTrash/);
 });
 
@@ -120,10 +123,33 @@ test("directory expansion is local presentation state and emits no Workbench sel
 test("empty-directory markers stay internal and external reconcile cannot leave stale selection", () => {
   const scan = source("../src-tauri/src/project/scan.rs");
   const commands = source("../src-tauri/src/commands/file_explorer.rs");
-  const app = source("../src/lib/state/app.svelte.ts");
+  const state = source("../src/lib/workbench/file-explorer-state.svelte.ts");
   assert.match(scan, /Some\("\.gitkeep"\)[\s\S]*continue/);
   assert.match(commands, /missing_workbench_paths/);
   assert.match(commands, /WorkbenchIntent::ReconcileProjectEntries/);
-  assert.match(app, /snapshot\.workbenchRevision/);
-  assert.match(app, /await this\.refreshWorkbenchState\(\)/);
+  assert.match(state, /current\.workbenchRevision !== snapshot\.workbenchRevision/);
+  assert.match(state, /await this\.commands\.refreshWorkbench\(\)/);
+});
+
+test("Workbench navigation stays separate from the structural Explorer namespace", () => {
+  const lifecycle = source("../src/lib/kernel/project-workspace-lifecycle.svelte.ts");
+  const state = source("../src/lib/workbench/file-explorer-state.svelte.ts");
+  const pane = source("../src/lib/components/ProjectPane.svelte");
+  const frontend = source("../src/lib/components/project/ProjectFilesTab.svelte");
+
+  const refreshEffect = lifecycle.slice(
+    lifecycle.indexOf("// The structural Explorer namespace changes only"),
+    lifecycle.indexOf("// Workspace mutation events advance"),
+  );
+  assert.match(refreshEffect, /workspaceRevision/);
+  assert.doesNotMatch(refreshEffect, /workbench\.snapshot|workbenchRevision/);
+  assert.doesNotMatch(lifecycle, /explorer\.projectWorkbench|untrack/);
+  assert.match(pane, /activeDocumentPath=\{activeScannedPath\}/);
+  assert.match(frontend, /export let activeDocumentPath: string \| null = null/);
+  assert.match(frontend, /selectedEntryPath = activeDocumentPath/);
+  assert.match(frontend, /scheduleExplorerReveal\(revealPath, nextRevealKey\)/);
+  assert.match(frontend, /!sameStringSet\(plan\.collapsedDirs, collapsedDirs\)/);
+  assert.doesNotMatch(frontend, /activeDocumentPath\s*\?\?[\s\S]{0,80}snapshot\?\.activeDocumentPath/);
+  assert.match(state, /expectedWorkbenchRevision: authority\.workbenchRevision/g);
+  assert.doesNotMatch(state, /expectedWorkbenchRevision: explorer\.workbenchRevision/);
 });

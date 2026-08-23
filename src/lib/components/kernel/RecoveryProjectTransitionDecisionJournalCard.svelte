@@ -3,7 +3,7 @@
   import type {
     KernelProjectTransitionDecisionRetentionHotJournal,
     KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction,
-  } from "$lib/types";
+  } from "$lib/project/transition-contract";
   import {
     compactKernelPath,
     formatRecoveryTime,
@@ -153,7 +153,7 @@
     {#if journal.diagnostics.length}
       <ul>
         {#each journal.diagnostics as diagnostic}
-          <li>{t("project-recovery-retention-integrity-diagnostic")}</li>
+          <li>{t("project-recovery-retention-integrity-diagnostic")}: {diagnostic}</li>
         {/each}
       </ul>
     {/if}

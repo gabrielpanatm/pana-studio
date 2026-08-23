@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ section.title }} | INDEX ZERO{% endblock title %}
+{% block description %}{{ section.description }}{% endblock description %}
+{% block content %}
+<section class="pagina-arhiva">
+  <header class="titlu-arhiva container-larg">
+    <p class="eticheta-tehnica">ARHIVĂ / {{ section.pages | length }} INTRĂRI</p>
+    <h1>{{ section.title }}</h1>
+    <p>{{ section.description }}</p>
+  </header>
+  <div class="filtre container-larg" aria-label="Filtre demonstrative">
+    <button class="filtru activ" type="button" data-filter="toate">Toate</button>
+    <button class="filtru" type="button" data-filter="performance">Performance</button>
+    <button class="filtru" type="button" data-filter="sunet">Sunet</button>
+    <button class="filtru" type="button" data-filter="instalatie">Instalație</button>
+    <button class="filtru" type="button" data-filter="atelier">Atelier</button>
+  </div>
+  <div class="lista-evenimente" data-filter-list>
+    {% for pagina in section.pages %}
+    <article data-filter-item="{{ pagina.taxonomies.discipline[0] }}">
+      <a class="numar-lista" href="{{ pagina.permalink }}">{{ loop.index }}</a>
+      <time datetime="{{ pagina.date }}">{{ pagina.date | date(format="%d.%m") }}<span>{{ pagina.extra.ora }}</span></time>
+      <div><p>{{ pagina.taxonomies.discipline[0] }} / {{ pagina.taxonomies.formate[0] }}</p><h2><a href="{{ pagina.permalink }}">{{ pagina.title }}</a></h2></div>
+      <p>{{ pagina.description }}</p>
+      <a class="sageata-lista" href="{{ pagina.permalink }}" aria-label="Deschide {{ pagina.title }}">↗</a>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock content %}

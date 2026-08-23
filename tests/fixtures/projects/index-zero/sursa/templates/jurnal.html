@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ section.title }} | INDEX ZERO{% endblock title %}
+{% block description %}{{ section.description }}{% endblock description %}
+{% block content %}
+<section class="pagina-arhiva">
+  <header class="titlu-arhiva container-larg"><p class="eticheta-tehnica">PUBLICAȚIE / {{ section.pages | length }} TEXTE</p><h1>{{ section.title }}</h1><p>{{ section.description }}</p></header>
+  <div class="grila-jurnal grila-jurnal-arhiva container-larg">
+    {% for pagina in section.pages %}
+    <article><a href="{{ pagina.permalink }}"><img src="{{ get_url(path=pagina.extra.imagine) }}" alt="" width="1200" height="800" loading="lazy"></a><p>{{ pagina.date | date(format="%d.%m.%Y") }} / {{ pagina.extra.durata_lectura }}</p><h2><a href="{{ pagina.permalink }}">{{ pagina.title }}</a></h2><span>{{ pagina.description }}</span></article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock content %}

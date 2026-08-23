@@ -9,22 +9,17 @@
     projectAssetOriginLabel,
     projectAssetPublicUrl,
   } from "$lib/project/assets";
-  import type {
-    ProjectFile as InspectorProjectFile,
-    ScssVariable as InspectorScssVariable,
-  } from "$lib/types";
+  import type { ProjectFile as InspectorProjectFile } from "$lib/project/lifecycle-contract";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
 
   let {
     pendingValues,
     rulesMap,
-    scssVariables = [],
     scannedAssets = [],
     edit,
   }: {
     pendingValues: Record<string, string>;
     rulesMap: Record<string, string>;
-    scssVariables?: InspectorScssVariable[];
     scannedAssets?: InspectorProjectFile[];
     edit: CssPropertyEditController;
   } = $props();

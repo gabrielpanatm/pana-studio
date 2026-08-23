@@ -1,4 +1,5 @@
 import { serializeOverrides } from "$lib/css/serializer";
+import type { EditableStyles } from "$lib/css/contracts";
 import {
   applyApplicationAppearanceToPreviewDocument,
   applyStagedOverrideStylesToDocument,
@@ -6,44 +7,91 @@ import {
 } from "$lib/preview/bridge";
 import { collectDomTree } from "$lib/preview/selection";
 import { isMessageFromExactPreviewFrame } from "$lib/preview/frame-origin";
-import {
-  isZolaTemplatePath,
-  previewUrlForScannedFile as buildPreviewUrlForScannedFile,
-} from "$lib/project/files";
+import { previewUrlForScannedFile as buildPreviewUrlForScannedFile } from "$lib/project/files";
 import {
   readSourceGraph,
-  type CanvasProjectionIdentity,
-  type PreviewPhaseReceipt,
-} from "$lib/project/io";
+} from "$lib/source-graph/io";
+import type {
+  CanvasProjectionIdentity,
+  PreviewPhaseReceipt,
+} from "$lib/contracts/canvas-projection";
 import {
   projectLatestProjectWorkspacePreview,
   scheduleProjectWorkspaceDerivedPreviewProjection,
+  type ProjectWorkspacePreviewHost,
 } from "$lib/kernel/project-workspace-preview-coordinator";
 import { flushFileBufferDraftSync } from "$lib/session/file-buffer-draft-sync";
 import {
   handlePreviewProjectionIntent,
   isPreviewProjectionIntentMessage,
+  type PreviewProjectionControllerHost,
 } from "$lib/state/preview-projection-controller";
 import {
   handleCanvasAgentMessage,
   retryCanvasInteractionBinding,
+  type CanvasInteractionControllerHost,
 } from "$lib/state/canvas-interaction-controller";
 import {
   confirmMountedCanvasProjection,
   settleGuardedPreviewNavigation,
+  type PreviewControllerHost,
 } from "$lib/state/preview-controller";
-import {
-  contrastingTextColor,
-  normalizedProjectPath,
-} from "$lib/state/app-helpers";
+import { contrastingTextColor } from "$lib/state/app-helpers";
+import type { ApplicationPreferencesState } from "$lib/application/preferences.svelte";
 import {
   resolveSourceEditLocationForSourceId as resolveSourceEditLocationFromGraph,
   resolveSourceEditTargetForSourceId as resolveSourceEditTargetFromGraph,
 } from "$lib/source-graph/location";
-import type { AppState } from "$lib/state/app.svelte";
-import type { PageSection, ProjectFile } from "$lib/types";
+import type {
+  CanvasElementObservation,
+  CoordinatedElementSelection,
+  PageSection,
+} from "$lib/canvas/contracts";
+import type {
+  ProjectFile,
+  ProjectScan,
+} from "$lib/project/lifecycle-contract";
+import type { ProjectWorkspaceSnapshot } from "$lib/project/workspace-contract";
+import type { SourceGraph } from "$lib/source-graph/graph-contract";
+import type { CanvasProjectionPlan } from "$lib/contracts/canvas-projection";
+import type { PreviewRuntime } from "$lib/editor-runtime/preview-runtime";
+import type { WorkspaceDerivedProjectionStatus } from "$lib/session/workspace-mutation-coordinator";
 import { errorMessage } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
+
+export type AppPreviewRuntimeControllerHost = PreviewProjectionControllerHost
+  & ProjectWorkspacePreviewHost
+  & {
+    canvasInteraction: CanvasInteractionControllerHost;
+    coordinatedElementSelection: CoordinatedElementSelection | null;
+    currentSourceRelativePath: string;
+    isActiveRenderedPreviewPage: boolean;
+    latestPreviewMessageRevision: number;
+    overrideRules: Record<string, EditableStyles>;
+    pageSections: PageSection[];
+    pendingCanvasProjection: CanvasProjectionPlan | null;
+    previewCommands: () => PreviewControllerHost;
+    previewDocumentMarkup: string | null;
+    previewRuntime: PreviewRuntime;
+    previewSyncTimer: number | null;
+    projectSessionEpoch: number;
+    projectWorkspaceSnapshot: ProjectWorkspaceSnapshot | null;
+    scannedProject: ProjectScan | null;
+    sourceGraph: SourceGraph | null;
+    sourceGraphLoadSerial: number;
+    sourceGraphProjectionStatus: WorkspaceDerivedProjectionStatus;
+    sourceGraphWorkspaceRevision: number | null;
+    preferences: Pick<ApplicationPreferencesState, "accent">;
+    variableOverrides: Record<string, string>;
+    applySelectionState: (selection: CanvasElementObservation) => void;
+    applyStagedOverrideStylesToPreview: (css: string) => void;
+    cancelPreviewSync: () => void;
+    fetchDomTreeFromPreview: () => void;
+    getPreviewDocument: () => Document | undefined;
+    hydratePageSections: (sections: PageSection[]) => PageSection[];
+    restoreLiveCssLayersToPreview: () => void;
+    setPageSections: (sections: PageSection[]) => void;
+  };
 
 /**
  * Messages which complete an application-owned Preview transaction must keep
@@ -63,7 +111,10 @@ function previewMessageRevision(data: Record<string, unknown>) {
     : null;
 }
 
-function markPreviewMessageRevision(app: AppState, data: Record<string, unknown>) {
+function markPreviewMessageRevision(
+  app: AppPreviewRuntimeControllerHost,
+  data: Record<string, unknown>,
+) {
   const revision = previewMessageRevision(data);
   if (revision === null) return false;
   if (revision < app.latestPreviewMessageRevision) return true;
@@ -72,7 +123,7 @@ function markPreviewMessageRevision(app: AppState, data: Record<string, unknown>
 }
 
 export async function refreshSourceGraph(
-  app: AppState,
+  app: AppPreviewRuntimeControllerHost,
   options: { strict?: boolean } = {},
 ) {
   const serial = ++app.sourceGraphLoadSerial;
@@ -151,7 +202,10 @@ export async function refreshSourceGraph(
   }
 }
 
-export function previewUrlForScannedFile(app: AppState, file: ProjectFile) {
+export function previewUrlForScannedFile(
+  app: AppPreviewRuntimeControllerHost,
+  file: ProjectFile,
+) {
   const url = buildPreviewUrlForScannedFile(file, {
     previewBaseUrl: app.scannedProject?.previewBaseUrl,
   });
@@ -162,15 +216,25 @@ export function previewUrlForScannedFile(app: AppState, file: ProjectFile) {
   return stagedUrl.toString();
 }
 
-export function resolveSourceEditTargetForSourceId(app: AppState, sourceId: string | null | undefined) {
+export function resolveSourceEditTargetForSourceId(
+  app: AppPreviewRuntimeControllerHost,
+  sourceId: string | null | undefined,
+) {
   return resolveSourceEditTargetFromGraph(app.sourceGraph, sourceId);
 }
 
-export function resolveSourceEditLocationForSourceId(app: AppState, sourceId: string | null | undefined) {
+export function resolveSourceEditLocationForSourceId(
+  app: AppPreviewRuntimeControllerHost,
+  sourceId: string | null | undefined,
+) {
   return resolveSourceEditLocationFromGraph(app.sourceGraph, sourceId);
 }
 
-export function syncHtmlCodeToPreview(app: AppState, sourceText: string, _cursorPosition: number) {
+export function syncHtmlCodeToPreview(
+  app: AppPreviewRuntimeControllerHost,
+  sourceText: string,
+  _cursorPosition: number,
+) {
   app.cancelPreviewSync();
   const parsedDocument = new DOMParser().parseFromString(sourceText, "text/html");
   app.setPageSections(collectDomTree(parsedDocument));
@@ -213,29 +277,32 @@ export function syncHtmlCodeToPreview(app: AppState, sourceText: string, _cursor
   }, 220);
 }
 
-export function applyStagedOverrideStylesToPreview(app: AppState, css: string) {
+export function applyStagedOverrideStylesToPreview(
+  app: AppPreviewRuntimeControllerHost,
+  css: string,
+) {
   const previewDocument = app.getPreviewDocument();
   if (!previewDocument) {
-    app.postPreviewMessage({ type: "set-live-overrides-css", css });
+    app.canvasInteraction.commands.postPreviewMessage({ type: "set-live-overrides-css", css });
     return;
   }
   applyStagedOverrideStylesToDocument(previewDocument, css);
 }
 
-function syncApplicationAppearanceToPreview(app: AppState) {
-  const textOnAccent = contrastingTextColor(app.uiAccent);
+function syncApplicationAppearanceToPreview(app: AppPreviewRuntimeControllerHost) {
+  const textOnAccent = contrastingTextColor(app.preferences.accent);
   const previewDocument = app.getPreviewDocument();
   if (previewDocument) {
-    applyApplicationAppearanceToPreviewDocument(previewDocument, app.uiAccent, textOnAccent);
+    applyApplicationAppearanceToPreviewDocument(previewDocument, app.preferences.accent, textOnAccent);
   }
-  app.postPreviewMessage({
+  app.canvasInteraction.commands.postPreviewMessage({
     type: "set-application-appearance",
-    accent: app.uiAccent,
+    accent: app.preferences.accent,
     textOnAccent,
   });
 }
 
-export function attachPreviewInspector(app: AppState) {
+export function attachPreviewInspector(app: AppPreviewRuntimeControllerHost) {
   app.previewRuntime.reset();
   // Skip when showing a status/placeholder document (not a real page).
   if (app.previewDocumentMarkup !== null) return;
@@ -279,17 +346,20 @@ export function attachPreviewInspector(app: AppState) {
   app.fetchDomTreeFromPreview();
 }
 
-export function handlePreviewMessage(app: AppState, event: MessageEvent) {
+export function handlePreviewMessage(
+  app: AppPreviewRuntimeControllerHost,
+  event: MessageEvent,
+) {
   const data = event.data;
   if (data?.source === "pana-studio-canvas-agent") {
-    const exactFrame = isMessageFromExactPreviewFrame(app.previewFrame, event);
+    const exactFrame = isMessageFromExactPreviewFrame(app.canvasInteraction.session.previewFrame, event);
     if (!exactFrame) return;
     if (!app.previewRuntime.acceptIncomingMessage()) return;
-    handleCanvasAgentMessage(app, event);
+    handleCanvasAgentMessage(app.canvasInteraction, event);
     return;
   }
   if (!data || data.source !== "pana-studio-preview") return;
-  const exactFrame = isMessageFromExactPreviewFrame(app.previewFrame, event);
+  const exactFrame = isMessageFromExactPreviewFrame(app.canvasInteraction.session.previewFrame, event);
   if (!exactFrame) return;
   if (!app.previewRuntime.acceptIncomingMessage()) return;
   const ack = app.previewRuntime.handleAck(data);
@@ -310,11 +380,11 @@ export function handlePreviewMessage(app: AppState, event: MessageEvent) {
       readyReceipts.length === 3
       && readyReceipts[2]?.phase === "styledReady"
     ) {
-      settleGuardedPreviewNavigation(app.previewControllerHost(), readyIdentity);
+      settleGuardedPreviewNavigation(app.previewCommands(), readyIdentity);
     }
     syncApplicationAppearanceToPreview(app);
     void confirmMountedCanvasProjection(
-      app.previewControllerHost(),
+      app.previewCommands(),
       readyIdentity,
       readyReceipts,
     ).catch((error) => {
@@ -326,7 +396,7 @@ export function handlePreviewMessage(app: AppState, event: MessageEvent) {
       );
     });
     app.restoreLiveCssLayersToPreview();
-    void retryCanvasInteractionBinding(app);
+    void retryCanvasInteractionBinding(app.canvasInteraction);
     return;
   }
   if (data.type === "structure") {

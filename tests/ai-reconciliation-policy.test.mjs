@@ -4,7 +4,7 @@ import {
   aiRecoveryAuthorityDisposition,
   shouldAutomaticallyReloadAiReconciliation,
 } from "$lib/state/ai-coordination-controller";
-import { createExternalDiskState } from "$lib/state/external-disk-controller";
+import { createExternalDiskSnapshot } from "$lib/session/external-disk/state";
 
 function detail(overrides = {}) {
   return {
@@ -31,7 +31,7 @@ function detail(overrides = {}) {
 
 function external(overrides = {}) {
   return {
-    ...createExternalDiskState(),
+    ...createExternalDiskSnapshot(),
     changed: true,
     changedFiles: [
       "date/meniu.toml",

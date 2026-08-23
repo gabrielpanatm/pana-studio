@@ -1,9 +1,9 @@
 import type {
   CanvasElementObservation,
   CoordinatedElementSelection,
-  SourceEditLocation,
-  SourceGraphNode,
-} from "$lib/types";
+} from "$lib/canvas/contracts";
+import type { SourceEditLocation } from "$lib/source-graph/contracts";
+import type { SourceGraphNode } from "$lib/source-graph/contracts";
 import type { EditorActionStatus } from "$lib/editor-runtime/action-outcome";
 import { t } from "$lib/i18n/runtime.svelte";
 

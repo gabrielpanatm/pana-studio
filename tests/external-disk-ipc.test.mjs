@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  acceptProjectWorkspaceSaveBaseline,
-  createExternalDiskState,
+  acceptExternalDiskSaveBaseline,
+  createExternalDiskSnapshot,
   establishExternalDiskBaseline,
-  invalidateExternalReconcileForProjectTransition,
-  markWorkspaceProjectionRecoveryRequired,
-  resetExternalDiskState,
+  invalidateExternalDiskForTransition,
+  markExternalDiskProjectionRecovery,
+  resetExternalDiskSnapshot,
+} from "$lib/session/external-disk/state";
+import {
   suspendAndDrainExternalDiskMonitoring,
-} from "$lib/state/external-disk-controller";
+} from "$lib/session/external-disk/monitor";
 import { diffDiskManifests } from "$lib/project/disk-manifest";
 import {
   acceptedExternalReconcileManifest,
@@ -41,13 +43,12 @@ function manifest(versionToken = "v1", truncated = false) {
 function host(overrides = {}) {
   const notifications = [];
   const cleared = [];
-  return {
-    sessionProjectRoot: "/project",
+  const state = {
     kernelProjectSessionId: "session:runtime",
     projectSessionEpoch: 2,
     projectTransitionFrontendLeaseActive: false,
     kernelUndoRedoFrontendLeaseActive: false,
-    externalDiskState: createExternalDiskState(),
+    externalDiskState: createExternalDiskSnapshot(),
     externalDiskAuditTimer: null,
     externalDiskWatchUnlisten: null,
     externalDiskWatchGeneration: null,
@@ -60,6 +61,7 @@ function host(overrides = {}) {
     externalDiskSuspended: false,
     externalDiskCheckInFlight: null,
     externalDiskCheckGeneration: 0,
+    externalDiskReconcileGeneration: 0,
     scannedProject: {
       root: "/project",
       kernelSessionId: "session:runtime",
@@ -73,7 +75,6 @@ function host(overrides = {}) {
     selectionEpoch: 0,
     refreshToken: 0,
     jsRefreshToken: 0,
-    previewWorkspaceRevision: null,
     scssVariables: [],
     globalDirtyState: { dirty: false },
     projectStatus: "",
@@ -82,22 +83,94 @@ function host(overrides = {}) {
     quiesceExternalReconcileInteractions() {},
     async waitForExternalReconcileInteractionLock() {},
     async resetHistoryAfterExternalReconcile() {},
-    async requestPreviewRefresh() { return true; },
     setGlobalStatus() {},
     notifications,
     cleared,
-    ...overrides,
   };
+  Object.assign(state, overrides);
+  state.commands = {
+    setStatus: (...args) => state.setGlobalStatus(...args),
+    escalateStatus: (notification) => state.escalateGlobalStatus(notification),
+    clearStatus: (id) => state.clearNotification(id),
+    refreshSourceGraph: (...args) => state.refreshSourceGraph?.(...args),
+    quiesceInteractions: () => state.quiesceExternalReconcileInteractions(),
+    waitForInteractionLock: () => state.waitForExternalReconcileInteractionLock(),
+    resetHistory: () => state.resetHistoryAfterExternalReconcile(),
+    projectLatestPreview: async () => ({ status: "projected" }),
+  };
+  state.runtime = {
+    get snapshot() { return state.externalDiskState; },
+    set snapshot(value) { state.externalDiskState = value; },
+    get auditTimer() { return state.externalDiskAuditTimer; },
+    set auditTimer(value) { state.externalDiskAuditTimer = value; },
+    get watchUnlisten() { return state.externalDiskWatchUnlisten; },
+    set watchUnlisten(value) { state.externalDiskWatchUnlisten = value; },
+    get watchGeneration() { return state.externalDiskWatchGeneration; },
+    set watchGeneration(value) { state.externalDiskWatchGeneration = value; },
+    get watchStopIdentity() { return state.externalDiskWatchStopIdentity; },
+    set watchStopIdentity(value) { state.externalDiskWatchStopIdentity = value; },
+    get watchRevision() { return state.externalDiskWatchRevision; },
+    set watchRevision(value) { state.externalDiskWatchRevision = value; },
+    get watchSubscriptionGeneration() { return state.externalDiskWatchSubscriptionGeneration; },
+    set watchSubscriptionGeneration(value) { state.externalDiskWatchSubscriptionGeneration = value; },
+    get pendingWatchNotice() { return state.externalDiskPendingWatchNotice; },
+    set pendingWatchNotice(value) { state.externalDiskPendingWatchNotice = value; },
+    get watchEventPending() { return state.externalDiskWatchEventPending; },
+    set watchEventPending(value) { state.externalDiskWatchEventPending = value; },
+    get watchEventDrainInFlight() { return state.externalDiskWatchEventDrainInFlight; },
+    set watchEventDrainInFlight(value) { state.externalDiskWatchEventDrainInFlight = value; },
+    get suspended() { return state.externalDiskSuspended; },
+    set suspended(value) { state.externalDiskSuspended = value; },
+    get checkInFlight() { return state.externalDiskCheckInFlight; },
+    set checkInFlight(value) { state.externalDiskCheckInFlight = value; },
+    get checkGeneration() { return state.externalDiskCheckGeneration; },
+    set checkGeneration(value) { state.externalDiskCheckGeneration = value; },
+    get reconcileGeneration() { return state.externalDiskReconcileGeneration; },
+    set reconcileGeneration(value) { state.externalDiskReconcileGeneration = value; },
+  };
+  state.environment = {
+    session: {
+      get runtimeSessionId() { return state.kernelProjectSessionId; },
+      get epoch() { return state.projectSessionEpoch; },
+      get project() { return state.scannedProject; },
+      get transitionLocked() { return state.projectTransitionFrontendLeaseActive; },
+      get historyLocked() { return state.kernelUndoRedoFrontendLeaseActive; },
+      get aiLocked() { return state.aiEditLeaseFrontendLockActive ?? false; },
+    },
+    editor: {
+      get activeScannedPath() { return state.activeScannedPath; },
+      get sourceCache() { return state.sourceCache; },
+      get mutationEpoch() { return state.editorMutationEpoch; },
+      get selectionEpoch() { return state.selectionEpoch; },
+      get dirty() { return state.globalDirtyState.dirty; },
+    },
+    projections: {
+      invalidateProjectSession: () => { state.projectSessionEpoch += 1; },
+      acceptProject: (project) => { state.scannedProject = project; },
+      acceptWorkspace: (workspace) => { state.projectWorkspaceSnapshot = workspace; },
+      setProjectStatus: (status) => { state.projectStatus = status; },
+      acceptSources: (cache, activeSource) => {
+        state.sourceCache = cache;
+        if (activeSource !== null) state.source = activeSource;
+      },
+      acceptScssVariables: (variables) => { state.scssVariables = variables; },
+      invalidateDerived: () => { state.refreshToken += 1; },
+      invalidatePageJs: () => { state.jsRefreshToken += 1; },
+    },
+    commands: state.commands,
+  };
+  state.context = { runtime: state.runtime, environment: state.environment };
+  return state;
 }
 
 test("external monitor baseline comes only from the Rust-accepted session manifest", async () => {
   const activeHost = host();
-  await establishExternalDiskBaseline(activeHost);
+  establishExternalDiskBaseline(activeHost.context);
   assert.equal(activeHost.externalDiskState.baseline, activeHost.scannedProject.acceptedDiskManifest);
   assert.equal(activeHost.externalDiskState.truncated, false);
 
   const staleHost = host({ kernelProjectSessionId: "session:replacement" });
-  await establishExternalDiskBaseline(staleHost);
+  establishExternalDiskBaseline(staleHost.context);
   assert.equal(staleHost.externalDiskState.baseline, null);
 });
 
@@ -112,7 +185,7 @@ test("Save advances the external monitor baseline before polling resumes", () =>
   };
   const accepted = manifest("v2");
 
-  acceptProjectWorkspaceSaveBaseline(activeHost, accepted, 4);
+  acceptExternalDiskSaveBaseline(activeHost.context, accepted, 4);
 
   assert.equal(activeHost.scannedProject.acceptedDiskGeneration, 4);
   assert.equal(activeHost.scannedProject.acceptedDiskManifest, accepted);
@@ -144,7 +217,7 @@ test("suspension drains the exact in-flight monitor operation", async () => {
   };
   activeHost.externalDiskCheckInFlight = tracked;
   let completed = false;
-  const draining = suspendAndDrainExternalDiskMonitoring(activeHost).then(() => { completed = true; });
+  const draining = suspendAndDrainExternalDiskMonitoring(activeHost.context).then(() => { completed = true; });
   await Promise.resolve();
   assert.equal(completed, false);
   gate.resolve();
@@ -162,7 +235,7 @@ test("project transition invalidates monitor continuations before UI replacement
     generation: 0,
     promise: Promise.resolve(),
   };
-  invalidateExternalReconcileForProjectTransition(activeHost);
+  invalidateExternalDiskForTransition(activeHost.context);
   assert.equal(activeHost.projectSessionEpoch, 3);
   assert.equal(activeHost.externalDiskCheckInFlight, null);
   assert.equal(activeHost.externalDiskState.reconciling, true);
@@ -170,7 +243,7 @@ test("project transition invalidates monitor continuations before UI replacement
 
 test("projection recovery blocks monitoring and exposes only destructive disk reload", () => {
   const activeHost = host();
-  markWorkspaceProjectionRecoveryRequired(activeHost, "proiecția trebuie refăcută");
+  markExternalDiskProjectionRecovery(activeHost.context, "proiecția trebuie refăcută");
   assert.equal(activeHost.externalDiskState.workspaceProjectionRecoveryRequired, true);
   assert.equal(activeHost.externalDiskState.blockedByDirtySession, true);
   assert.equal(activeHost.notifications.length, 1);
@@ -242,7 +315,7 @@ test("external UI lease detects project, runtime, edit and selection races", () 
 test("reset detaches all monitor state from the old ProjectWorkspace session", () => {
   const activeHost = host();
   activeHost.externalDiskState = { ...activeHost.externalDiskState, baseline: manifest() };
-  resetExternalDiskState(activeHost);
+  resetExternalDiskSnapshot(activeHost.context);
   assert.equal(activeHost.projectSessionEpoch, 3);
   assert.equal(activeHost.externalDiskState.baseline, null);
   assert.equal(activeHost.externalDiskCheckInFlight, null);

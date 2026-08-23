@@ -2,7 +2,7 @@ import type {
   KernelProjectTransitionAction,
   KernelProjectTransitionPolicy,
   KernelProjectTransitionReason,
-} from "$lib/types";
+} from "$lib/project/transition-contract";
 import { l10n, t } from "$lib/i18n/runtime.svelte";
 
 export type ProjectTransitionDecisionMetric = {

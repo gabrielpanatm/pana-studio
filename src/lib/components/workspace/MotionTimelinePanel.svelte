@@ -18,7 +18,7 @@
     IconZoomOut,
   } from "@tabler/icons-svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
+  import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
   import {
     actionDuration,
     actionSpan,
@@ -28,13 +28,17 @@
     targetForDataAnim,
     triggerTarget,
   } from "$lib/js/motion-v2";
+  import type { InspectorSelectionSummarySnapshot } from "$lib/editor/contracts";
   import type {
     MotionAction,
     MotionInteraction,
     MotionTarget,
     MotionTargetRelation,
-    InspectorSelectionSummarySnapshot,
-  } from "$lib/types";
+  } from "$lib/js/contracts";
+  import {
+    MotionTimelineGestureController,
+    type MotionTimelineTimingDraft,
+  } from "$lib/motion/timeline-gesture-controller";
 
   let {
     workspace,
@@ -46,41 +50,7 @@
     dataAnim?: string | null;
   } = $props();
 
-  type TimingDraft = { start: number; duration: number };
-  type PendingTimingCommit = {
-    serial: number;
-    draft: TimingDraft;
-  };
-  type DragState = {
-    action: MotionAction;
-    interactionId: string;
-    mode: "move" | "resize";
-    pointerId: number;
-    captureElement: HTMLElement;
-    startX: number;
-    latestX: number;
-    canvasWidth: number;
-    timelineDuration: number;
-    domain: MotionInteraction["domain"];
-    snap: boolean;
-    original: TimingDraft;
-    animationFrame: number | null;
-    safetyTimer: number | null;
-  };
-  type SeekDragState = {
-    interactionId: string;
-    pointerId: number;
-    captureElement: HTMLElement;
-    latestX: number;
-    canvasLeft: number;
-    canvasWidth: number;
-    timelineDuration: number;
-    domain: MotionInteraction["domain"];
-    snap: boolean;
-    animationFrame: number | null;
-    safetyTimer: number | null;
-    lastPublishedValue: number | null;
-  };
+  type TimingDraft = MotionTimelineTimingDraft;
   type TargetPresentation = {
     title: string;
     detail: string;
@@ -91,19 +61,40 @@
   };
 
   let timingDrafts = $state<Record<string, TimingDraft>>({});
-  let drag: DragState | null = null;
-  let seekDrag: SeekDragState | null = null;
   let clipboard = $state<MotionAction | null>(null);
   let playhead = $state(0);
   let playing = $state(false);
   let targetPresentationRevision = $state(0);
-  let timingCommitSerial = 0;
   const targetPresentations = new Map<string, TargetPresentation>();
-  const pendingTimingCommits = new Map<string, PendingTimingCommit>();
+  const timelineGestures = new MotionTimelineGestureController({
+    selectedInteractionId: () => workspace.selectedInteraction?.id ?? null,
+    selectAction: (interactionId, actionId) => {
+      workspace.selectInteraction(interactionId, actionId);
+    },
+    setTimingDraft: (actionId, draft) => {
+      if (draft) setTimingDraft(actionId, draft);
+      else removeTimingDraft(actionId);
+    },
+    setPlayhead: (value) => {
+      playhead = value;
+    },
+    requestSeek: (interactionId, value) => {
+      workspace.requestPreview("seek", interactionId, value);
+    },
+    commitTiming: (commit) => workspace.mutate({
+      command: "setActionTiming",
+      ...commit,
+    }),
+    setGestureActive: (gesture, active) => {
+      document.body.classList.toggle(
+        gesture === "drag" ? "motion-timeline-dragging" : "motion-timeline-seeking",
+        active,
+      );
+    },
+  });
 
   const interaction = $derived(workspace.selectedInteraction);
   const duration = $derived(interaction ? interactionDuration(interaction) : 1);
-  const unit = $derived(interaction?.domain === "progress" ? "%" : "ms");
   const lanes = $derived.by(() => {
     if (!interaction) return [];
     targetPresentationRevision;
@@ -139,15 +130,14 @@
   $effect(() => {
     const status = workspace.previewStatus;
     if (!interaction || !status || status.interactionId !== interaction.id) return;
-    if (seekDrag?.interactionId === interaction.id) return;
+    if (timelineGestures.isSeekingInteraction(interaction.id)) return;
     playhead = Math.max(0, Math.min(duration, status.value));
     playing = !status.paused;
   });
 
   $effect(() => {
     const interactionId = interaction?.id ?? null;
-    if (drag && drag.interactionId !== interactionId) cancelDrag();
-    if (seekDrag && seekDrag.interactionId !== interactionId) cancelSeekDrag();
+    timelineGestures.reconcileInteraction(interactionId);
   });
 
   $effect(() => {
@@ -339,313 +329,40 @@
     };
   }
 
-  function restorePendingTimingDraft(actionId: string) {
-    const pending = pendingTimingCommits.get(actionId);
-    if (pending) {
-      setTimingDraft(actionId, pending.draft);
-      return;
-    }
-    removeTimingDraft(actionId);
-  }
-
-  function settleTimingCommit(actionId: string, serial: number) {
-    if (pendingTimingCommits.get(actionId)?.serial !== serial) return;
-    pendingTimingCommits.delete(actionId);
-    removeTimingDraft(actionId);
-  }
-
-  function dragTimingAt(current: DragState, clientX: number): TimingDraft {
-    const delta = (clientX - current.startX)
-      / Math.max(1, current.canvasWidth)
-      * current.timelineDuration;
-    const snap = (value: number) => {
-      if (!current.snap) return Math.max(0, value);
-      const step = current.domain === "progress" ? 1 : 50;
-      return Math.max(0, Math.round(value / step) * step);
-    };
-    const next = { ...current.original };
-    if (current.mode === "move") {
-      next.start = snap(
-        current.domain === "progress"
-          ? Math.min(100 - Math.max(0, next.duration), current.original.start + delta)
-          : current.original.start + delta,
-      );
-    } else {
-      next.duration = snap(Math.max(
-        current.domain === "progress" ? 1 : 50,
-        current.domain === "progress"
-          ? Math.min(100 - next.start, current.original.duration + delta)
-          : current.original.duration + delta,
-      ));
-    }
-    return next;
-  }
-
-  function flushDragDraft(current: DragState) {
-    current.animationFrame = null;
-    if (drag !== current) return;
-    timingDrafts = {
-      ...timingDrafts,
-      [current.action.id]: dragTimingAt(current, current.latestX),
-    };
-  }
-
   function beginDrag(event: PointerEvent, action: MotionAction, mode: "move" | "resize") {
-    if (event.button !== 0 || !interaction || seekDrag) return;
-    cancelDrag();
-    event.preventDefault();
-    event.stopPropagation();
-    const canvas = (event.currentTarget as HTMLElement).closest<HTMLElement>(".timeline-canvas");
+    if (!interaction || !(event.currentTarget instanceof HTMLElement)) return;
+    const captureTarget = event.currentTarget;
+    const canvas = captureTarget.closest<HTMLElement>(".timeline-canvas");
     if (!canvas) return;
-    const captureElement = event.currentTarget as HTMLElement;
-    try {
-      captureElement.setPointerCapture(event.pointerId);
-    } catch {
-      // Window listeners still guarantee cleanup when pointer capture is unavailable.
-    }
-    workspace.selectInteraction(interaction.id, action.id);
-    drag = {
+    timelineGestures.beginActionDrag({
+      event,
+      captureTarget,
       action,
       interactionId: interaction.id,
+      domain: interaction.domain,
       mode,
-      pointerId: event.pointerId,
-      captureElement,
-      startX: event.clientX,
-      latestX: event.clientX,
       canvasWidth: canvas.getBoundingClientRect().width,
       timelineDuration: duration,
-      domain: interaction.domain,
       snap: workspace.timelineSnap,
       original: draftFor(action),
-      animationFrame: null,
-      safetyTimer: null,
-    };
-    document.body.classList.add("motion-timeline-dragging");
-    drag.safetyTimer = window.setTimeout(cancelDrag, 8_000);
-    window.addEventListener("pointermove", moveDrag);
-    window.addEventListener("pointerup", finishDrag);
-    window.addEventListener("pointercancel", handlePointerCancel);
-    window.addEventListener("blur", cancelDrag, { once: true });
-    window.addEventListener("keydown", handleDragKeydown);
-    document.addEventListener("visibilitychange", handleDragVisibilityChange);
-  }
-
-  function moveDrag(event: PointerEvent) {
-    const current = drag;
-    if (!current || event.pointerId !== current.pointerId) return;
-    event.preventDefault();
-    current.latestX = event.clientX;
-    if (current.animationFrame !== null) return;
-    current.animationFrame = window.requestAnimationFrame(() => flushDragDraft(current));
-  }
-
-  function finishDrag(event: PointerEvent) {
-    const current = drag;
-    if (!current || event.pointerId !== current.pointerId) return;
-    current.latestX = event.clientX;
-    const next = dragTimingAt(current, current.latestX);
-    teardownDrag();
-    if (workspace.selectedInteraction?.id !== current.interactionId) {
-      restorePendingTimingDraft(current.action.id);
-      return;
-    }
-    const commitSerial = ++timingCommitSerial;
-    pendingTimingCommits.set(current.action.id, {
-      serial: commitSerial,
-      draft: next,
     });
-    setTimingDraft(current.action.id, next);
-    void workspace.mutate({
-      command: "setActionTiming",
-      interactionId: current.interactionId,
-      actionId: current.action.id,
-      start: next.start,
-      ...(current.action.type === "animate" || current.action.type === "nested"
-        ? { duration: next.duration }
-        : {}),
-    }).then(
-      () => settleTimingCommit(current.action.id, commitSerial),
-      () => {
-        // The optimistic draft is removed only after Rust exposes the authoritative error.
-        settleTimingCommit(current.action.id, commitSerial);
-      },
-    );
-  }
-
-  function cancelDrag() {
-    const actionId = drag?.action.id;
-    teardownDrag();
-    if (actionId) restorePendingTimingDraft(actionId);
-  }
-
-  function handlePointerCancel(event: PointerEvent) {
-    if (drag && event.pointerId === drag.pointerId) cancelDrag();
-  }
-
-  function handleDragKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    cancelDrag();
-  }
-
-  function handleDragVisibilityChange() {
-    if (document.visibilityState === "hidden") cancelDrag();
-  }
-
-  function teardownDrag() {
-    const current = drag;
-    if (current?.animationFrame !== null && current?.animationFrame !== undefined) {
-      window.cancelAnimationFrame(current.animationFrame);
-      current.animationFrame = null;
-    }
-    if (current?.safetyTimer !== null && current?.safetyTimer !== undefined) {
-      window.clearTimeout(current.safetyTimer);
-      current.safetyTimer = null;
-    }
-    if (current) {
-      try {
-        if (current.captureElement.hasPointerCapture(current.pointerId)) {
-          current.captureElement.releasePointerCapture(current.pointerId);
-        }
-      } catch {
-        // Pointer capture can already be released by the browser on pointerup.
-      }
-    }
-    drag = null;
-    document.body.classList.remove("motion-timeline-dragging");
-    window.removeEventListener("pointermove", moveDrag);
-    window.removeEventListener("pointerup", finishDrag);
-    window.removeEventListener("pointercancel", handlePointerCancel);
-    window.removeEventListener("blur", cancelDrag);
-    window.removeEventListener("keydown", handleDragKeydown);
-    document.removeEventListener("visibilitychange", handleDragVisibilityChange);
-  }
-
-  function seekValueAt(current: SeekDragState, clientX: number) {
-    const raw = (clientX - current.canvasLeft)
-      / Math.max(1, current.canvasWidth)
-      * current.timelineDuration;
-    const bounded = Math.max(0, Math.min(current.timelineDuration, raw));
-    if (!current.snap) return bounded;
-    const step = current.domain === "progress" ? 1 : 50;
-    return Math.max(
-      0,
-      Math.min(current.timelineDuration, Math.round(bounded / step) * step),
-    );
-  }
-
-  function publishSeekDrag(current: SeekDragState) {
-    current.animationFrame = null;
-    if (seekDrag !== current) return;
-    const next = seekValueAt(current, current.latestX);
-    playhead = next;
-    if (current.lastPublishedValue === next) return;
-    current.lastPublishedValue = next;
-    workspace.requestPreview("seek", current.interactionId, next);
   }
 
   function beginSeekDrag(event: PointerEvent) {
-    if (event.button !== 0 || !interaction || drag || seekDrag) return;
-    event.preventDefault();
-    const captureElement = event.currentTarget as HTMLElement;
-    const rect = captureElement.getBoundingClientRect();
-    if (captureElement.tabIndex >= 0) captureElement.focus({ preventScroll: true });
-    try {
-      captureElement.setPointerCapture(event.pointerId);
-    } catch {
-      // Window listeners still guarantee cleanup when pointer capture is unavailable.
-    }
-    seekDrag = {
+    if (!interaction || !(event.currentTarget instanceof HTMLElement)) return;
+    const captureTarget = event.currentTarget;
+    const rect = captureTarget.getBoundingClientRect();
+    if (captureTarget.tabIndex >= 0) captureTarget.focus({ preventScroll: true });
+    timelineGestures.beginSeek({
+      event,
+      captureTarget,
       interactionId: interaction.id,
-      pointerId: event.pointerId,
-      captureElement,
-      latestX: event.clientX,
+      domain: interaction.domain,
       canvasLeft: rect.left,
       canvasWidth: rect.width,
       timelineDuration: duration,
-      domain: interaction.domain,
       snap: workspace.timelineSnap,
-      animationFrame: null,
-      safetyTimer: null,
-      lastPublishedValue: null,
-    };
-    document.body.classList.add("motion-timeline-seeking");
-    publishSeekDrag(seekDrag);
-    seekDrag.safetyTimer = window.setTimeout(cancelSeekDrag, 15_000);
-    window.addEventListener("pointermove", moveSeekDrag);
-    window.addEventListener("pointerup", finishSeekDrag);
-    window.addEventListener("pointercancel", handleSeekPointerCancel);
-    window.addEventListener("blur", cancelSeekDrag, { once: true });
-    window.addEventListener("keydown", handleSeekDragKeydown);
-    document.addEventListener("visibilitychange", handleSeekVisibilityChange);
-  }
-
-  function moveSeekDrag(event: PointerEvent) {
-    const current = seekDrag;
-    if (!current || event.pointerId !== current.pointerId) return;
-    event.preventDefault();
-    current.latestX = event.clientX;
-    if (current.animationFrame !== null) return;
-    current.animationFrame = window.requestAnimationFrame(() => publishSeekDrag(current));
-  }
-
-  function finishSeekDrag(event: PointerEvent) {
-    const current = seekDrag;
-    if (!current || event.pointerId !== current.pointerId) return;
-    current.latestX = event.clientX;
-    if (current.animationFrame !== null) {
-      window.cancelAnimationFrame(current.animationFrame);
-      current.animationFrame = null;
-    }
-    publishSeekDrag(current);
-    teardownSeekDrag();
-  }
-
-  function cancelSeekDrag() {
-    teardownSeekDrag();
-  }
-
-  function handleSeekPointerCancel(event: PointerEvent) {
-    if (seekDrag && event.pointerId === seekDrag.pointerId) cancelSeekDrag();
-  }
-
-  function handleSeekDragKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    cancelSeekDrag();
-  }
-
-  function handleSeekVisibilityChange() {
-    if (document.visibilityState === "hidden") cancelSeekDrag();
-  }
-
-  function teardownSeekDrag() {
-    const current = seekDrag;
-    if (current?.animationFrame !== null && current?.animationFrame !== undefined) {
-      window.cancelAnimationFrame(current.animationFrame);
-      current.animationFrame = null;
-    }
-    if (current?.safetyTimer !== null && current?.safetyTimer !== undefined) {
-      window.clearTimeout(current.safetyTimer);
-      current.safetyTimer = null;
-    }
-    if (current) {
-      try {
-        if (current.captureElement.hasPointerCapture(current.pointerId)) {
-          current.captureElement.releasePointerCapture(current.pointerId);
-        }
-      } catch {
-        // Pointer capture can already be released by the browser on pointerup.
-      }
-    }
-    seekDrag = null;
-    document.body.classList.remove("motion-timeline-seeking");
-    window.removeEventListener("pointermove", moveSeekDrag);
-    window.removeEventListener("pointerup", finishSeekDrag);
-    window.removeEventListener("pointercancel", handleSeekPointerCancel);
-    window.removeEventListener("blur", cancelSeekDrag);
-    window.removeEventListener("keydown", handleSeekDragKeydown);
-    document.removeEventListener("visibilitychange", handleSeekVisibilityChange);
+    });
   }
 
   function stopPlayback() {
@@ -871,8 +588,7 @@
   }
 
   onDestroy(() => {
-    cancelDrag();
-    cancelSeekDrag();
+    timelineGestures.destroy();
   });
 </script>
 

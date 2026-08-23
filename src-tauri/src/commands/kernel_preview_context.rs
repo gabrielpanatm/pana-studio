@@ -17,14 +17,37 @@ pub(super) struct PreviewWriteCommandContext {
     pub(super) accepted_disk: AcceptedProjectDiskManifest,
     pub(super) active_document_path: Option<String>,
     pub(super) workspace_revision: u64,
+    pub(super) current_root_lock_wait_us: u64,
+    pub(super) project_workspace_lock_wait_us: u64,
+    pub(super) authority_locks_held_us: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct PreviewWorkspaceCandidateTimings {
+    pub(super) project_workspace_lock_wait_us: u64,
+    pub(super) project_workspace_lock_held_us: u64,
+    pub(super) candidate_clone_us: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct PreviewWorkspaceCasTimings {
+    pub(super) project_workspace_lock_wait_us: u64,
+    pub(super) project_workspace_lock_held_us: u64,
 }
 
 pub(super) fn prepare_preview_write_command(
     state: &State<AppState>,
     identity: &PreviewStructuralCommandIdentity,
 ) -> Result<PreviewWriteCommandContext, String> {
-    let (root, session, accepted_disk, workspace_revision) =
-        capture_preview_workspace_authority(state)?;
+    let (
+        root,
+        session,
+        accepted_disk,
+        workspace_revision,
+        current_root_lock_wait_us,
+        project_workspace_lock_wait_us,
+        authority_locks_held_us,
+    ) = capture_preview_workspace_authority(state)?;
     require_preview_command_identity(&session, identity)?;
     let workbench = state.workbench.read(&session)?;
     let active_document_path = workbench
@@ -47,6 +70,9 @@ pub(super) fn prepare_preview_write_command(
         accepted_disk,
         active_document_path,
         workspace_revision,
+        current_root_lock_wait_us,
+        project_workspace_lock_wait_us,
+        authority_locks_held_us,
     })
 }
 
@@ -72,13 +98,21 @@ pub(super) fn require_preview_command_identity(
 pub(super) fn capture_preview_write_workspace_candidate(
     state: &State<AppState>,
     context: &PreviewWriteCommandContext,
-) -> Result<(crate::kernel::project_workspace::ProjectWorkspace, u64), String> {
-    let clone_started = Instant::now();
+) -> Result<
+    (
+        crate::kernel::project_workspace::ProjectWorkspace,
+        PreviewWorkspaceCandidateTimings,
+    ),
+    String,
+> {
+    let lock_wait_started = Instant::now();
+    let workspace = state
+        .project_workspace
+        .lock()
+        .map_err(|_| "Nu am putut bloca ProjectWorkspace.".to_string())?;
+    let project_workspace_lock_wait_us = elapsed_us(lock_wait_started);
+    let lock_held_started = Instant::now();
     let candidate = {
-        let workspace = state
-            .project_workspace
-            .lock()
-            .map_err(|_| "Nu am putut bloca ProjectWorkspace.".to_string())?;
         let workspace = workspace
             .as_ref()
             .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
@@ -93,22 +127,36 @@ pub(super) fn capture_preview_write_workspace_candidate(
                 context.workspace_revision, workspace.revision
             ));
         }
-        workspace.clone()
+        let clone_started = Instant::now();
+        let candidate = workspace.fork_candidate();
+        let candidate_clone_us = elapsed_us(clone_started);
+        (candidate, candidate_clone_us)
     };
-    let clone_ms = clone_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    let project_workspace_lock_held_us = elapsed_us(lock_held_started);
+    drop(workspace);
     require_accepted_disk_unchanged(&context.root, &context.accepted_disk)?;
-    Ok((candidate, clone_ms))
+    Ok((
+        candidate.0,
+        PreviewWorkspaceCandidateTimings {
+            project_workspace_lock_wait_us,
+            project_workspace_lock_held_us,
+            candidate_clone_us: candidate.1,
+        },
+    ))
 }
 
 pub(super) fn with_preview_write_workspace_cas<R>(
     state: &State<AppState>,
     context: &PreviewWriteCommandContext,
     execute: impl FnOnce(&mut crate::kernel::project_workspace::ProjectWorkspace) -> Result<R, String>,
-) -> Result<R, String> {
+) -> Result<(R, PreviewWorkspaceCasTimings), String> {
+    let lock_wait_started = Instant::now();
     let mut workspace = state
         .project_workspace
         .lock()
         .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru CAS.".to_string())?;
+    let project_workspace_lock_wait_us = elapsed_us(lock_wait_started);
+    let lock_held_started = Instant::now();
     let workspace = workspace
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru CAS.".to_string())?;
@@ -123,7 +171,15 @@ pub(super) fn with_preview_write_workspace_cas<R>(
             context.workspace_revision, workspace.revision
         ));
     }
-    execute(workspace)
+    let result = execute(workspace)?;
+    let project_workspace_lock_held_us = elapsed_us(lock_held_started);
+    Ok((
+        result,
+        PreviewWorkspaceCasTimings {
+            project_workspace_lock_wait_us,
+            project_workspace_lock_held_us,
+        },
+    ))
 }
 
 fn capture_preview_workspace_authority(
@@ -134,17 +190,25 @@ fn capture_preview_workspace_authority(
         ProjectSessionSnapshot,
         AcceptedProjectDiskManifest,
         u64,
+        u64,
+        u64,
+        u64,
     ),
     String,
 > {
+    let root_lock_wait_started = Instant::now();
     let root = state
         .current_root
         .lock()
         .map_err(|_| "Nu am putut bloca root-ul proiectului curent.".to_string())?;
+    let current_root_lock_wait_us = elapsed_us(root_lock_wait_started);
+    let authority_locks_held_started = Instant::now();
+    let workspace_lock_wait_started = Instant::now();
     let workspace = state
         .project_workspace
         .lock()
         .map_err(|_| "Nu am putut bloca ProjectWorkspace.".to_string())?;
+    let project_workspace_lock_wait_us = elapsed_us(workspace_lock_wait_started);
     let root = root
         .as_ref()
         .ok_or_else(|| "Nu există proiect deschis.".to_string())?;
@@ -158,12 +222,20 @@ fn capture_preview_workspace_authority(
     }
     accepted_disk.require_identity(&session.runtime_instance_id(), &session.project_root)?;
     accepted_disk.require_complete()?;
-    Ok((
+    let result = (
         root.clone(),
         session.clone(),
-        accepted_disk.clone(),
+        accepted_disk.as_ref().clone(),
         workspace.revision,
-    ))
+        current_root_lock_wait_us,
+        project_workspace_lock_wait_us,
+        elapsed_us(authority_locks_held_started),
+    );
+    Ok(result)
+}
+
+fn elapsed_us(started: Instant) -> u64 {
+    started.elapsed().as_micros().min(u64::MAX as u128) as u64
 }
 
 fn require_preview_accepted_snapshot<'a>(

@@ -96,10 +96,10 @@ test("navigarea generică păstrează intervalul integral", () => {
 });
 
 test("proiecția semantică diferențiază selecțiile HTML și CSS fără a schimba range-ul Rust", () => {
-  const controller = source("../src/lib/state/source-editor-controller.ts");
+  const controller = source("../src/lib/editor/source-workspace.svelte.ts");
   const editor = source("../src/lib/editor/controller.ts");
 
-  assert.match(controller, /focus\?\.kind === "cssRule"[\s\S]*\? "cssRule"/);
+  assert.match(controller, /selection\?\.focus\.kind === "cssRule"[\s\S]*\? "cssRule"/);
   assert.match(controller, /primary\?\.subject\.kind === "htmlElement"[\s\S]*\? "htmlElement"/);
   assert.match(editor, /setSelectedSourceProjection\.of\(range \? \{ ranges: range, presentation \} : null\)/);
 });

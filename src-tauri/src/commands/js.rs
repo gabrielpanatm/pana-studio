@@ -5,7 +5,7 @@ use crate::{
     js::{
         self, require_page_js_draft_session_identity, require_page_js_file_buffer_identity,
         MotionRuntimeContract, PageJsCommandReceipt, PageJsConfig, PageJsDraftStageInput,
-        PageJsDraftStageReceipt, PageJsDraftStoreSnapshot, PageJsRequestIdentity,
+        PageJsDraftStageReceipt, PageJsRequestIdentity,
     },
     kernel::{
         file_buffer_store::FileBufferStore,
@@ -127,36 +127,6 @@ fn motion_mutation_coalesce_key(mutation: &MotionMutation) -> Option<String> {
     }
 }
 
-#[tauri::command(async)]
-pub fn get_page_data_anims(
-    template_path: String,
-    identity: PageJsRequestIdentity,
-    state: State<AppState>,
-) -> Result<PageJsCommandReceipt<Vec<String>>, String> {
-    with_bound_page_js_file_buffer(state.inner(), &identity, |project_root, _, store, _| {
-        js::read_page_data_anims(project_root, store, &template_path)
-    })
-}
-
-#[tauri::command(async)]
-pub fn get_page_js(
-    template_path: String,
-    identity: PageJsRequestIdentity,
-    state: State<AppState>,
-) -> Result<PageJsCommandReceipt<PageJsConfig>, String> {
-    with_bound_page_js_file_buffer(
-        state.inner(),
-        &identity,
-        |project_root, _, store, drafts| {
-            let template_path = strip_zola_root_prefix(&template_path);
-            if let Some(draft) = drafts.drafts.get(template_path) {
-                return Ok(draft.current.clone());
-            }
-            js::read_page_motion_config(project_root, store, template_path)
-        },
-    )
-}
-
 /// Returns one atomic, read-only projection of the Page JS resource owned by
 /// ProjectWorkspace. UI clients must use `accepted` as the stable staging
 /// baseline and `current` as the value to render; no frontend draft registry is
@@ -251,41 +221,6 @@ pub fn stage_page_js_draft(
     receipt
         .page_js
         .ok_or_else(|| "ProjectWorkspace nu a returnat receipt Page JS.".to_string())
-}
-
-#[tauri::command(async)]
-pub fn read_page_js_drafts(
-    expected_project_root: String,
-    expected_session_id: String,
-    state: State<AppState>,
-) -> Result<PageJsDraftStoreSnapshot, String> {
-    let identity = PageJsRequestIdentity {
-        expected_project_root,
-        expected_session_id,
-    };
-    let current_root = state
-        .current_root
-        .lock()
-        .map_err(|_| "Nu am putut bloca root-ul curent pentru Page JS.".to_string())?;
-    let current_root = current_root
-        .as_ref()
-        .ok_or_else(|| "Nu există proiect curent pentru Page JS.".to_string())?
-        .to_string_lossy()
-        .into_owned();
-    let workspace = state
-        .project_workspace
-        .lock()
-        .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru Page JS.".to_string())?;
-    let workspace = workspace
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru Page JS.".to_string())?;
-    require_page_js_draft_session_identity(
-        &current_root,
-        &workspace.session,
-        &workspace.page_js,
-        &identity,
-    )?;
-    Ok(workspace.page_js.snapshot())
 }
 
 #[tauri::command(async)]

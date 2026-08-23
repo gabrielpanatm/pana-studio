@@ -41,6 +41,10 @@ pub(crate) enum RenderedPreviewContent {
 #[derive(Clone, Debug)]
 pub(crate) struct TemplateWorkbenchProjection {
     pub context_key: String,
+    pub reuse_token: String,
+    pub template_path: String,
+    pub selected_page_path: Option<String>,
+    pub selected_route: Option<String>,
     pub content: RenderedPreviewContent,
     pub graph: crate::preview::canvas::CanvasGraph,
 }
@@ -1217,6 +1221,10 @@ mod tests {
             route.clone(),
             TemplateWorkbenchProjection {
                 context_key: "fixture-context".to_string(),
+                reuse_token: "sha256:fixture".to_string(),
+                template_path: "templates/partial.html".to_string(),
+                selected_page_path: None,
+                selected_route: None,
                 content: RenderedPreviewContent::Html(prepared),
                 graph: workbench_graph,
             },

@@ -3,7 +3,7 @@ import {
   PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION,
   type ProjectWorkspaceUndoRedoCommandReceipt,
   type WorkspaceHistoryDirection,
-} from "$lib/types";
+} from "$lib/project/workspace-contract";
 import { t } from "$lib/i18n/runtime.svelte";
 import { requireWorkbenchReceipt } from "$lib/workbench/io";
 

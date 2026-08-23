@@ -5,15 +5,15 @@
   import InspectorEmptyState from "$lib/components/inspector/InspectorEmptyState.svelte";
   import type {
     CssInspectorContextResolution,
-    CssProperty,
     CssRuleContext,
-    InspectorSelectionSummarySnapshot,
-    InstalledFontVariationAxis,
+    CssViewport,
     PageCssTarget,
-    ProjectFile,
     ScssVariable,
-  } from "$lib/types";
-  import type { CssViewport } from "$lib/project/io";
+  } from "$lib/css/contracts";
+  import type { CssProperty } from "$lib/css/property-contract";
+  import type { InspectorSelectionSummarySnapshot } from "$lib/editor/contracts";
+  import type { InstalledFontVariationAxis } from "$lib/fonts/contracts";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
 
   const pseudoOptions = $derived([

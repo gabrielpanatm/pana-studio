@@ -3,9 +3,7 @@ use std::{collections::HashSet, path::PathBuf};
 use serde::Serialize;
 
 use crate::localization::LocalizedDiagnostic;
-use crate::source_graph::model::{
-    SourceCapabilities, SourceGraph, SourceNodeKind, SourceOrigin, SourceRange,
-};
+use crate::source_graph::model::{SourceGraph, SourceRange};
 
 #[derive(Clone)]
 pub struct ProjectModel {
@@ -18,10 +16,10 @@ pub struct ProjectModel {
     /// live project disk.
     pub(crate) workspace_paths: HashSet<String>,
     pub source_graph: SourceGraph,
-    pub tera_graph: TeraGraph,
     pub diagnostics: Vec<ProjectModelDiagnostic>,
 }
 
+#[cfg(test)]
 impl ProjectModel {
     pub fn snapshot(&self) -> ProjectModelSnapshot {
         ProjectModelSnapshot {
@@ -30,7 +28,6 @@ impl ProjectModel {
             revision: self.revision.clone(),
             files: self.files.iter().map(ProjectModelFile::summary).collect(),
             source_graph: self.source_graph.clone(),
-            tera_graph: self.tera_graph.clone(),
             diagnostics: self.diagnostics.clone(),
         }
     }
@@ -46,6 +43,7 @@ pub struct ProjectModelFile {
     pub from_draft: bool,
 }
 
+#[cfg(test)]
 impl ProjectModelFile {
     fn summary(&self) -> ProjectModelFileSummary {
         ProjectModelFileSummary {
@@ -58,6 +56,7 @@ impl ProjectModelFile {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectModelSnapshot {
@@ -66,10 +65,10 @@ pub struct ProjectModelSnapshot {
     pub revision: String,
     pub files: Vec<ProjectModelFileSummary>,
     pub source_graph: SourceGraph,
-    pub tera_graph: TeraGraph,
     pub diagnostics: Vec<ProjectModelDiagnostic>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectModelFileSummary {
@@ -107,65 +106,4 @@ pub struct ProjectModelDiagnostic {
 pub enum ProjectModelDiagnosticSeverity {
     Warning,
     Error,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TeraGraph {
-    pub templates: Vec<TeraGraphTemplate>,
-    pub nodes: Vec<TeraGraphNode>,
-    pub relations: Vec<TeraGraphRelation>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TeraGraphTemplate {
-    pub file: String,
-    pub name: String,
-    pub origin: SourceOrigin,
-    pub theme_name: Option<String>,
-    pub is_partial: bool,
-    pub source_graph_template_id: String,
-    pub source_graph_node_id: String,
-    pub root_node_id: String,
-    pub extends: Option<String>,
-    pub includes: Vec<String>,
-    pub imports: Vec<String>,
-    pub blocks: Vec<String>,
-    pub macros: Vec<String>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TeraGraphNode {
-    pub id: String,
-    pub kind: SourceNodeKind,
-    pub file: String,
-    pub label: String,
-    pub target: Option<String>,
-    pub range: Option<SourceRange>,
-    pub parent: Option<String>,
-    pub children: Vec<String>,
-    pub capabilities: SourceCapabilities,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TeraGraphRelation {
-    pub id: String,
-    pub from: String,
-    pub to: String,
-    pub kind: TeraGraphRelationKind,
-    pub label: String,
-}
-
-#[derive(Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum TeraGraphRelationKind {
-    Contains,
-    Extends,
-    Includes,
-    Imports,
-    DefinesBlock,
-    DefinesMacro,
 }

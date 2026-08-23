@@ -11,7 +11,8 @@
   } from "@tabler/icons-svelte";
   import KernelWorkspace from "$lib/components/kernel/KernelWorkspace.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
   import type {
     AuditCategory,
     AuditFinding,
@@ -19,20 +20,52 @@
     AuditOutcome,
     AuditPolicy,
     AuditProviderStatus,
+    AuditRunMode,
+    AuditRunReceipt,
     AuditSourceOrigin,
-    WorkspaceSourceOpenOptions,
-  } from "$lib/types";
+  } from "$lib/audit/contracts";
+  import type { AuditRefreshResult } from "$lib/deploy/contracts";
+  import type { SourceRange } from "$lib/source-graph/contracts";
+  import type { WorkspaceSourceOpenOptions } from "$lib/workbench/contracts";
   import { auditProviderStatusCounts } from "$lib/audit/model";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    snapshot,
+    workspaceMutations,
+    projectAuditLoading,
+    projectAuditError,
+    validationRunningState,
+    projectHealth,
+    applySafeAuditFix,
+    refreshProjectAudit,
+    runZolaValidation,
+    revealSourceRange,
+    globalStatus,
     openWorkspaceSource,
     requestedView = "overview",
     observabilityFocusSerial = 0,
     onViewChange = undefined,
   }: {
-    app: AppState;
+    snapshot: AuditRunReceipt | null;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    projectAuditLoading: boolean;
+    projectAuditError: string;
+    validationRunningState: { running: boolean; message: string };
+    projectHealth: {
+      currentProjectPath: string;
+      projectFileCount: number;
+      sourceNodeCount: number;
+      dirtyAreas: string[];
+      canSave: boolean;
+      diskBlockedReason: string | null;
+      projectStatus: string;
+    };
+    applySafeAuditFix: (finding: AuditFinding, fixId: string) => Promise<unknown>;
+    refreshProjectAudit: (force?: boolean, mode?: AuditRunMode) => Promise<AuditRefreshResult>;
+    runZolaValidation: () => Promise<boolean>;
+    revealSourceRange: (file: string, range: SourceRange) => void;
+    globalStatus: GlobalStatusState;
     openWorkspaceSource: (
       path: string,
       options?: WorkspaceSourceOpenOptions,
@@ -111,10 +144,10 @@
     if (applyingFixId) return;
     applyingFixId = fixId;
     try {
-      await app.applySafeAuditFix(finding, fixId);
+      await applySafeAuditFix(finding, fixId);
       expandedFixId = null;
     } catch (error) {
-      app.setGlobalStatus(t("audit-fix-failed", { error: errorMessage(error) }), "error");
+      globalStatus.set(t("audit-fix-failed", { error: errorMessage(error) }), "error");
     } finally {
       applyingFixId = null;
     }
@@ -124,7 +157,6 @@
     if (activeView !== requestedView) activeView = requestedView;
   });
 
-  const snapshot = $derived(app.currentProjectAuditReceipt());
   const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const findings = $derived.by(() => {
     const source = snapshot?.findings ?? [];
@@ -156,11 +188,11 @@
   );
 
   $effect(() => {
-    const projectRoot = app.sessionProjectRoot;
-    const runtimeSessionId = app.kernelProjectSessionId;
-    const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
+    const projectRoot = workspaceMutations.identity?.expectedProjectRoot ?? "";
+    const runtimeSessionId = workspaceMutations.identity?.expectedSessionId ?? "";
+    const workspaceRevision = workspaceMutations.snapshot?.revision;
     if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
-    void app.refreshProjectAudit();
+    void refreshProjectAudit();
   });
 
   async function runFullAudit() {
@@ -169,18 +201,18 @@
     try {
       let buildError = "";
       try {
-        const valid = await app.runZolaValidation("refresh");
-        if (!valid) buildError = app.controlledPreview.validationMessage;
+        const valid = await runZolaValidation();
+        if (!valid) buildError = validationRunningState.message;
       } catch (error) {
         buildError = error instanceof Error ? error.message : String(error);
       }
-      const result = await app.refreshProjectAudit(true, "full");
+      const result = await refreshProjectAudit(true, "full");
       if (!result.ok) throw new Error(result.error || t("audit-full-no-receipt"));
       if (buildError) {
-        app.setGlobalStatus(t("audit-full-failed", { error: buildError }), "error");
+        globalStatus.set(t("audit-full-failed", { error: buildError }), "error");
       }
     } catch (error) {
-      app.setGlobalStatus(
+      globalStatus.set(
         t("audit-full-failed", { error: error instanceof Error ? error.message : String(error) }),
         "error",
       );
@@ -193,7 +225,7 @@
     const location = finding.primaryLocation;
     if (!location) return;
     await openWorkspaceSource(location.file, { surface: "code" });
-    if (location.range) app.revealSourceRange(location.file, location.range);
+    if (location.range) revealSourceRange(location.file, location.range);
   }
 
   function findingLocation(finding: AuditFinding) {
@@ -244,16 +276,16 @@
       <button
         class="ui-button toolbar"
         type="button"
-        disabled={app.projectAuditLoading}
-        onclick={() => { void app.refreshProjectAudit(true, "quick"); }}
+        disabled={projectAuditLoading}
+        onclick={() => { void refreshProjectAudit(true, "quick"); }}
       >
-        <IconRefresh class={app.projectAuditLoading ? "spin" : undefined} size={15} stroke={1.9} />
+        <IconRefresh class={projectAuditLoading ? "spin" : undefined} size={15} stroke={1.9} />
         {t("audit-refresh")}
       </button>
       <button
         class="ui-button primary toolbar"
         type="button"
-        disabled={validationRunning || app.controlledPreview.validation === "running"}
+        disabled={validationRunning || validationRunningState.running}
         onclick={() => { void runFullAudit(); }}
       >
         <IconCircleCheck size={15} stroke={1.9} />
@@ -292,15 +324,15 @@
       aria-labelledby="audit-tab-runtime"
     >
       <KernelWorkspace
-        currentProjectPath={app.currentProjectPath}
-        projectFileCount={app.scannedProject?.files.length ?? 0}
-        sourceNodeCount={app.sourceGraph?.nodes.length ?? 0}
-        dirtyAreas={app.globalDirtyState.areas}
-        canSave={app.globalDirtyState.canSave}
-        diskBlockedReason={app.immediateDiskOperationBlockedReason}
-        projectStatus={app.projectStatus}
+        currentProjectPath={projectHealth.currentProjectPath}
+        projectFileCount={projectHealth.projectFileCount}
+        sourceNodeCount={projectHealth.sourceNodeCount}
+        dirtyAreas={projectHealth.dirtyAreas}
+        canSave={projectHealth.canSave}
+        diskBlockedReason={projectHealth.diskBlockedReason}
+        projectStatus={projectHealth.projectStatus}
         {observabilityFocusSerial}
-        onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
+        onStatusUpdate={(text, kind) => globalStatus.set(text, kind)}
       />
     </div>
   {:else}
@@ -449,14 +481,14 @@
         </header>
 
         <div class="diagnostics-list" aria-live="polite">
-          {#if app.projectAuditError}
+          {#if projectAuditError}
             <div class="empty-state error" role="alert">
               <IconAlertTriangle size={22} stroke={1.8} />
               <strong>{t("audit-rust-failed")}</strong>
-              <span>{app.projectAuditError}</span>
-              <button class="ui-button toolbar" type="button" onclick={() => { void app.refreshProjectAudit(true, "quick"); }}>{t("audit-retry")}</button>
+              <span>{projectAuditError}</span>
+              <button class="ui-button toolbar" type="button" onclick={() => { void refreshProjectAudit(true, "quick"); }}>{t("audit-retry")}</button>
             </div>
-          {:else if app.projectAuditLoading && !snapshot}
+          {:else if projectAuditLoading && !snapshot}
             <div class="empty-state">{t("audit-building")}</div>
           {:else if findings.length === 0 && (snapshot?.summary.total ?? 0) > 0}
             <div class="empty-state">

@@ -35,13 +35,13 @@
     IconWorldWww,
     IconX,
   } from "@tabler/icons-svelte";
-  import { readInsertCatalog } from "$lib/project/io";
+  import { readInsertCatalog } from "$lib/blocks/io";
   import type {
     InsertCatalogCategory,
     InsertCatalogContext,
     InsertCatalogItem,
     InsertCatalogSnapshot,
-  } from "$lib/types";
+  } from "$lib/blocks/contracts";
   import { errorMessage } from "$lib/util";
 
   export let projectRoot = "";
@@ -232,7 +232,6 @@
     if (payload.kind === "html") return `<${payload.tag}>`;
     if (payload.kind === "block") return payload.blockId;
     if (payload.kind === "component") return payload.teraKind;
-    if (payload.kind === "dynamicField") return payload.binding.path;
     if (payload.kind === "dynamicWidget") return payload.providerId;
     return payload.teraKind;
   }
@@ -325,7 +324,6 @@
     if (code === "insert_catalog_block_not_insertable") return "Blocul nu permite inserare.";
     if (code === "insert_catalog_component_inactive") return "Componenta nu este activă sau este umbrită.";
     if (code === "insert_catalog_macro_requires_arguments") return "Macrocomanda cere argumente explicite.";
-    if (code === "insert_catalog_dynamic_item_scope_requires_loop") return "Câmpul cere o destinație din interiorul buclei repetorului.";
     if (code === "insert_catalog_listing_nested_loop") return "Listing-ul nu poate fi inserat în interiorul altei bucle.";
     return code ? `Inserare blocată: ${code}` : "Inserare indisponibilă.";
   }

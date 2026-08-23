@@ -9,9 +9,6 @@ use std::{
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::{
-    commands::project::{
-        require_current_project_root, require_project_workspace_available_for_write,
-    },
     fonts::{
         annotate_font_preloads, build_font_face_graph, bundled_font_catalog, bundled_font_preview,
         font_delivery_diagnostics, normalize_font_family_name, plan_google_font_family_download,
@@ -29,6 +26,9 @@ use crate::{
         file_buffer_store::hash_bytes,
         observability::now_ms,
         project_path::normalize_project_relative_path,
+        project_runtime_access::{
+            require_current_project_root, require_project_workspace_available_for_write,
+        },
         project_workspace::{
             commit_project_workspace_session_mutation, ProjectWorkspaceIdentity,
             ProjectWorkspaceMutationReceipt, ProjectWorkspaceSnapshot,
@@ -740,7 +740,7 @@ fn validate_font_workspace_read_projection<R: Runtime>(
         "Citirea fonturilor a devenit stale: ProjectWorkspace a fost închis.".to_string()
     })?;
     workspace.require_identity(identity)?;
-    if workspace.accepted_disk != projection.accepted_disk {
+    if workspace.accepted_disk.as_ref() != projection.accepted_disk.as_ref() {
         return Err(
             "Citirea fonturilor a devenit stale: autoritatea disk s-a schimbat.".to_string(),
         );

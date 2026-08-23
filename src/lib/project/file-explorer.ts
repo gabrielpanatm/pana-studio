@@ -6,8 +6,8 @@ import {
   type FileExplorerOperationRequest,
   type FileExplorerSelectionReceipt,
   type FileExplorerSnapshot,
-  type ProjectWorkspaceIdentity,
-} from "$lib/types";
+} from "$lib/project/file-explorer-contract";
+import type { ProjectWorkspaceIdentity } from "$lib/project/workspace-contract";
 
 export async function readFileExplorerSnapshot(
   identity: ProjectWorkspaceIdentity,

@@ -4,9 +4,12 @@
     configureCodexMcp,
     readAiContextStatus,
     readCodexMcpStatus,
-  } from "$lib/project/io";
+  } from "$lib/ai/io";
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { AiContextStatus, CodexMcpStatus } from "$lib/types";
+  import type {
+    AiContextStatus,
+    CodexMcpStatus,
+  } from "$lib/ai/contracts";
   import { errorMessage, isRecoveryRequiredError } from "$lib/util";
 
   let {

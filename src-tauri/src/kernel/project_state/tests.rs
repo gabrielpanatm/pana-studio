@@ -188,7 +188,7 @@ fn workspace() -> ProjectWorkspace {
             size: text.len() as u64,
             readonly: false,
         },
-        baseline_text: text.to_string(),
+        baseline_text: text.to_string().into(),
         draft: None,
         revision: 1,
     });

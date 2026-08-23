@@ -9,6 +9,8 @@ mod workspace;
 pub(crate) use history::{
     WorkspaceCanvasHistoryDelta, WorkspaceSourceTreeHistory, WorkspaceSourceTreeHistoryAction,
 };
+#[cfg(test)]
+pub(crate) use model::{projection_deep_materializations, reset_projection_deep_materializations};
 pub use model::{
     ProjectWorkspaceHistoryIdentity, ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt,
     ProjectWorkspaceSaveError, ProjectWorkspaceSaveReceipt, ProjectWorkspaceSaveStatus,

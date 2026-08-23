@@ -2,87 +2,139 @@
   import ProjectPane from "$lib/components/ProjectPane.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
-  import { primarySelectionEditorNodeId } from "$lib/kernel/selection-read-model";
+  import type { WorkspaceLayoutState } from "$lib/ui/workspace-layout.svelte";
+  import type {
+    InsertCatalogContext,
+    InsertCatalogItem,
+    InsertCatalogSnapshot,
+  } from "$lib/blocks/contracts";
+  import type { EditorMovePlan } from "$lib/editor/contracts";
+  import type {
+    EditorNavigationNode,
+    EditorNavigationSnapshot,
+  } from "$lib/editor/contracts";
+  import type { ProjectMovePosition } from "$lib/preview/contracts";
+  import type {
+    FileExplorerOperationPlan,
+    FileExplorerOperationRequest,
+    FileExplorerSnapshot,
+  } from "$lib/project/file-explorer-contract";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
 
-  let { app }: { app: AppState } = $props();
+  let {
+    visible,
+    sessionId,
+    interactionLocked,
+    pane,
+    commands,
+    workspaceLayout,
+  }: {
+    visible: boolean;
+    sessionId: string;
+    interactionLocked: boolean;
+    pane: {
+      projectRoot: string;
+      workspaceRevision: number;
+      allProjectFiles: ProjectFile[];
+      activeScannedPath: string | null;
+      fileExplorerSnapshot: FileExplorerSnapshot | null;
+      fileExplorerLoading: boolean;
+      fileExplorerError: string;
+      insertCatalogContext: InsertCatalogContext;
+      editorNavigationSnapshot: EditorNavigationSnapshot | null;
+      editorNavigationLoading: boolean;
+      editorNavigationError: string;
+      coordinatedSelectionNodeIds: string[];
+      coordinatedPrimaryNodeId: string | null;
+      hoveredEditorNavigationNodeId: string | null;
+      editorEditScopeId: string | null;
+    };
+    commands: {
+      selectFileExplorerEntry: (entryId: string) => void | Promise<void>;
+      planFileExplorerOperation: (operation: FileExplorerOperationRequest) => Promise<FileExplorerOperationPlan>;
+      commitFileExplorerOperation: (plan: FileExplorerOperationPlan) => Promise<unknown>;
+      openScannedFile: (file: ProjectFile) => void | Promise<void>;
+      startInsertCatalogDrag: (item: InsertCatalogItem, snapshot: InsertCatalogSnapshot, event: PointerEvent) => void;
+      selectEditorNavigationNode: (
+        node: EditorNavigationNode,
+        options?: { toggle?: boolean; extendRange?: boolean; setPrimary?: boolean },
+      ) => void | Promise<unknown>;
+      hoverEditorNavigationNode: (node: EditorNavigationNode | null) => void;
+      enterEditorNavigationScope: (scopeId: string) => void | Promise<unknown>;
+      exitEditorNavigationScope: () => void;
+      previewEditorNavigationMove: (
+        sourceNodeId: string,
+        targetNodeId: string,
+        position: ProjectMovePosition,
+      ) => Promise<EditorMovePlan>;
+      moveEditorNavigationNode: (
+        sourceNodeId: string,
+        targetNodeId: string,
+        position: ProjectMovePosition,
+      ) => void | Promise<unknown>;
+      deleteEditorNavigationNode: (node: EditorNavigationNode) => void | Promise<unknown>;
+      openEditorNavigationContextMenu: (node: EditorNavigationNode, x: number, y: number) => void | Promise<unknown>;
+    };
+    workspaceLayout: WorkspaceLayoutState;
+  } = $props();
 
-  const editorSidebarActive = $derived(
-    app.applicationSurface === "workbench"
-      && (app.workbenchSnapshot?.activeActivity ?? "editor") === "editor",
-  );
+  const editorSidebarActive = $derived(visible);
 </script>
 
-{#if app.scannedProject && app.kernelProjectSessionId}
-  {#key app.kernelProjectSessionId}
+{#if pane.projectRoot && sessionId}
+  {#key sessionId}
     <div
       class="project-pane-shell"
-      hidden={app.leftPaneCollapsed}
+      hidden={workspaceLayout.leftPaneCollapsed}
       inert={!editorSidebarActive
-        || app.leftPaneCollapsed
-        || app.kernelUndoRedoFrontendQuiesceActive
-        || app.kernelUndoRedoFrontendLeaseActive
+        || workspaceLayout.leftPaneCollapsed
+        || interactionLocked
         ? true
         : undefined}
-      aria-hidden={!editorSidebarActive || app.leftPaneCollapsed}
+      aria-hidden={!editorSidebarActive || workspaceLayout.leftPaneCollapsed}
     >
       <ProjectPane
         scannedProject={true}
-        projectRoot={app.scannedProject.root}
-        runtimeSessionId={app.kernelProjectSessionId}
-        workspaceRevision={app.projectWorkspaceSnapshot?.revision ?? 0}
-        allProjectFiles={app.scannedProject.files}
-        activeScannedPath={app.activeScannedPath}
-        fileExplorerSnapshot={app.fileExplorerSnapshot}
-        fileExplorerLoading={app.fileExplorerLoading}
-        fileExplorerError={app.fileExplorerError}
-        insertCatalogContext={{
-          activeDocumentPath: app.activeScannedPath,
-          activeTemplatePath: app.activeRenderedTemplatePath,
-          activePagePath: app.templateWorkbenchPreferredPagePath,
-          canvasPreviewRevision: app.activeCanvasIdentity?.previewRevision ?? null,
-          canvasAvailable: app.centerView === "preview" && Boolean(app.activeCanvasIdentity),
-          targetSourceId: app.coordinatedElementSelection?.sourceNodeId ?? null,
-          targetTag: app.coordinatedElementSelection?.observation.tag ?? null,
-        }}
-        editorNavigationSnapshot={app.editorNavigationSnapshot}
-        editorNavigationLoading={app.editorNavigationLoading}
-        editorNavigationError={app.editorNavigationError}
-        coordinatedSelectionNodeIds={app.selectionSnapshot?.members.flatMap((member) =>
-          member.anchor.editorNodeId ? [member.anchor.editorNodeId] : []) ?? []}
-        coordinatedPrimaryNodeId={primarySelectionEditorNodeId(app.selectionSnapshot)}
-        hoveredEditorNavigationNodeId={app.hoverSnapshot?.editorNodeId ?? null}
-        editorEditScopeId={app.editorEditScopeId}
-        selectFileExplorerEntry={(entryId) => app.selectFileExplorerEntry(entryId)}
-        planFileExplorerOperation={(operation) => app.planFileExplorerOperation(operation)}
-        commitFileExplorerOperation={(plan) => app.commitFileExplorerOperation(plan)}
-        openScannedFile={(file) => app.loadScannedProjectFile(file)}
-        startInsertCatalogDrag={(item, snapshot, event) =>
-          app.startInsertCatalogDrag(item, snapshot, event)}
-        selectEditorNavigationNode={(node, options) =>
-          app.selectEditorNavigationNode(node, options)}
-        hoverEditorNavigationNode={(node) => app.hoverEditorNavigationNode(node)}
-        enterEditorNavigationScope={(scopeId) => app.enterEditorNavigationScope(scopeId)}
-        exitEditorNavigationScope={() => app.exitEditorNavigationScope()}
-        previewEditorNavigationMove={(sourceNodeId, targetNodeId, position) =>
-          app.previewEditorNavigationMove(sourceNodeId, targetNodeId, position)}
-        moveEditorNavigationNode={(sourceNodeId, targetNodeId, position) =>
-          app.moveEditorNavigationNode(sourceNodeId, targetNodeId, position)}
-        deleteEditorNavigationNode={(node) =>
-          app.deleteEditorNavigationNode(node)}
-        openEditorNavigationContextMenu={(node, x, y) =>
-          app.openEditorNavigationContextMenu(node, x, y)}
+        projectRoot={pane.projectRoot}
+        runtimeSessionId={sessionId}
+        workspaceRevision={pane.workspaceRevision}
+        allProjectFiles={pane.allProjectFiles}
+        activeScannedPath={pane.activeScannedPath}
+        fileExplorerSnapshot={pane.fileExplorerSnapshot}
+        fileExplorerLoading={pane.fileExplorerLoading}
+        fileExplorerError={pane.fileExplorerError}
+        insertCatalogContext={pane.insertCatalogContext}
+        editorNavigationSnapshot={pane.editorNavigationSnapshot}
+        editorNavigationLoading={pane.editorNavigationLoading}
+        editorNavigationError={pane.editorNavigationError}
+        coordinatedSelectionNodeIds={pane.coordinatedSelectionNodeIds}
+        coordinatedPrimaryNodeId={pane.coordinatedPrimaryNodeId}
+        hoveredEditorNavigationNodeId={pane.hoveredEditorNavigationNodeId}
+        editorEditScopeId={pane.editorEditScopeId}
+        selectFileExplorerEntry={commands.selectFileExplorerEntry}
+        planFileExplorerOperation={commands.planFileExplorerOperation}
+        commitFileExplorerOperation={commands.commitFileExplorerOperation}
+        openScannedFile={commands.openScannedFile}
+        startInsertCatalogDrag={commands.startInsertCatalogDrag}
+        selectEditorNavigationNode={commands.selectEditorNavigationNode}
+        hoverEditorNavigationNode={commands.hoverEditorNavigationNode}
+        enterEditorNavigationScope={commands.enterEditorNavigationScope}
+        exitEditorNavigationScope={commands.exitEditorNavigationScope}
+        previewEditorNavigationMove={commands.previewEditorNavigationMove}
+        moveEditorNavigationNode={commands.moveEditorNavigationNode}
+        deleteEditorNavigationNode={commands.deleteEditorNavigationNode}
+        openEditorNavigationContextMenu={commands.openEditorNavigationContextMenu}
       />
     </div>
   {/key}
 {/if}
 
-{#if !app.leftPaneCollapsed && editorSidebarActive}
+{#if !workspaceLayout.leftPaneCollapsed && editorSidebarActive}
   <WorkspaceResizeHandle
     kind="left"
-    active={app.activeResizeKind === "left"}
+    active={workspaceLayout.activeResizeKind === "left"}
     ariaLabel={t("workbench-resize-left-panel")}
-    onDrag={(event) => app.startResizeDrag("left", event)}
-    onReset={() => app.resetResize("left")}
+    onDrag={(event) => workspaceLayout.startResizeDrag("left", event)}
+    onReset={() => workspaceLayout.resetResize("left")}
   />
 {/if}

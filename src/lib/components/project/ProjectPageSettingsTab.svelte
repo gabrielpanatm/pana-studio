@@ -7,7 +7,8 @@
   } from "$lib/i18n/runtime.svelte";
 
   $: t = legacyTranslator($localeRevision);
-  import type { ProjectFile, SourcePageKind } from "$lib/types";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
+  import type { SourcePageKind } from "$lib/source-graph/contracts";
   import {
     pageFrontmatterMutationValue,
     parsePageFrontmatter,

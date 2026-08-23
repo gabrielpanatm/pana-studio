@@ -1,4 +1,4 @@
-import type { ScssVariable } from "$lib/types";
+import type { ScssVariable } from "$lib/css/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export type InspectorCssDraft = {

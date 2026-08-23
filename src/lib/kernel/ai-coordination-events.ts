@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AiCoordinationSnapshot } from "$lib/types";
+import type { AiCoordinationSnapshot } from "$lib/ai/contracts";
 
 export const AI_COORDINATION_CHANGED_EVENT = "pana-ai-coordination-changed";
 

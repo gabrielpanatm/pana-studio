@@ -1,4 +1,8 @@
-import type { CenterView, ProjectFile, ProjectScan } from "$lib/types";
+import type { CenterView } from "$lib/application/contracts";
+import type {
+  ProjectFile,
+  ProjectScan,
+} from "$lib/project/lifecycle-contract";
 import { currentContentSection, projectStatusFor, scannedCacheKey, slugifyPageTitle } from "$lib/project/files";
 import {
   isRenderedPreviewPageFile,

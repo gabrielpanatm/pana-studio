@@ -1,4 +1,6 @@
-import { readProjectWorkspaceState } from "$lib/project/io";
+import {
+  readProjectWorkspaceState,
+} from "$lib/project/io/workspace";
 import {
   settleProjectWorkspaceMutation,
   type WorkspaceMutationSettlement,
@@ -8,23 +10,23 @@ import {
   type PreviewStructuralSessionHost,
   type PreviewStructuralSessionLease,
 } from "$lib/kernel/preview-structural-lane";
+import type { LocalizedDiagnostic } from "$lib/contracts/localized-diagnostic";
+import type { EditorMoveExecutionReceipt } from "$lib/editor/contracts";
+import type { PreviewProjectionDiagnostic } from "$lib/preview/contracts";
 import type {
+  CanvasPatch,
   PreviewHtmlAttributesExecutionReceipt,
   PreviewHtmlDeleteExecutionReceipt,
   PreviewHtmlDuplicateExecutionReceipt,
   PreviewHtmlInsertDropExecutionReceipt,
   PreviewHtmlTagExecutionReceipt,
   PreviewHtmlTextExecutionReceipt,
-  PreviewProjectionDiagnostic,
   PreviewSelectionBatchExecutionReceipt,
   PreviewTeraDeleteExecutionReceipt,
   PreviewTeraInsertDropExecutionReceipt,
-  EditorMoveExecutionReceipt,
-  CanvasPatch,
-  LocalizedDiagnostic,
-  ProjectWorkspaceMutationReceipt,
-} from "$lib/types";
-import { PROJECT_WORKSPACE_SCHEMA_VERSION } from "$lib/types";
+} from "$lib/preview/contracts";
+import type { ProjectWorkspaceMutationReceipt } from "$lib/project/workspace-contract";
+import { PROJECT_WORKSPACE_SCHEMA_VERSION } from "$lib/project/workspace-contract";
 import { t } from "$lib/i18n/runtime.svelte";
 import { errorMessage } from "$lib/util";
 

@@ -1,11 +1,11 @@
 import { isZolaTemplatePath, zolaRelativePath } from "$lib/project/files";
+import type { PageSection } from "$lib/canvas/contracts";
+import type { SourceGraph } from "$lib/source-graph/graph-contract";
+import type { SourceEditLocation } from "$lib/source-graph/contracts";
 import type {
-  PageSection,
-  SourceEditLocation,
   SourceEditTarget,
-  SourceGraph,
   SourceGraphNode,
-} from "$lib/types";
+} from "$lib/source-graph/contracts";
 
 export function parseSourceEditLocation(source: string | null | undefined): SourceEditLocation | null {
   if (!source) return null;
@@ -35,24 +35,6 @@ export function formatSourceEditLocation(source: SourceEditLocation) {
   return typeof source.column === "number"
     ? `${source.file}:${source.line}:${source.column}`
     : `${source.file}:${source.line}`;
-}
-
-export function normalizeSourceEditLocation(value: unknown): SourceEditLocation | null {
-  if (!value) return null;
-  if (typeof value === "string") return parseSourceEditLocation(value);
-  if (typeof value !== "object") return null;
-
-  const data = value as Record<string, unknown>;
-  const file = typeof data.file === "string" ? data.file.trim() : "";
-  const line = typeof data.line === "number" ? data.line : Number(data.line);
-  const column = typeof data.column === "number" ? data.column : Number(data.column);
-
-  if (!file || !Number.isFinite(line) || line <= 0) return null;
-  return {
-    file,
-    line,
-    column: Number.isFinite(column) && column > 0 ? column : undefined,
-  };
 }
 
 export function sourceNodeById(
@@ -104,14 +86,6 @@ export function resolveSourceEditTargetForSourceId(
   sourceId: string | null | undefined,
 ): SourceEditTarget | null {
   return sourceEditTargetFromSourceNode(sourceNodeById(graph, sourceId));
-}
-
-export function formatSourceEditTarget(target: SourceEditTarget) {
-  return formatSourceEditLocation(target.location);
-}
-
-export function sourceLocationForEditTarget(target: SourceEditTarget): SourceEditLocation {
-  return target.location;
 }
 
 export function hydratePageSectionSources(

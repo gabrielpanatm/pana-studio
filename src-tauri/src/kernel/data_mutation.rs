@@ -224,7 +224,7 @@ pub fn stage_validated_data_mutation(
         transaction_id: None,
     };
 
-    let mut candidate = workspace.clone();
+    let mut candidate = workspace.fork_candidate();
     let candidate_identity = current_identity(&candidate);
     candidate.stage_resource_texts(
         &candidate_identity,
@@ -1177,7 +1177,7 @@ mod tests {
                     size: source.len() as u64,
                     readonly: false,
                 },
-                baseline_text: source,
+                baseline_text: source.into(),
                 draft: None,
                 revision: 1,
             });

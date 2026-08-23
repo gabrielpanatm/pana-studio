@@ -14,29 +14,35 @@
     IconX,
   } from "@tabler/icons-svelte";
   import {
-    applyTaxonomyMutation,
-    planTaxonomyMutation,
-    readTaxonomyCatalog,
-  } from "$lib/project/io";
+  applyTaxonomyMutation,
+  planTaxonomyMutation,
+  readTaxonomyCatalog,
+} from "$lib/taxonomies/io";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract";
   import type {
-    FileBufferRequestIdentity,
     TaxonomyCatalogEntry,
     TaxonomyCatalogSnapshot,
     TaxonomyCatalogTemplate,
     TaxonomyCatalogTerm,
     TaxonomyDefinitionInput,
     TaxonomyMutationInput,
-  } from "$lib/types";
+  } from "$lib/taxonomies/contracts";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    globalStatus,
+    workspaceMutations,
+    openTemplates,
+    openInBrowser,
     openWorkspaceSource,
   }: {
-    app: AppState;
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    openTemplates: () => void | Promise<void>;
+    openInBrowser: (route: string) => void | Promise<void>;
     openWorkspaceSource: (path: string) => void | Promise<void>;
   } = $props();
 
@@ -100,9 +106,9 @@
   });
 
   $effect(() => {
-    const root = app.sessionProjectRoot.trim();
-    const sessionId = app.kernelProjectSessionId.trim();
-    const revision = app.projectWorkspaceSnapshot?.revision ?? 0;
+    const root = workspaceMutations.snapshot?.projectRoot.trim() ?? "";
+    const sessionId = workspaceMutations.snapshot?.runtimeSessionId.trim() ?? "";
+    const revision = workspaceMutations.snapshot?.revision ?? 0;
     const key = `${root}:${sessionId}:${revision}`;
     if (!root || !sessionId || loading || busy || loadedKey === key) return;
     loadedKey = key;
@@ -110,13 +116,13 @@
   });
 
   function currentCatalogKey() {
-    return `${app.sessionProjectRoot.trim()}:${app.kernelProjectSessionId.trim()}:${app.projectWorkspaceSnapshot?.revision ?? 0}`;
+    return `${workspaceMutations.snapshot?.projectRoot.trim() ?? ""}:${workspaceMutations.snapshot?.runtimeSessionId.trim() ?? ""}:${workspaceMutations.snapshot?.revision ?? 0}`;
   }
 
   async function loadCatalog(
-    root = app.sessionProjectRoot,
-    sessionId = app.kernelProjectSessionId,
-    expectedWorkspaceRevision = app.projectWorkspaceSnapshot?.revision ?? 0,
+    root = workspaceMutations.snapshot?.projectRoot ?? "",
+    sessionId = workspaceMutations.snapshot?.runtimeSessionId ?? "",
+    expectedWorkspaceRevision = workspaceMutations.snapshot?.revision ?? 0,
   ) {
     loading = true;
     loadError = "";
@@ -126,9 +132,9 @@
         expectedSessionId: sessionId,
       }, expectedWorkspaceRevision);
       if (
-        root !== app.sessionProjectRoot
-        || sessionId !== app.kernelProjectSessionId
-        || app.projectWorkspaceSnapshot?.revision !== expectedWorkspaceRevision
+        root !== (workspaceMutations.snapshot?.projectRoot ?? "")
+        || sessionId !== (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+        || workspaceMutations.snapshot?.revision !== expectedWorkspaceRevision
       ) return;
       catalog = snapshot;
       taxonomyRootDraft = snapshot.taxonomyRoot ?? "";
@@ -137,11 +143,17 @@
         selectedTermId = null;
       }
     } catch (error) {
-      if (root === app.sessionProjectRoot && sessionId === app.kernelProjectSessionId) {
+      if (
+        root === (workspaceMutations.snapshot?.projectRoot ?? "")
+        && sessionId === (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+      ) {
         loadError = errorMessage(error);
       }
     } finally {
-      if (root === app.sessionProjectRoot && sessionId === app.kernelProjectSessionId) {
+      if (
+        root === (workspaceMutations.snapshot?.projectRoot ?? "")
+        && sessionId === (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+      ) {
         loading = false;
       }
     }
@@ -149,8 +161,8 @@
 
   function identity(): FileBufferRequestIdentity {
     return {
-      expectedProjectRoot: app.sessionProjectRoot,
-      expectedSessionId: app.kernelProjectSessionId,
+      expectedProjectRoot: workspaceMutations.snapshot?.projectRoot ?? "",
+      expectedSessionId: workspaceMutations.snapshot?.runtimeSessionId ?? "",
     };
   }
 
@@ -166,17 +178,17 @@
       const commandIdentity = identity();
       const plan = await planTaxonomyMutation(input, commandIdentity);
       if (
-        commandIdentity.expectedProjectRoot !== app.sessionProjectRoot
-        || commandIdentity.expectedSessionId !== app.kernelProjectSessionId
+        commandIdentity.expectedProjectRoot !== (workspaceMutations.snapshot?.projectRoot ?? "")
+        || commandIdentity.expectedSessionId !== (workspaceMutations.snapshot?.runtimeSessionId ?? "")
       ) return false;
       const receipt = await applyTaxonomyMutation(input, plan.planId, commandIdentity);
-      const settlement = await settleProjectWorkspaceMutation(app, receipt.workspace, {
+      const settlement = await workspaceMutations.settle(receipt.workspace, {
         preferredRelativePath: preferredPath,
         warningLabel: t("taxonomies-operation-label"),
       });
       loadedKey = currentCatalogKey();
       await loadCatalog();
-      app.setGlobalStatus(
+      globalStatus.set(
         settlement.warnings.length > 0
           ? t("taxonomies-operation-session-warning", { message: successMessage })
           : t("taxonomies-operation-session-success", { message: successMessage }),
@@ -186,7 +198,7 @@
     } catch (error) {
       const message = errorMessage(error);
       formError = message;
-      app.setGlobalStatus(t("taxonomies-operation-failed", { message }), "error");
+      globalStatus.set(t("taxonomies-operation-failed", { message }), "error");
       return false;
     } finally {
       busy = false;
@@ -341,7 +353,7 @@
   async function openTemplate(template: TaxonomyCatalogTemplate) {
     if (!template.file) return;
     await openWorkspaceSource(template.file);
-    await app.setWorkbenchActivity("templates");
+    await openTemplates();
   }
 
   function templateOrigin(template: TaxonomyCatalogTemplate) {
@@ -529,7 +541,7 @@
               language: selected.language,
             })}</span>
             <h2>{selectedTerm.name}</h2>
-            <a href={selectedTerm.permalink} onclick={(event) => { event.preventDefault(); void app.openCurrentProjectInBrowser(selectedTerm.path); }}>
+            <a href={selectedTerm.permalink} onclick={(event) => { event.preventDefault(); void openInBrowser(selectedTerm.path); }}>
               {selectedTerm.path} <IconExternalLink size={13} />
             </a>
           </div>
@@ -573,7 +585,7 @@
               ? t("taxonomies-definition")
               : t("taxonomies-undeclared-use")} · {selected.language}</span>
             <h2>{selected.name}</h2>
-            <a href={selected.permalink} onclick={(event) => { event.preventDefault(); void app.openCurrentProjectInBrowser(selected.path); }}>
+            <a href={selected.permalink} onclick={(event) => { event.preventDefault(); void openInBrowser(selected.path); }}>
               {selected.path} <IconExternalLink size={13} />
             </a>
           </div>

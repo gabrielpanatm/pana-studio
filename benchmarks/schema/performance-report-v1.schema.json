@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pana.invalid/schemas/performance-report-v1.schema.json",
+  "title": "Pană Studio performance report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "benchmarkIdentity",
+    "rawSampleCount",
+    "summaries",
+    "aspirationalBudgets",
+    "budgetFailureCount",
+    "comparisonBaseline",
+    "comparisons",
+    "regressionCount"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "benchmarkIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "sampleSchemaVersion",
+        "suite",
+        "runId",
+        "fixtureSha256",
+        "environment"
+      ],
+      "properties": {
+        "protocolVersion": { "enum": [1, 2] },
+        "sampleSchemaVersion": { "const": 1 },
+        "suite": { "enum": ["smoke", "standard", "soak"] },
+        "runId": { "type": "string", "minLength": 1 },
+        "fixtureSha256": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rustcVersion",
+            "cargoVersion",
+            "nodeVersion",
+            "zolaVersion",
+            "kernel",
+            "cpuModel",
+            "logicalCpuCount",
+            "memoryTotalKib",
+            "cpuGovernors"
+          ],
+          "properties": {
+            "rustcVersion": { "type": ["string", "null"] },
+            "cargoVersion": { "type": ["string", "null"] },
+            "nodeVersion": { "type": ["string", "null"] },
+            "zolaVersion": { "type": ["string", "null"] },
+            "kernel": { "type": ["string", "null"] },
+            "cpuModel": { "type": ["string", "null"] },
+            "logicalCpuCount": { "type": "integer", "minimum": 1 },
+            "memoryTotalKib": { "type": ["integer", "null"], "minimum": 0 },
+            "cpuGovernors": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "rawSampleCount": { "type": "integer", "minimum": 0 },
+    "summaries": { "type": "array", "items": { "$ref": "#/$defs/summary" } },
+    "aspirationalBudgets": { "type": "array", "items": { "type": "object" } },
+    "budgetFailureCount": { "type": "integer", "minimum": 0 },
+    "comparisonBaseline": { "type": ["string", "null"] },
+    "comparisons": { "type": "array", "items": { "type": "object" } },
+    "regressionCount": { "type": "integer", "minimum": 0 }
+  },
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": [
+        "layer",
+        "scenario",
+        "profile",
+        "mode",
+        "metric",
+        "distribution",
+        "failedSamples"
+      ],
+      "properties": {
+        "layer": { "type": "string", "minLength": 1 },
+        "scenario": { "type": "string", "minLength": 1 },
+        "profile": { "type": "string", "minLength": 1 },
+        "mode": { "type": "string", "minLength": 1 },
+        "metric": { "type": "string", "minLength": 1 },
+        "distribution": { "type": "object" },
+        "failedSamples": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,5 +1,4 @@
 workbench-editor = Editor
-workbench-themes = Teme
 workbench-templates = Șabloane
 workbench-components = Componente
 workbench-blocks = Blocuri
@@ -510,29 +509,8 @@ page-contract-css-updated = Contractul CSS a fost actualizat în sesiunea proiec
 page-contract-asset-session-changed = Contractul Page Asset a fost anulat deoarece ProjectSession s-a schimbat.
 page-js-draft-identity-invalid = Sincronizarea ciornei Page JS a refuzat o identitate de sesiune incompletă.
 page-js-draft-receipt-session-mismatch = Sincronizarea ciornei Page JS a refuzat confirmarea altei sesiuni: așteptat { $expectedRoot }/{ $expectedSession }, primit { $actualRoot }/{ $actualSession }.
-page-js-draft-session-missing = Sincronizarea ciornei Page JS nu are o ProjectSession runtime activă.
 page-js-command-session-missing = Page JS cere ProjectRoot și runtimeSessionId active.
 dirty-state-save-or-discard = Salvează sau renunță la modificările curente înainte de operații directe pe disc.
-disk-state-counts =
-    { $files ->
-        [one] { $files } fișier
-        [few] { $files } fișiere
-       *[other] { $files } de fișiere
-    } /
-    { $directories ->
-        [one] { $directories } dosar
-        [few] { $directories } dosare
-       *[other] { $directories } de dosare
-    }
-disk-state-not-scanned = nescanat
-disk-state-last-mutation = { $kind }{ $path }
-disk-state-no-mutations = fără mutații
-disk-state-mutation-scan = scanare
-disk-state-mutation-save = salvare
-disk-state-mutation-delete = ștergere
-disk-state-mutation-move = mutare
-disk-state-mutation-rename = redenumire
-disk-state-mutation-discard = renunțare
 file-buffer-sync-session-missing = [file_buffer_identity_invalid] Sincronizarea ciornei FileBuffer nu are o sesiune activă.
 file-buffer-sync-frontend-discontinuity = [file_buffer_frontend_discontinuity] Coada FileBuffer a refuzat o tranziție necontinuă pentru { $path }: hash-ul ultimei destinații frontend ({ $expectedHash }) diferă de baza noului eveniment ({ $actualHash }). Textul nou a rămas numai în editor; salvarea este blocată.
 file-buffer-sync-failures = FileBufferStore nu a putut sincroniza ciornele active. { $details }
@@ -540,14 +518,6 @@ file-buffer-sync-invalid-cursor = [file_buffer_invalid_cursor] Cursorul FileBuff
 file-buffer-sync-history-rebase-pending = [file_buffer_history_rebase_pending] Proiecția FileBuffer pentru { $path } nu poate fi rebazată cât timp coada de ciorne este activă.
 file-buffer-sync-history-path-mismatch = [file_buffer_invalid_history_projection] Instantaneul cerut pentru { $path } declară calea { $actualPath }.
 file-buffer-sync-history-metadata-mismatch = [file_buffer_invalid_history_projection] Instantaneul pentru { $path } are hash/bytes/revision { $hash }/{ $bytes }/{ $revision }, dar textul său confirmă { $calculatedHash }/{ $calculatedBytes }.
-file-buffer-sync-buffer-advanced = Bufferul a avansat de la revision/hash { $previousRevision }/{ $previousHash } la { $revision }/{ $hash }.
-file-buffer-sync-base-hash-mismatch = Sincronizarea a observat hash-ul { $hash }, diferit de baza frontend { $baseHash }.
-file-buffer-sync-clear-stale = Ștergerea ciornei a observat revision/hash { $revision }/{ $hash }, dar ultima stare confirmată era { $previousRevision }/{ $previousHash }.
-file-buffer-sync-receipt-path-mismatch = [file_buffer_invalid_receipt] FileBufferStore a returnat calea { $actualPath } pentru cererea { $path }.
-file-buffer-sync-read-metadata-mismatch = [file_buffer_invalid_receipt] Confirmarea citirii pentru { $path } are hash/bytes/revision inconsistente { $hash }/{ $bytes }/{ $revision }; textul calculează { $calculatedHash }/{ $calculatedBytes }.
-file-buffer-sync-set-receipt-mismatch = [file_buffer_invalid_receipt] Confirmarea setării ciornei pentru { $path } nu dovedește starea cerută: erau așteptate hash/bytes { $expectedHash }/{ $expectedBytes } după revizia { $expectedRevision }, s-au primit { $actualHash }/{ $actualBytes }/{ $actualRevision }.
-file-buffer-sync-clear-receipt-mismatch = [file_buffer_invalid_receipt] Confirmarea ștergerii ciornei pentru { $path } nu dovedește un buffer curat la sau după revizia { $expectedRevision }.
-file-buffer-sync-full-draft-conflict = [file_buffer_draft_cas_conflict] FileBufferStore a blocat mutația full-draft/clear pentru { $path }; suprascrierea fără CAS este interzisă. { $diagnostic }
 file-buffer-sync-frontend-hash-mismatch = Hash-ul textului frontend ({ $frontendHash }) nu corespunde bufferului confirmat ({ $confirmedHash }).
 file-buffer-sync-revalidation-failed = { $message } Revalidarea bufferului a eșuat: { $refreshMessage }
 file-buffer-sync-buffer-revision-advanced = { $message } Bufferul a avansat la revizia { $revision }, cu un hash diferit ({ $hash }).
@@ -577,7 +547,6 @@ io-taxonomy-catalog-identity-invalid = [taxonomy_catalog_identity_invalid] Catal
 io-workspace-catalog-identity-invalid = { $resource } a returnat o identitate ProjectWorkspace invalidă.
 io-workspace-catalog-revision-mismatch = { $resource } a proiectat revizia { $actual }, nu revizia cerută { $expected }.
 io-data-node-selection-mismatch = Instantaneul nodului TOML nu corespunde selecției curente.
-io-block-runtime-session-mismatch = Instantaneul blocurilor din CanvasGraph nu aparține sesiunii curente.
 io-ui-block-graph-session-mismatch = UiBlockGraph nu aparține sesiunii curente.
 io-project-file-identity-invalid = [project_file_identity_invalid] Operația pe fișier cere rădăcina proiectului și ID-ul sesiunii runtime.
 io-project-file-stale-receipt = [project_file_stale_receipt] Confirmare depășită pentru { $operation }: se așteptau { $expectedRoot }/{ $expectedSession }, s-au primit { $actualRoot }/{ $actualSession }.
@@ -680,8 +649,6 @@ command-center-command-show-code-title = Arată codul sursă
 command-center-command-show-code-subtitle = Deschide sursa documentului activ
 command-center-activity-editor-title = Editor
 command-center-activity-editor-subtitle = Documente, previzualizare și cod sursă
-command-center-activity-themes-title = Teme
-command-center-activity-themes-subtitle = Catalogul inclus de teme Zola instalabile și activabile
 command-center-activity-templates-title = Șabloane
 command-center-activity-templates-subtitle = Pagini, layouturi, fragmente și macrocomenzi Tera
 command-center-activity-components-title = Componente
@@ -740,4 +707,3 @@ wal-item-diagnostic = Această operație de scriere necesită revizuire pentru r
 workbench-resize-left-panel = Redimensionează panoul proiectului
 workbench-resize-right-panel = Redimensionează panoul Inspector
 context-menu-label = Meniu contextual
-html-mutation-kernel-planned-draft = Ciornă de template planificată de Rust

@@ -9,7 +9,6 @@
     IconForms,
     IconGitBranch,
     IconPhoto,
-    IconPalette,
     IconRocket,
     IconSettings,
     IconShieldCheck,
@@ -17,7 +16,7 @@
     IconTemplate,
     IconTerminal2,
   } from "@tabler/icons-svelte";
-  import type { WorkbenchActivity } from "$lib/types";
+  import type { WorkbenchActivity } from "$lib/workbench/contracts";
   import { t } from "$lib/i18n/runtime.svelte";
   import { UI_TERM_IDS } from "$lib/i18n/ui-terms";
 
@@ -46,7 +45,6 @@
 
   const activities = $derived<ActivityEntry[]>([
     { id: "editor", label: t(UI_TERM_IDS.editor) },
-    { id: "themes", label: t(UI_TERM_IDS.themes) },
     { id: "templates", label: t(UI_TERM_IDS.templates) },
     { id: "components", label: t(UI_TERM_IDS.components) },
     { id: "blocks", label: t(UI_TERM_IDS.blocks) },
@@ -76,8 +74,6 @@
       >
         {#if activity.id === "editor"}
           <IconCodeDots size={19} stroke={1.8} />
-        {:else if activity.id === "themes"}
-          <IconPalette size={19} stroke={1.8} />
         {:else if activity.id === "templates"}
           <IconTemplate size={19} stroke={1.8} />
         {:else if activity.id === "components"}

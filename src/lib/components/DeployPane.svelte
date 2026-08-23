@@ -5,23 +5,32 @@
   } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import {
-    readProjectConfiguration,
-    saveProjectConfiguration,
-    zolaBuild,
-    cancelPublishOperation,
-  } from "$lib/project/io";
+  readProjectConfiguration,
+  saveProjectConfiguration,
+} from "$lib/project/io/configuration";
+import {
+  zolaBuild,
+} from "$lib/project/io/zola";
+import {
+  cancelPublishOperation,
+} from "$lib/deploy/io";
   import {
     projectSettingsDraftFromSnapshot,
     projectSettingsFromDraft,
     createDefaultZolaSettings,
     textFieldsFromZolaSettings,
     zolaSettingsWithTextFields,
-    type ProjectSettingsSnapshot,
   } from "$lib/project/deploy-settings";
   import DeployTargetsPanel from "$lib/components/deploy/DeployTargetsPanel.svelte";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
-  import type { ZolaProjectSettings } from "$lib/types";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type {
+    PublishBuildReceipt,
+    PublishPreflightReceipt,
+  } from "$lib/deploy/contracts";
+  import type {
+    ProjectSettingsSnapshot,
+    ZolaProjectSettings,
+  } from "$lib/project/lifecycle-contract";
   import { errorMessage } from "$lib/util";
 
   let {
@@ -31,7 +40,10 @@
     actionsOnly = false,
     projectRoot = "",
     runtimeSessionId = "",
-    app = undefined as AppState | undefined,
+    publishPreflight = null as PublishPreflightReceipt | null,
+    publishBuild = null as PublishBuildReceipt | null,
+    invalidatePublishAuthorization = () => {},
+    buildForPublish = undefined as (() => Promise<PublishBuildReceipt>) | undefined,
     onStatusUpdate = undefined as ((text: string, kind: string) => void) | undefined,
     onCachebustAssetsChange = undefined as ((value: boolean) => void) | undefined,
   }: {
@@ -41,7 +53,10 @@
     actionsOnly?: boolean;
     projectRoot?: string;
     runtimeSessionId?: string;
-    app?: AppState;
+    publishPreflight?: PublishPreflightReceipt | null;
+    publishBuild?: PublishBuildReceipt | null;
+    invalidatePublishAuthorization?: () => void;
+    buildForPublish?: () => Promise<PublishBuildReceipt>;
     onStatusUpdate?: (text: string, kind: string) => void;
     onCachebustAssetsChange?: (value: boolean) => void;
   } = $props();
@@ -63,7 +78,7 @@
   const searchIndexFormatOptions = ["elasticlunr_javascript", "elasticlunr_json", "fuse_javascript", "fuse_json"];
   let actionLog = $state("");
   let actionOk = $state<boolean | null>(null);
-  const publishReady = $derived(app?.currentPublishPreflightReceipt()?.status === "ready");
+  const publishReady = $derived(publishPreflight?.status === "ready");
 
   $effect(() => {
     if (scannedProject) loadConfig();
@@ -83,7 +98,7 @@
       syncTextFields(config.zolaSettings);
       onCachebustAssetsChange?.(config.projectSettings.cachebustAssets);
       configDirty = false;
-      app?.invalidatePublishAuthorization();
+      invalidatePublishAuthorization();
     } catch (e) {
       onStatusUpdate?.(t("deploy-config-load-error", { error: errorMessage(e) }), "error");
     }
@@ -110,7 +125,7 @@
       syncProjectSettings(config.projectSettings);
       syncTextFields(config.zolaSettings);
       configDirty = false;
-      app?.invalidatePublishAuthorization();
+      invalidatePublishAuthorization();
       onCachebustAssetsChange?.(config.projectSettings.cachebustAssets);
       onStatusUpdate?.(t("deploy-config-saved"), "saved");
     } catch (e) {
@@ -151,8 +166,8 @@
     onStatusUpdate?.(t("deploy-build-running-status"), "saving");
     try {
       if (workspaceMode) {
-        if (!app) throw new Error(t("publish-build-requires-preflight"));
-        const receipt = await app.buildForPublish();
+        if (!buildForPublish) throw new Error(t("publish-build-requires-preflight"));
+        const receipt = await buildForPublish();
         actionLog = receipt.log || t("publish-build-receipt-summary", {
           files: receipt.artifactFiles,
           bytes: receipt.artifactBytes,
@@ -227,7 +242,9 @@
     {/if}
 
     <DeployTargetsPanel
-      {app}
+      {publishPreflight}
+      {publishBuild}
+      {invalidatePublishAuthorization}
       {scannedProject}
       {actionsOnly}
       {projectRoot}

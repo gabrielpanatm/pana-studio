@@ -21,7 +21,7 @@
     CommandCenterAction,
     CommandCenterItem,
     CommandCenterSearchResponse,
-  } from "$lib/types";
+  } from "$lib/workbench/contracts";
   import { t } from "$lib/i18n/runtime.svelte";
   import { errorMessage as applicationErrorMessage } from "$lib/util";
 

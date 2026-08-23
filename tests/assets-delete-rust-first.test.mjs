@@ -12,8 +12,8 @@ const explorerKernel = source("../src-tauri/src/kernel/file_explorer.rs");
 const workspace = source("../src-tauri/src/kernel/project_workspace/workspace.rs");
 
 test("Media deletion uses the revision-bound Rust File Explorer plan", () => {
-  assert.match(assets, /app\.planFileExplorerOperation\(\{ kind: "delete", entryId: entry\.id \}\)/);
-  assert.match(assets, /app\.commitFileExplorerOperation\(plan\)/);
+  assert.match(assets, /commands\.planFileExplorer\(\{ kind: "delete", entryId: entry\.id \}\)/);
+  assert.match(assets, /commands\.commitFileExplorer\(plan\)/);
   assert.match(assets, /role="dialog" aria-modal="true"/);
   assert.match(assets, /assets-delete-references-preserved/);
   assert.doesNotMatch(assets, /window\.(?:confirm|prompt)/);
@@ -29,5 +29,5 @@ test("an unsaved binary import can be withdrawn through ProjectWorkspace history
   assert.match(explorerKernel, /staged_size\.or\(accepted_size\)/);
   assert.match(explorerCommand, /accepted_before\.or_else\(\|\| Some\(current\.clone\(\)\)\)/);
   assert.match(workspace, /staged_before_matches/);
-  assert.match(workspace, /next_resources\.remove\(&normalized\)/);
+  assert.match(workspace, /Arc::make_mut\(&mut next_resources\)\.remove\(&normalized\)/);
 });

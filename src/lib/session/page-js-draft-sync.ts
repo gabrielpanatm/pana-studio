@@ -1,11 +1,11 @@
-import { clearPageJsDraft, stagePageJsDraft } from "$lib/project/io";
+import { clearPageJsDraft, stagePageJsDraft } from "$lib/js/io";
 import { createLatestWinsAsyncQueue } from "$lib/session/latest-wins-async-queue";
 import { normalizePageJsTemplatePath } from "$lib/js/page-path";
 import type {
   PageJsDraftSessionIdentity,
   PageJsDraftStageInput,
   PageJsDraftStageReceipt,
-} from "$lib/types";
+} from "$lib/js/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
 
 const PAGE_JS_DRAFT_SYNC_DELAY_MS = 180;
@@ -117,41 +117,16 @@ function isActiveIdentity(identity: PageJsDraftSyncIdentity) {
     && activeIdentity.expectedSessionId === identity.expectedSessionId;
 }
 
-function requireActiveIdentity(): PageJsDraftSyncIdentity {
-  if (!activeIdentity) {
-    throw new Error(t("page-js-draft-session-missing"));
-  }
-  return { ...activeIdentity };
-}
-
 const pageJsDraftSync = createPageJsDraftSyncQueue({
   stage: (input, identity) => stagePageJsDraft(input, identity),
   clear: (templatePath, identity) => clearPageJsDraft(templatePath, null, identity),
 }, PAGE_JS_DRAFT_SYNC_DELAY_MS, isActiveIdentity);
 
-export function queuePageJsDraftSync(input: PageJsDraftStageInput) {
-  const templatePath = normalizePageJsTemplatePath(input.templatePath);
-  if (!templatePath) return;
-  const identity = requireActiveIdentity();
-  pageJsDraftSync.enqueue({
-    kind: "stage",
-    templatePath,
-    identity,
-    input: {
-      ...input,
-      templatePath,
-    },
-  });
-}
-
-export function queuePageJsDraftClear(templatePath: string) {
-  const canonicalPath = normalizePageJsTemplatePath(templatePath);
-  if (!canonicalPath) return;
-  pageJsDraftSync.enqueue({
-    kind: "clear",
-    templatePath: canonicalPath,
-    identity: requireActiveIdentity(),
-  });
+export function hasPendingPageJsDraftSync() {
+  const snapshot = pageJsDraftSync.snapshot();
+  return snapshot.pendingCount > 0
+    || snapshot.inFlight
+    || snapshot.failureCount > 0;
 }
 
 export async function flushPageJsDraftSync(options: { throwOnFailure?: boolean } = {}) {
@@ -184,12 +159,5 @@ export function setPageJsDraftSyncSession(
     expectedProjectRoot: nextProjectRoot,
     expectedSessionId: nextRuntimeSessionId,
     generation: identityGeneration,
-  };
-}
-
-export function pageJsDraftSyncSnapshot() {
-  return {
-    ...pageJsDraftSync.snapshot(),
-    identity: activeIdentity ? { ...activeIdentity } : null,
   };
 }

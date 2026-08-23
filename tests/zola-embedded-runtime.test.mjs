@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
 
@@ -15,15 +15,20 @@ test("Zola runtime has no executable, resolver, sidecar or exposed path", () => 
     false,
   );
 
+  const projectCommandCorpus = readdirSync(
+    resolve(repoRoot, "src-tauri/src/commands/project"),
+  )
+    .filter((entry) => entry.endsWith(".rs"))
+    .map((entry) => source(`src-tauri/src/commands/project/${entry}`));
   const runtimeCorpus = [
     source("src-tauri/src/lib.rs"),
     source("src-tauri/src/state.rs"),
-    source("src-tauri/src/commands/project.rs"),
+    ...projectCommandCorpus,
     source("src-tauri/src/commands/deploy.rs"),
     source("src-tauri/tauri.conf.json"),
-    source("src/lib/project/io.ts"),
-    source("src/lib/state/app.svelte.ts"),
-    source("src/lib/state/terminal-quick-task-controller.ts"),
+    source("src/lib/project/io/zola.ts"),
+    source("src/lib/application/composition.svelte.ts"),
+    source("src/lib/terminal/workspace.svelte.ts"),
   ].join("\n");
   assert.doesNotMatch(
     runtimeCorpus,
@@ -53,9 +58,12 @@ test("init, validation, build and quick tasks use only embedded engine contracts
     .split("#[cfg(test)]\nmod tests")[0]
     .replace("#[cfg(test)]\nuse std::fs;", "");
   const writeCapability = source("src-tauri/src/kernel/write_authority/capability.rs");
+  const writeCapabilityLinux = source(
+    "src-tauri/src/kernel/write_authority/capability/platform/linux/atomic_commit.rs",
+  );
   const preview = source("src-tauri/src/preview/engine.rs").split("#[cfg(test)]")[0];
   const terminal = source("src/lib/terminal/runtime.ts");
-  const terminalController = source("src/lib/state/terminal-quick-task-controller.ts");
+  const terminalController = source("src/lib/terminal/workspace.svelte.ts");
 
   assert.match(initializer, /apply_creation/);
   assert.match(initializer, /ProjectCreationAuthority/);
@@ -70,7 +78,7 @@ test("init, validation, build and quick tasks use only embedded engine contracts
   assert.match(build, /ZolaArtifactPublicationLease/);
   assert.doesNotMatch(buildRuntime, /fs::rename|fs::remove_dir_all|renameat_with/);
   assert.match(writeCapability, /publish_rebuildable_directory/);
-  assert.match(writeCapability, /RenameFlags::EXCHANGE/);
+  assert.match(writeCapabilityLinux, /RenameFlags::EXCHANGE/);
   assert.match(build, /process_images/);
   assert.match(preview, /with_zola_engine/);
   assert.doesNotMatch(preview, /std::process|Command::new/);

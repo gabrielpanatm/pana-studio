@@ -1279,10 +1279,10 @@ mod tests {
         let root = fixture_root("aliases");
         fs::create_dir_all(root.join("static/fonturi")).expect("font dir");
         let inter = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/inter-400-700-latin-ext.woff2"
+            "../../resources/project-starters/cadru/project/static/fonturi/inter-400-700-latin-ext.woff2"
         );
         let poppins = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/poppins-600-latin-ext.woff2"
+            "../../resources/project-starters/cadru/project/static/fonturi/poppins-600-latin-ext.woff2"
         );
         fs::write(root.join("static/fonturi/inter.woff2"), inter).expect("inter");
         fs::write(root.join("static/fonturi/poppins.woff2"), poppins).expect("poppins");
@@ -1314,10 +1314,10 @@ mod tests {
         fs::create_dir_all(root.join("static/fonturi/regular")).expect("regular dir");
         fs::create_dir_all(root.join("static/fonturi/bold")).expect("bold dir");
         let regular = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/poppins-600-latin-ext.woff2"
+            "../../resources/project-starters/cadru/project/static/fonturi/poppins-600-latin-ext.woff2"
         );
         let bold = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/poppins-700-latin-ext.woff2"
+            "../../resources/project-starters/cadru/project/static/fonturi/poppins-700-latin-ext.woff2"
         );
         fs::write(root.join("static/fonturi/regular/display.woff2"), regular).expect("regular");
         fs::write(root.join("static/fonturi/bold/display.woff2"), bold).expect("bold");
@@ -1348,14 +1348,14 @@ mod tests {
         fs::write(
             root.join("static/fonturi/primary.woff2"),
             include_bytes!(
-                "../../resources/theme-packs/cadru/theme/static/fonturi/inter-400-700-latin-ext.woff2"
+                "../../resources/project-starters/cadru/project/static/fonturi/inter-400-700-latin-ext.woff2"
             ),
         )
         .expect("local font");
         fs::write(
             root.join("themes/demo/static/fonturi/primary.woff2"),
             include_bytes!(
-                "../../resources/theme-packs/cadru/theme/static/fonturi/poppins-600-latin-ext.woff2"
+                "../../resources/project-starters/cadru/project/static/fonturi/poppins-600-latin-ext.woff2"
             ),
         )
         .expect("theme font");
@@ -1382,10 +1382,10 @@ mod tests {
     #[test]
     fn variable_and_italic_descriptors_are_validated_against_opentype() {
         let inter = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/inter-400-700-latin-ext.woff2"
+            "../../resources/project-starters/cadru/project/static/fonturi/inter-400-700-latin-ext.woff2"
         );
         let poppins = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/poppins-600-latin-ext.woff2"
+            "../../resources/project-starters/cadru/project/static/fonturi/poppins-600-latin-ext.woff2"
         );
         let css = r#"
           @font-face { font-family: 'Primary'; src: url('/fonturi/inter.woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }
@@ -1429,7 +1429,7 @@ mod tests {
     #[test]
     fn duplicate_binary_content_is_reported_across_distinct_paths() {
         let inter = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/inter-400-700-latin-ext.woff2"
+            "../../resources/project-starters/cadru/project/static/fonturi/inter-400-700-latin-ext.woff2"
         );
         let css = r#"
           @font-face { font-family: 'Primary'; src: url('/fonturi/regular.woff2'); font-weight: 400; }
@@ -1481,7 +1481,7 @@ mod tests {
     #[test]
     fn unresolved_fallback_does_not_hide_a_viable_face_source() {
         let inter = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/inter-400-700-latin-ext.woff2"
+            "../../resources/project-starters/cadru/project/static/fonturi/inter-400-700-latin-ext.woff2"
         );
         let css = "@font-face { font-family: 'Primary'; src: url('/fonturi/missing.woff2') format('woff2'), url('/fonturi/inter.woff2') format('woff2'); font-display: swap; }";
         let graph = build_font_face_graph(
@@ -1499,12 +1499,12 @@ mod tests {
     }
 
     #[test]
-    fn bundled_theme_font_contracts_match_opentype_and_cover_romanian() {
-        let resources = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/theme-packs");
+    fn bundled_starter_font_contracts_match_opentype_and_cover_romanian() {
+        let resources = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/project-starters");
         for pack in ["cadru", "nord", "pana-studio", "radacini"] {
-            let root = resources.join(pack).join("theme");
+            let root = resources.join(pack).join("project");
             let stylesheet = "sass/css-framework/_baza.scss";
-            let source = fs::read_to_string(root.join(stylesheet)).expect("theme stylesheet");
+            let source = fs::read_to_string(root.join(stylesheet)).expect("starter stylesheet");
             let graph = build_font_face_graph(
                 &root,
                 [(stylesheet, source.as_str())].into_iter(),

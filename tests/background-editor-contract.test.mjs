@@ -28,17 +28,16 @@ test("gradient editor separates live drag from its final commit and supports the
   assert.match(editor, /if \(commit\) onsourcecommit\(source\)/);
   assert.match(editor, /\.gradient-stop\.active \{ z-index: 4; \}/);
 });
-
 test("background structural actions use one batched CSS mutation", () => {
   const section = source("src/lib/components/inspector/sections/BackgroundSection.svelte");
-  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const queue = source("src/lib/inspector/css-inspector-mutation-queue.ts");
 
   assert.match(section, /serializeBackgroundLonghands\(next\)/);
   assert.match(section, /edit\.draftMany\(properties\)/);
   assert.match(section, /edit\.commitMany\(properties\)/);
-  assert.match(inspector, /const nextPendingValues = \{ \.\.\.pendingValues, \.\.\.properties \}/);
-  assert.match(inspector, /onLivePropertiesChange\?\.\([\s\S]*nextPendingValues/);
-  assert.match(inspector, /for \(const \[property, value\] of entries\)[\s\S]*stageCssRuleMutation/);
+  assert.match(queue, /const nextPendingValues = \{ \.\.\.this\.state\.pendingValues, \.\.\.properties \}/);
+  assert.match(queue, /applyLiveProperties\?\.\([\s\S]*nextPendingValues/);
+  assert.match(queue, /for \(const \[property, value\] of entries\)[\s\S]*this\.stage/);
 });
 
 test("background source synchronization never tracks the local state it replaces", () => {
@@ -52,15 +51,17 @@ test("background source synchronization never tracks the local state it replaces
 });
 
 test("CSS authority releases the inspector queue before canonical preview settlement", () => {
-  const app = source("src/lib/state/app.svelte.ts");
+  const templateWorkbench = source("src/lib/project/template-workbench-service.ts");
+  const editorSelection = source("src/lib/state/editor-selection-session.svelte.ts");
+  const controller = source("src/lib/state/inspector-css-controller.ts");
   const settlement = source("src/lib/session/workspace-mutation-coordinator.ts");
 
   assert.match(
-    app,
-    /this\.projectWorkspaceSnapshot = currentWorkspace;[\s\S]*void this\.settleCommittedInspectorCssProjection/,
+    controller,
+    /host\.acceptWorkspace\(currentWorkspace\);[\s\S]*void settleCommittedInspectorCssProjection/,
   );
   assert.match(
-    app,
+    controller,
     /settleCommittedInspectorCssProjection[\s\S]*const topologyChanged[\s\S]*refreshSourceGraph: topologyChanged,[\s\S]*refreshScss: topologyChanged/,
   );
   assert.match(
@@ -68,15 +69,15 @@ test("CSS authority releases the inspector queue before canonical preview settle
     /alreadyPublishedRevision > workspaceRevision[\s\S]*preview: "superseded"/,
   );
   assert.match(
-    app,
-    /projectWorkspaceSnapshot\?\.revision !== minimumWorkspaceRevision[\s\S]*return false/,
+    templateWorkbench,
+    /project\.workspace\?\.revision !== minimumWorkspaceRevision[\s\S]*return false/,
   );
   assert.match(
-    app,
+    templateWorkbench,
     /expectedWorkspaceRevision: minimumWorkspaceRevision/,
   );
   assert.match(
-    app,
+    editorSelection,
     /projectWorkspaceSnapshot\?\.revision !== identity\.workspaceRevision[\s\S]*return/,
   );
 });

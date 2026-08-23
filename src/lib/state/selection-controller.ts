@@ -1,46 +1,43 @@
 import { getEditableStylesFromObservation } from "$lib/css/matcher";
 import { defaultSelectorForObservation } from "$lib/css/selectors";
+import type { EditableStyles } from "$lib/css/contracts";
 import {
   deriveSelectionEditorState,
 } from "$lib/preview/selection";
 import type {
   CanvasElementObservation,
-  CenterView,
   CoordinatedElementSelection,
-  EditableAttributes,
-  EditableStyles,
-  SourceEditLocation,
-} from "$lib/types";
-import { htmlTextSelectionKey } from "$lib/state/html-draft-controller";
+} from "$lib/canvas/contracts";
+import {
+  htmlTextSelectionKey,
+  type HtmlDraftState,
+} from "$lib/state/html-draft-session.svelte";
+import type { HtmlAuthoringState } from "$lib/editor/html-authoring-state.svelte";
+import type { CssAuthoringState } from "$lib/css/authoring-state.svelte";
 
 export type SelectionControllerHost = {
-  coordinatedElementSelection: CoordinatedElementSelection | null;
-  previewFrame: HTMLIFrameElement | undefined;
-  pendingTag: string | null;
-  pendingTagOriginal: string | null;
-  pendingTagSourceLocation: SourceEditLocation | null;
-  tagStatus: string;
-  overrideRules: Record<string, EditableStyles>;
-  variableOverrides: Record<string, string>;
-  isActivePreviewHtmlSource: boolean;
-  canEditHtml: boolean;
-  htmlSourceMutationBlockedReason: string;
-  classEditorValue: string;
-  imageSourceValue: string;
-  attributeValues: EditableAttributes;
-  textContentValue: string;
-  activeHtmlTextEditKey: string | null;
-  activeHtmlTextEditValue: string | null;
-  variableValues: Record<string, string>;
-  classStatus: string;
-  imageStatus: string;
-  attributeStatus: string;
-  textStatus: string;
-  editableStyles: EditableStyles;
-  centerView: CenterView;
-  getPreviewDocument: () => Document | undefined;
-  postPreviewMessage: (payload: Record<string, unknown>) => void;
-  syncCodeSelectionHighlight: (reveal?: boolean) => void;
+  context: Readonly<{
+    coordinatedSelection: CoordinatedElementSelection | null;
+    activePreviewHtmlSource: boolean;
+    canEditHtml: boolean;
+    mutationBlockedReason: string;
+  }>;
+  html: Pick<
+    HtmlAuthoringState,
+    | "pendingTag"
+    | "pendingTagOriginal"
+    | "pendingTagSourceLocation"
+    | "tagStatus"
+    | "classEditorValue"
+    | "imageSourceValue"
+    | "classStatus"
+    | "imageStatus"
+  >;
+  css: Pick<
+    CssAuthoringState,
+    "overrideRules" | "variableOverrides" | "variableValues" | "editableStyles"
+  >;
+  draft: HtmlDraftState;
 };
 
 export function applySelectionState(
@@ -48,33 +45,33 @@ export function applySelectionState(
   selection: CanvasElementObservation,
   resolvedStyles?: EditableStyles,
 ) {
-  host.pendingTag = null;
-  host.pendingTagOriginal = null;
-  host.pendingTagSourceLocation = null;
-  host.tagStatus = "";
+  host.html.pendingTag = null;
+  host.html.pendingTagOriginal = null;
+  host.html.pendingTagSourceLocation = null;
+  host.html.tagStatus = "";
   const nextCssSelector = defaultSelectorForObservation(selection);
   const editorState = deriveSelectionEditorState(selection, {
-    variableOverrides: host.variableOverrides,
-    canEditHtmlSource: host.isActivePreviewHtmlSource,
-    canEditSemanticSource: host.canEditHtml,
-    blockedReason: host.htmlSourceMutationBlockedReason,
+    variableOverrides: host.css.variableOverrides,
+    canEditHtmlSource: host.context.activePreviewHtmlSource,
+    canEditSemanticSource: host.context.canEditHtml,
+    blockedReason: host.context.mutationBlockedReason,
   });
-  host.classEditorValue = editorState.classEditorValue;
-  host.imageSourceValue = editorState.imageSourceValue;
-  host.attributeValues = editorState.attributeValues;
-  const activeSelectionKey = host.coordinatedElementSelection
-    ? htmlTextSelectionKey(host.coordinatedElementSelection)
+  host.html.classEditorValue = editorState.classEditorValue;
+  host.html.imageSourceValue = editorState.imageSourceValue;
+  host.draft.attributeValues = editorState.attributeValues;
+  const activeSelectionKey = host.context.coordinatedSelection
+    ? htmlTextSelectionKey(host.context.coordinatedSelection)
     : null;
-  host.textContentValue = activeSelectionKey !== null
-    && host.activeHtmlTextEditKey === activeSelectionKey
-    && host.activeHtmlTextEditValue !== null
-    ? host.activeHtmlTextEditValue
+  host.draft.textContentValue = activeSelectionKey !== null
+    && host.draft.activeTextEditKey === activeSelectionKey
+    && host.draft.activeTextEditValue !== null
+    ? host.draft.activeTextEditValue
     : editorState.textContentValue;
-  host.variableValues = editorState.variableValues;
-  host.classStatus = editorState.classStatus;
-  host.imageStatus = editorState.imageStatus;
-  host.attributeStatus = editorState.attributeStatus;
-  host.textStatus = editorState.textStatus;
-  const existingOverride = host.overrideRules[nextCssSelector];
-  host.editableStyles = existingOverride ?? resolvedStyles ?? getEditableStylesFromObservation(selection);
+  host.css.variableValues = editorState.variableValues;
+  host.html.classStatus = editorState.classStatus;
+  host.html.imageStatus = editorState.imageStatus;
+  host.draft.attributeStatus = editorState.attributeStatus;
+  host.draft.textStatus = editorState.textStatus;
+  const existingOverride = host.css.overrideRules[nextCssSelector];
+  host.css.editableStyles = existingOverride ?? resolvedStyles ?? getEditableStylesFromObservation(selection);
 }

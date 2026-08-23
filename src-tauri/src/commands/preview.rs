@@ -1,7 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
-
-#[cfg(debug_assertions)]
-use std::time::Instant;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Instant,
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -11,6 +12,7 @@ use crate::{
         observability::{
             append_event, append_events, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel,
         },
+        performance::{elapsed_us, performance_event},
         write_authority::WriteAuthorityRuntime,
     },
     preview::{
@@ -332,9 +334,143 @@ pub struct TemplateWorkbenchPreviewReceipt {
     pub plan: TemplateWorkbenchPlan,
     pub route: String,
     pub preview_url: String,
+    pub reuse_token: String,
     pub workspace_revision: u64,
     pub preview_revision: String,
     pub canvas_projection: CanvasProjectionPlan,
+    pub publication_status: TemplateWorkbenchPublicationStatus,
+    pub performance: TemplateWorkbenchPerformance,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateWorkbenchReuseRequest {
+    pub expected_project_root: String,
+    pub expected_session_id: String,
+    pub expected_workspace_revision: u64,
+    pub template_path: String,
+    #[serde(default)]
+    pub preferred_page_path: Option<String>,
+    #[serde(default)]
+    pub preferred_route: Option<String>,
+    pub reuse_token: String,
+    pub expected_preview_revision: String,
+    pub expected_canvas_transaction_id: String,
+}
+
+impl TemplateWorkbenchReuseRequest {
+    fn preview_identity(&self) -> ProjectPreviewRequestIdentity {
+        ProjectPreviewRequestIdentity {
+            expected_project_root: self.expected_project_root.clone(),
+            expected_session_id: self.expected_session_id.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateWorkbenchReuseStatus {
+    Confirmed,
+    Miss,
+}
+
+impl TemplateWorkbenchReuseStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Confirmed => "confirmed",
+            Self::Miss => "miss",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateWorkbenchReusePerformance {
+    pub total_us: u64,
+    pub operation_lock_wait_us: u64,
+    pub engine_lock_wait_us: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateWorkbenchReuseReceipt {
+    pub status: TemplateWorkbenchReuseStatus,
+    pub route: Option<String>,
+    pub preview_url: Option<String>,
+    pub reuse_token: Option<String>,
+    pub workspace_revision: u64,
+    pub preview_revision: Option<String>,
+    pub canvas_transaction_id: Option<String>,
+    pub performance: TemplateWorkbenchReusePerformance,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateWorkbenchPublicationStatus {
+    Reused,
+    Materialized,
+}
+
+impl TemplateWorkbenchPublicationStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Reused => "reused",
+            Self::Materialized => "materialized",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateWorkbenchPerformance {
+    pub total_us: u64,
+    pub operation_lock_wait_us: u64,
+    pub project_model_us: u64,
+    pub plan_us: u64,
+    pub engine_lock_wait_us: u64,
+    pub publish_us: u64,
+    pub render_us: u64,
+    pub graph_us: u64,
+    pub prepare_us: u64,
+    pub model_cache_hit: bool,
+}
+
+fn template_workbench_performance_event(
+    receipt: &TemplateWorkbenchPreviewReceipt,
+) -> KernelLogEvent {
+    performance_event(
+        "template_workbench",
+        "performance",
+        "template_workbench_publish",
+        receipt.publication_status.as_str(),
+        Some(receipt.canvas_projection.identity.transaction_id.clone()),
+        receipt.performance.total_us,
+    )
+    .with_attribute(
+        "projectRoot",
+        &receipt.canvas_projection.identity.project_root,
+    )
+    .with_attribute(
+        "runtimeSessionId",
+        &receipt.canvas_projection.identity.runtime_session_id,
+    )
+    .with_attribute("workspaceRevision", receipt.workspace_revision)
+    .with_attribute("previewRevision", &receipt.preview_revision)
+    .with_attribute("templatePath", &receipt.plan.active_template.file)
+    .with_attribute("route", &receipt.route)
+    .with_attribute("cacheOutcome", receipt.publication_status.as_str())
+    .with_attribute(
+        "operationLockWaitUs",
+        receipt.performance.operation_lock_wait_us,
+    )
+    .with_attribute("projectModelUs", receipt.performance.project_model_us)
+    .with_attribute("planUs", receipt.performance.plan_us)
+    .with_attribute("engineLockWaitUs", receipt.performance.engine_lock_wait_us)
+    .with_attribute("publishUs", receipt.performance.publish_us)
+    .with_attribute("renderUs", receipt.performance.render_us)
+    .with_attribute("graphUs", receipt.performance.graph_us)
+    .with_attribute("prepareUs", receipt.performance.prepare_us)
+    .with_attribute("modelCacheHit", receipt.performance.model_cache_hit)
 }
 
 #[tauri::command(async)]
@@ -442,7 +578,7 @@ pub async fn start_project_preview(
             let candidate = engine.render_candidate_with_project_model(
                 &app,
                 &projection,
-                &project_model,
+                project_model,
                 model_cache_hit,
             )?;
             append_projection_publication_event(&app, &candidate);
@@ -598,7 +734,7 @@ pub async fn project_project_workspace_preview(
             let candidate = engine.render_candidate_with_project_model(
                 &app,
                 &projection,
-                &project_model,
+                project_model,
                 model_cache_hit,
             )?;
             append_projection_publication_event(&app, &candidate);
@@ -650,31 +786,34 @@ pub async fn project_template_workbench_preview(
     let task_input = input.clone();
     let task_identity = identity.clone();
     let task_root = root.clone();
+    let task_app = app.clone();
     let receipt = tauri::async_runtime::spawn_blocking(
         move || -> Result<TemplateWorkbenchPreviewReceipt, String> {
-            #[cfg(debug_assertions)]
             let started = Instant::now();
-            let state = app.state::<AppState>();
+            let state = task_app.state::<AppState>();
+            let operation_lock_started = Instant::now();
             let _operation = state
                 .preview_workspace_operation
                 .lock()
                 .map_err(|_| "Nu am putut serializa proiecția Context de template.".to_string())?;
+            let operation_lock_wait_us = elapsed_us(operation_lock_started);
             require_project_preview_workspace_revision(
                 state.inner(),
                 &task_identity,
                 task_input.expected_workspace_revision,
             )?;
-            let authority_runtime = app.state::<WriteAuthorityRuntime>();
+            let authority_runtime = task_app.state::<WriteAuthorityRuntime>();
             let _project_session_lease = authority_runtime
                 .acquire_active_project_read_lease_for_session(
                     &task_root,
                     &task_identity.expected_session_id,
                 )?;
-            let (projection, model, _model_cache_hit) = capture_workspace_projection_with_model(
+            let model_started = Instant::now();
+            let (projection, model, model_cache_hit) = capture_workspace_projection_with_model(
                 state.inner(),
                 Some(task_input.expected_workspace_revision),
             )?;
-            #[cfg(debug_assertions)]
+            let project_model_us = elapsed_us(model_started);
             let plan_started = Instant::now();
             let plan = resolve_template_workbench_plan(
                 &model,
@@ -684,35 +823,57 @@ pub async fn project_template_workbench_preview(
                     preferred_route: task_input.preferred_route,
                 },
             )?;
-            #[cfg(debug_assertions)]
-            let plan_ms = plan_started.elapsed().as_millis();
+            let plan_us = elapsed_us(plan_started);
+            let engine_lock_started = Instant::now();
             let mut engine_slot = state
                 .preview_engine
                 .lock()
                 .map_err(|_| "Nu am putut bloca motorul Preview pentru Workbench.".to_string())?;
+            let engine_lock_wait_us = elapsed_us(engine_lock_started);
             let engine = engine_slot.as_mut().ok_or_else(|| {
                 "Context de template cere mai întâi Preview-ul canonic al aceleiași revizii."
                     .to_string()
             })?;
-            #[cfg(debug_assertions)]
             let publish_started = Instant::now();
             let publication = engine.publish_template_workbench_view(&projection, &model, &plan)?;
+            let publish_us = elapsed_us(publish_started);
+            let publication_status = if publication.cache_reused {
+                TemplateWorkbenchPublicationStatus::Reused
+            } else {
+                TemplateWorkbenchPublicationStatus::Materialized
+            };
+            let performance = TemplateWorkbenchPerformance {
+                total_us: elapsed_us(started),
+                operation_lock_wait_us,
+                project_model_us,
+                plan_us,
+                engine_lock_wait_us,
+                publish_us,
+                render_us: publication.timings.render_us,
+                graph_us: publication.timings.graph_us,
+                prepare_us: publication.timings.prepare_us,
+                model_cache_hit,
+            };
             #[cfg(debug_assertions)]
             eprintln!(
-                "[Pană Studio][perf] template_workbench source={} model_cache_hit={} plan_ms={} publish_ms={} total_ms={}",
+                "[Pană Studio][perf] template_workbench source={} cache_outcome={} model_cache_hit={} plan_us={} publish_us={} total_us={}",
                 plan.active_template.file,
-                _model_cache_hit,
-                plan_ms,
-                publish_started.elapsed().as_millis(),
-                started.elapsed().as_millis()
+                publication_status.as_str(),
+                model_cache_hit,
+                performance.plan_us,
+                performance.publish_us,
+                performance.total_us,
             );
             Ok(TemplateWorkbenchPreviewReceipt {
                 plan,
                 route: publication.route,
                 preview_url: publication.preview_url,
+                reuse_token: publication.reuse_token,
                 workspace_revision: publication.workspace_revision,
                 preview_revision: publication.preview_revision,
                 canvas_projection: publication.canvas_plan,
+                publication_status,
+                performance,
             })
         },
     )
@@ -724,109 +885,132 @@ pub async fn project_template_workbench_preview(
         &identity,
         receipt.workspace_revision,
     )?;
+    let performance_event = template_workbench_performance_event(&receipt);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = append_event(&app, performance_event);
+    });
     Ok(receipt)
 }
 
 #[tauri::command]
-pub fn acknowledge_canvas_projection_phase(
-    input: PreviewPhaseReceipt,
+pub async fn confirm_template_workbench_reuse(
+    input: TemplateWorkbenchReuseRequest,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<CanvasProjectionPlan, String> {
-    let identity = ProjectPreviewRequestIdentity {
-        expected_project_root: input.identity.project_root.clone(),
-        expected_session_id: input.identity.runtime_session_id.clone(),
-    };
-    if let Err(error) = require_project_preview_workspace_revision(
+) -> Result<TemplateWorkbenchReuseReceipt, String> {
+    let identity = input.preview_identity();
+    let root = require_project_preview_workspace_revision(
         state.inner(),
         &identity,
-        input.identity.workspace_revision,
-    ) {
-        append_canvas_stale_identity_event(&app, &input.identity, error.clone());
-        return Err(error);
-    }
-    let _operation = state
-        .preview_workspace_operation
-        .lock()
-        .map_err(|_| "Nu am putut serializa confirmarea Canvas Runtime.".to_string())?;
-    let mut engine_slot = state
-        .preview_engine
-        .lock()
-        .map_err(|_| "Nu am putut bloca motorul Preview la confirmarea Canvas.".to_string())?;
-    let engine = engine_slot
-        .as_mut()
-        .ok_or_else(|| "Canvas Runtime nu are motor Preview activ.".to_string())?;
-    let current_root = state
-        .current_root
-        .lock()
-        .map_err(|_| "Nu am putut valida root-ul la confirmarea Canvas.".to_string())?;
-    let workspace = state
-        .project_workspace
-        .lock()
-        .map_err(|_| "Nu am putut valida ProjectWorkspace la confirmarea Canvas.".to_string())?;
-    if current_root.as_deref() != Some(std::path::Path::new(&input.identity.project_root)) {
-        let error = "ACK-ul Canvas a devenit stale: proiectul activ s-a schimbat.".to_string();
-        append_canvas_stale_identity_event(&app, &input.identity, error.clone());
-        return Err(error);
-    }
-    let Some(workspace) = workspace.as_ref() else {
-        let error = "ACK-ul Canvas a devenit stale: ProjectWorkspace lipsește.".to_string();
-        append_canvas_stale_identity_event(&app, &input.identity, error.clone());
-        return Err(error);
-    };
-    if workspace.session.runtime_instance_id() != input.identity.runtime_session_id
-        || workspace.revision != input.identity.workspace_revision
+        input.expected_workspace_revision,
+    )?;
+    if input.template_path.trim().is_empty()
+        || input.reuse_token.trim().is_empty()
+        || input.expected_preview_revision.trim().is_empty()
+        || input.expected_canvas_transaction_id.trim().is_empty()
     {
-        let error = "ACK-ul Canvas a devenit stale față de ProjectWorkspace.".to_string();
-        append_canvas_stale_identity_event(&app, &input.identity, error.clone());
-        return Err(error);
+        return Err("Confirmarea Context de template are o identitate incompletă.".to_string());
     }
-    let generation = match engine.acknowledge_candidate_phase(&app, &input) {
-        Ok(generation) => generation,
-        Err(error) => {
-            if error.contains("nu mai are candidatul")
-                || error.contains("altă tranzacție")
-                || error.contains("altei sesiuni")
-            {
-                append_canvas_stale_identity_event(&app, &input.identity, error.clone());
-            }
-            return Err(error);
-        }
-    };
-    let plan = generation.canvas_transaction.plan();
-    let (kind, level) = match plan.phase {
-        CanvasProjectionPhase::CanonicalVerified => (
-            KernelEventKind::PreviewCanvasCanonicalVerified,
-            KernelLogLevel::Info,
-        ),
-        CanvasProjectionPhase::Failed => {
-            (KernelEventKind::PreviewCanvasFailed, KernelLogLevel::Error)
-        }
-        _ => (
-            KernelEventKind::PreviewCanvasPhaseAcknowledged,
-            KernelLogLevel::Info,
-        ),
-    };
-    append_canvas_phase_event(
-        &app,
-        &plan,
-        kind,
-        level,
-        input.diagnostic.clone(),
-        Some(&input.phase_timings_ms),
-    );
-    if plan.phase == CanvasProjectionPhase::CanonicalVerified {
-        append_canvas_observation_event(
-            &app,
-            &plan,
-            KernelEventKind::PreviewCanvasFoucGuardSatisfied,
-            KernelLogLevel::Info,
-            "canvas.fouc_guard_satisfied",
-            Some("CSS/fonts ready și frame stilizat confirmat înainte de promovare.".to_string()),
-        );
-    }
-    update_lifecycle_from_canvas_plan(&app, state.inner(), &plan, input.diagnostic.as_deref())?;
-    Ok(plan)
+
+    let task_app = app.clone();
+    let task_input = input.clone();
+    let task_identity = identity.clone();
+    let receipt = tauri::async_runtime::spawn_blocking(
+        move || -> Result<TemplateWorkbenchReuseReceipt, String> {
+            let started = Instant::now();
+            let state = task_app.state::<AppState>();
+            let operation_lock_started = Instant::now();
+            let _operation = state.preview_workspace_operation.lock().map_err(|_| {
+                "Nu am putut serializa confirmarea Context de template.".to_string()
+            })?;
+            let operation_lock_wait_us = elapsed_us(operation_lock_started);
+            require_project_preview_workspace_revision(
+                state.inner(),
+                &task_identity,
+                task_input.expected_workspace_revision,
+            )?;
+            let authority_runtime = task_app.state::<WriteAuthorityRuntime>();
+            let _project_session_lease = authority_runtime
+                .acquire_active_project_read_lease_for_session(
+                    &root,
+                    &task_identity.expected_session_id,
+                )?;
+            let engine_lock_started = Instant::now();
+            let engine_slot = state.preview_engine.lock().map_err(|_| {
+                "Nu am putut bloca motorul Preview pentru confirmarea Workbench.".to_string()
+            })?;
+            let engine_lock_wait_us = elapsed_us(engine_lock_started);
+            let engine = engine_slot.as_ref().ok_or_else(|| {
+                "Confirmarea Context de template cere un motor Preview activ.".to_string()
+            })?;
+            let confirmation = engine.confirm_template_workbench_reuse(
+                task_input.expected_workspace_revision,
+                &task_input.template_path,
+                task_input.preferred_page_path.as_deref(),
+                task_input.preferred_route.as_deref(),
+                &task_input.reuse_token,
+                &task_input.expected_preview_revision,
+                &task_input.expected_canvas_transaction_id,
+            )?;
+            let performance = TemplateWorkbenchReusePerformance {
+                total_us: elapsed_us(started),
+                operation_lock_wait_us,
+                engine_lock_wait_us,
+            };
+            Ok(match confirmation {
+                Some(confirmation) => TemplateWorkbenchReuseReceipt {
+                    status: TemplateWorkbenchReuseStatus::Confirmed,
+                    route: Some(confirmation.route),
+                    preview_url: Some(confirmation.preview_url),
+                    reuse_token: Some(confirmation.reuse_token),
+                    workspace_revision: confirmation.workspace_revision,
+                    preview_revision: Some(confirmation.preview_revision),
+                    canvas_transaction_id: Some(confirmation.canvas_transaction_id),
+                    performance,
+                },
+                None => TemplateWorkbenchReuseReceipt {
+                    status: TemplateWorkbenchReuseStatus::Miss,
+                    route: None,
+                    preview_url: None,
+                    reuse_token: None,
+                    workspace_revision: task_input.expected_workspace_revision,
+                    preview_revision: None,
+                    canvas_transaction_id: None,
+                    performance,
+                },
+            })
+        },
+    )
+    .await
+    .map_err(|error| format!("Confirmare Context de template task eșuată: {error}"))??;
+
+    require_project_preview_workspace_revision(
+        state.inner(),
+        &identity,
+        receipt.workspace_revision,
+    )?;
+    let event = performance_event(
+        "template_workbench",
+        "performance",
+        "template_workbench_reuse_confirm",
+        receipt.status.as_str(),
+        receipt.canvas_transaction_id.clone(),
+        receipt.performance.total_us,
+    )
+    .with_attribute("projectRoot", &input.expected_project_root)
+    .with_attribute("runtimeSessionId", &input.expected_session_id)
+    .with_attribute("workspaceRevision", receipt.workspace_revision)
+    .with_attribute("templatePath", &input.template_path)
+    .with_attribute("cacheOutcome", receipt.status.as_str())
+    .with_attribute(
+        "operationLockWaitUs",
+        receipt.performance.operation_lock_wait_us,
+    )
+    .with_attribute("engineLockWaitUs", receipt.performance.engine_lock_wait_us);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = append_event(&app, event);
+    });
+    Ok(receipt)
 }
 
 #[tauri::command]
@@ -1292,8 +1476,7 @@ fn stage_candidate_if_current<R: tauri::Runtime>(
             candidate
                 .as_ref()
                 .expect("candidate exists before staging")
-                .project_model()
-                .clone(),
+                .project_model_arc(),
         )?;
         let generation = engine.stage_candidate(
             app,
@@ -1343,7 +1526,7 @@ fn capture_workspace_projection_with_model(
 ) -> Result<
     (
         crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
-        crate::project_model::model::ProjectModel,
+        Arc<crate::project_model::model::ProjectModel>,
         bool,
     ),
     String,

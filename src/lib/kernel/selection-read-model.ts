@@ -2,8 +2,8 @@ import type {
   SelectionEntry,
   SelectionResolution,
   SelectionSnapshot,
-  SourceRange,
-} from "$lib/types";
+} from "$lib/editor/contracts";
+import type { SourceRange } from "$lib/source-graph/contracts";
 
 export function primarySelectionEntry(
   selection: SelectionSnapshot | null | undefined,

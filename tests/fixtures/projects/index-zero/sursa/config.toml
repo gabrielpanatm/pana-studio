@@ -1,0 +1,29 @@
+base_url = "https://index-zero.invalid"
+title = "INDEX ZERO"
+description = "Festival fictiv de artă, sunet și sisteme. Proiect de stres pentru Pana Studio."
+default_language = "ro"
+compile_sass = true
+minify_html = false
+build_search_index = false
+generate_feeds = false
+
+taxonomies = [
+  { name = "discipline", feed = false, render = false },
+  { name = "formate", feed = false, render = false },
+  { name = "zile", feed = false, render = false },
+  { name = "subiecte", feed = false, render = false },
+]
+
+[markdown]
+smart_punctuation = true
+lazy_async_image = false
+
+[link_checker]
+skip_prefixes = ["https://anpc.ro/"]
+
+[extra]
+an = 2027
+oras = "Timișoara"
+perioada = "07—16 OCT 2027"
+profil = "mare"
+email = "salut@index-zero.invalid"

@@ -1,10 +1,7 @@
 import type { DropPosition } from "$lib/ui/drag";
-import type {
-  DynamicWidgetProperties,
-  ProjectDynamicFieldBinding,
-  SourceGraphNode,
-  SourceNodeKind,
-} from "$lib/types";
+import type { DynamicWidgetProperties } from "$lib/content-models/contracts";
+import type { ProjectDynamicFieldBinding } from "$lib/preview/contracts";
+import type { SourceGraphNode } from "$lib/source-graph/contracts";
 
 export type TeraConstructKind =
   | "extends"
@@ -85,8 +82,4 @@ export const teraConstructKinds: TeraConstructKind[] = [
 
 export function isTeraConstructKind(value: unknown): value is TeraConstructKind {
   return typeof value === "string" && (teraConstructKinds as string[]).includes(value);
-}
-
-export function isTeraSourceNodeKind(kind: SourceNodeKind) {
-  return (teraConstructKinds as string[]).includes(kind);
 }

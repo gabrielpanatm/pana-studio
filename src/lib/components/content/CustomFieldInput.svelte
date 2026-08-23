@@ -1,6 +1,6 @@
 <script lang="ts">
   import { IconPhoto, IconPlus, IconTrash } from "@tabler/icons-svelte";
-  import type { ContentFieldDefinition } from "$lib/types";
+  import type { ContentFieldDefinition } from "$lib/content-models/contracts";
   import CustomFieldInput from "./CustomFieldInput.svelte";
 
   let {

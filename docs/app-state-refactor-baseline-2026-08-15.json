@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-15",
+  "source": {
+    "file": "src/lib/state/app.svelte.ts",
+    "physicalLines": 4579,
+    "imports": 102,
+    "stateProperties": 133,
+    "derivedProperties": 39,
+    "methodsApproximate": 272,
+    "hostAccessorsReturningThis": 30,
+    "controllerCallsPassingDirectThis": 91,
+    "effects": 20
+  },
+  "consumers": {
+    "componentCount": 27,
+    "uniqueMembersApproximate": 242,
+    "directWrites": 25,
+    "writtenMembers": 16
+  },
+  "bundle": {
+    "stateChunkBytes": 419681,
+    "stateChunkGzipBytes": 101731,
+    "stateChunkInInitialGraph": true,
+    "largestInitialGraphBytes": 1735161,
+    "largestInitialGraphGzipBytes": 470390
+  },
+  "acceptanceTargets": {
+    "maximumStateChunkBytes": 314760,
+    "maximumStateChunkGzipBytes": 76298,
+    "stateChunkInInitialGraph": false
+  }
+}

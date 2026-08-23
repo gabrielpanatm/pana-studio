@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     path::Path,
+    sync::Arc,
 };
 
 use crate::{
@@ -151,13 +152,13 @@ fn execute_batch_attributes(
     session: &ProjectSessionSnapshot,
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     source_ids: Vec<String>,
     attributes: Vec<ProjectHtmlAttributeMutation>,
 ) -> Result<PreviewSelectionBatchExecutionOutcome, String> {
     if attributes.is_empty() {
         return Ok(blocked_outcome(
-            Some(before_model.revision),
+            Some(before_model.revision.clone()),
             source_ids,
             "Mutația batch de atribute este goală.",
         ));
@@ -174,7 +175,7 @@ fn execute_batch_attributes(
         })
     {
         return Ok(blocked_outcome(
-            Some(before_model.revision),
+            Some(before_model.revision.clone()),
             source_ids,
             "Atributul id nu poate primi aceeași valoare pe mai multe elemente.",
         ));
@@ -198,7 +199,7 @@ fn execute_batch_classes(
     session: &ProjectSessionSnapshot,
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     source_ids: Vec<String>,
     add: Vec<String>,
     remove: Vec<String>,
@@ -206,7 +207,7 @@ fn execute_batch_classes(
     let (add, remove) = normalize_class_delta(add, remove)?;
     if add.is_empty() && remove.is_empty() {
         return Ok(blocked_outcome(
-            Some(before_model.revision),
+            Some(before_model.revision.clone()),
             source_ids,
             "Mutația batch de clase este goală.",
         ));
@@ -238,7 +239,7 @@ fn execute_batch_generate_shared_class(
     session: &ProjectSessionSnapshot,
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     source_ids: Vec<String>,
     primary_source_id: &str,
 ) -> Result<PreviewSelectionBatchExecutionOutcome, String> {
@@ -289,7 +290,7 @@ fn execute_batch_member_attributes(
     session: &ProjectSessionSnapshot,
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     source_ids: Vec<String>,
     member_attributes: Vec<(String, Vec<ProjectHtmlAttributeMutation>)>,
 ) -> Result<PreviewSelectionBatchExecutionOutcome, String> {
@@ -408,7 +409,7 @@ fn execute_batch_delete(
     session: &ProjectSessionSnapshot,
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     source_ids: Vec<String>,
 ) -> Result<PreviewSelectionBatchExecutionOutcome, String> {
     let history_trees = history_forests(&before_model.source_graph, &source_ids)?;
@@ -499,7 +500,7 @@ fn execute_batch_duplicate(
     session: &ProjectSessionSnapshot,
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     source_ids: Vec<String>,
     primary_source_id: &str,
 ) -> Result<PreviewSelectionBatchExecutionOutcome, String> {
@@ -647,7 +648,7 @@ fn execute_batch_move(
     session: &ProjectSessionSnapshot,
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     source_ids: Vec<String>,
     target_source_id: String,
     target_tag: Option<String>,
@@ -663,7 +664,7 @@ fn execute_batch_move(
         Ok(patch) => patch,
         Err(diagnostic) => {
             return Ok(blocked_outcome(
-                Some(before_model.revision),
+                Some(before_model.revision.clone()),
                 source_ids,
                 &diagnostic,
             ))
@@ -771,7 +772,7 @@ fn execute_batch_move(
 fn current_project_model(
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-) -> Result<ProjectModel, String> {
+) -> Result<Arc<ProjectModel>, String> {
     let projection = workspace.capture_projection_snapshot()?;
     if workspace.project_model_source_revision == Some(projection.revision) {
         if let Some(model) = workspace.project_model.as_ref() {

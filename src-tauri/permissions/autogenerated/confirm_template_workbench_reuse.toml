@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-template-workbench-reuse"
+description = "Enables the confirm_template_workbench_reuse command without any pre-configured scope."
+commands.allow = ["confirm_template_workbench_reuse"]
+
+[[permission]]
+identifier = "deny-confirm-template-workbench-reuse"
+description = "Denies the confirm_template_workbench_reuse command without any pre-configured scope."
+commands.deny = ["confirm_template_workbench_reuse"]

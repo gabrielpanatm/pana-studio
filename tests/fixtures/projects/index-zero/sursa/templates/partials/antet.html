@@ -1,0 +1,22 @@
+<div class="bara-fictiune" role="note">
+  <span>PROIECT FICTIV / TEST DE STRES</span>
+  <span aria-hidden="true">DATE GENERATE DETERMINIST</span>
+</div>
+<header class="antet-site">
+  <a class="marca" href="{{ get_url(path='@/_index.md') }}" aria-label="INDEX ZERO, pagina principală">
+    <span>INDEX</span><strong>ZERO</strong>
+  </a>
+  <p class="coordonate-antet">{{ config.extra.oras }}<br>{{ config.extra.perioada }}</p>
+  <button class="buton-meniu" type="button" aria-expanded="false" aria-controls="navigatie-principala" data-menu-toggle>
+    <span>Meniu</span><i aria-hidden="true"></i>
+  </button>
+  <nav id="navigatie-principala" class="navigatie-principala" aria-label="Navigație principală" data-menu>
+    <a href="{{ get_url(path='@/program.md') }}">Program</a>
+    <a href="{{ get_url(path='@/evenimente/_index.md') }}">Evenimente</a>
+    <a href="{{ get_url(path='@/artisti/_index.md') }}">Artiști</a>
+    <a href="{{ get_url(path='@/locatii/_index.md') }}">Spații</a>
+    <a href="{{ get_url(path='@/jurnal/_index.md') }}">Jurnal</a>
+    <a href="{{ get_url(path='@/galerie.md') }}">Galerie</a>
+    <a href="{{ get_url(path='@/laboratoare/_index.md') }}">Laboratoare</a>
+  </nav>
+</header>

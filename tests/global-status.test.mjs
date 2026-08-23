@@ -12,9 +12,9 @@ import {
 } from "$lib/status/global-status";
 import {
   publishGlobalStatus,
-  resolveGlobalStatus,
   setGlobalStatus,
-} from "$lib/state/status-controller";
+} from "$lib/status/controller";
+import { NotificationCenterState } from "$lib/notifications/store.svelte";
 
 function event(input, sequence, now = 1_000) {
   return normalizeGlobalStatus(input, sequence, now);
@@ -35,8 +35,7 @@ function host() {
     globalStatusEvents: [],
     globalStatusSequence: 0,
     globalStatusExpiryTimer: null,
-    notifications: [],
-    dismissedNotificationIds: new Set(),
+    notificationCenter: new NotificationCenterState(),
   };
 }
 
@@ -95,7 +94,7 @@ test("erorile se escaladează implicit, informațiile numai explicit", () => {
   assert.equal(notificationFromGlobalStatus(explicit)?.id, "notice");
 });
 
-test("coordonatorul proiectează și rezolvă aceeași notificare persistentă", () => {
+test("coordonatorul proiectează aceeași notificare persistentă", () => {
   const state = host();
   const published = publishGlobalStatus(state, input({
     severity: "error",
@@ -103,11 +102,8 @@ test("coordonatorul proiectează și rezolvă aceeași notificare persistentă",
     resolutionKey: "problem",
     notification: { title: "Problemă", message: "Diagnostic" },
   }));
-  assert.equal(state.notifications.length, 1);
-  assert.equal(state.notifications[0].statusEventId, published.id);
-  resolveGlobalStatus(state, "problem");
-  assert.equal(state.notifications.length, 0);
-  assert.equal(state.globalStatusEvents.at(-1)?.resolution, "resolved");
+  assert.equal(state.notificationCenter.notifications.length, 1);
+  assert.equal(state.notificationCenter.notifications[0].statusEventId, published.id);
 });
 
 test("adaptorul de producător afișează inclusiv mesajele idle utile", () => {

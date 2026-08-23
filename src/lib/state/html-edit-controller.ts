@@ -9,53 +9,66 @@ import {
 import {
   projectCommittedPreviewStructuralMutation,
   requireCommittedPreviewStructuralPatch,
-  type PreviewStructuralCanonicalProjectionHost,
 } from "$lib/kernel/preview-projection-control";
 import {
   previewStructuralCommandIdentity,
-  runInPreviewStructuralLane,
+  type PreviewStructuralSessionLease,
 } from "$lib/kernel/preview-structural-lane";
 import { scannedCacheKey } from "$lib/project/files";
-import { executePreviewHtmlTagIntent } from "$lib/project/io";
+import {
+  executePreviewHtmlTagIntent,
+} from "$lib/preview/structural-io";
 import { errorMessage } from "$lib/util";
 import type {
   CoordinatedElementSelection,
   HtmlPendingArea,
-  ProjectHtmlTagPatch,
-  SourceEditLocation,
-} from "$lib/types";
+} from "$lib/canvas/contracts";
+import type { ProjectHtmlTagPatch } from "$lib/preview/contracts";
+import type { SourceEditLocation } from "$lib/source-graph/contracts";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import { t } from "$lib/i18n/runtime.svelte";
 
-export type HtmlEditControllerHost = PreviewStructuralCanonicalProjectionHost & {
-  htmlMutationRevision: number;
-  coordinatedElementSelection: CoordinatedElementSelection | null;
-  pendingTag: string | null;
-  pendingTagOriginal: string | null;
-  pendingTagSourceLocation: SourceEditLocation | null;
-  htmlPending: Record<HtmlPendingArea, boolean>;
-  tagStatus: string;
-  source: string;
-  sourceCache: Record<string, string>;
-  activeScannedPath: string | null;
+export type HtmlEditControllerHost = {
+  context: () => Readonly<{
+    coordinatedSelection: CoordinatedElementSelection | null;
+    activeScannedPath: string | null;
+  }>;
+  html: {
+    mutationRevision: number;
+    pendingTag: string | null;
+    pendingTagOriginal: string | null;
+    pendingTagSourceLocation: SourceEditLocation | null;
+    htmlPending: Record<HtmlPendingArea, boolean>;
+    tagStatus: string;
+  };
+  source: { source: string; sourceCache: Record<string, string> };
+  runStructural: <T>(
+    operation: (lease: PreviewStructuralSessionLease) => Promise<T>,
+  ) => Promise<T | null>;
+  projectCommitted: (
+    lease: PreviewStructuralSessionLease,
+    receipt: Parameters<typeof projectCommittedPreviewStructuralMutation>[2],
+    patch: Parameters<typeof projectCommittedPreviewStructuralMutation>[3],
+    projectLocalState: Parameters<typeof projectCommittedPreviewStructuralMutation>[4],
+  ) => ReturnType<typeof projectCommittedPreviewStructuralMutation>;
   setHtmlPending: (area: HtmlPendingArea, pending: boolean) => void;
   setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 function cacheKernelTagPatch(host: HtmlEditControllerHost, patch: ProjectHtmlTagPatch) {
-  host.sourceCache = {
-    ...host.sourceCache,
+  host.source.sourceCache = {
+    ...host.source.sourceCache,
     [scannedCacheKey({ relativePath: patch.file })]: patch.contents,
   };
-  if (host.activeScannedPath === patch.file) {
-    host.source = patch.contents;
+  if (host.context().activeScannedPath === patch.file) {
+    host.source.source = patch.contents;
   }
 }
 
 function clearPendingTag(host: HtmlEditControllerHost) {
-  host.pendingTag = null;
-  host.pendingTagOriginal = null;
-  host.pendingTagSourceLocation = null;
+  host.html.pendingTag = null;
+  host.html.pendingTagOriginal = null;
+  host.html.pendingTagSourceLocation = null;
   host.setHtmlPending("tag", false);
 }
 
@@ -73,13 +86,13 @@ async function executePendingKernelTagChange(
   ) => Promise<void> | void,
 ): Promise<EditorActionOutcome> {
   try {
-    const committed = await runInPreviewStructuralLane(host, async (lease) => {
-      if (host.htmlMutationRevision !== revision) {
+    const committed = await host.runStructural(async (lease) => {
+      if (host.html.mutationRevision !== revision) {
         throw new Error(
           t("html-tag-newer-change-before-commit"),
         );
       }
-      const current = host.coordinatedElementSelection;
+      const current = host.context().coordinatedSelection;
       const observation = capturedSelection.observation;
       if (
         !current
@@ -107,8 +120,8 @@ async function executePendingKernelTagChange(
         receipt,
         t("html-tag-engine-blocked"),
       );
-      await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, async () => {
-        if (host.htmlMutationRevision !== revision) {
+      await host.projectCommitted(lease, receipt, patch, async () => {
+        if (host.html.mutationRevision !== revision) {
           throw new Error(
             t("html-tag-newer-change-after-commit"),
           );
@@ -124,7 +137,7 @@ async function executePendingKernelTagChange(
       : cancelledAction(t("html-tag-session-cancelled"));
   } catch (error) {
     const reason = errorMessage(error);
-    host.tagStatus = t("html-tag-error-short", { message: reason });
+    host.html.tagStatus = t("html-tag-error-short", { message: reason });
     host.setGlobalStatus(t("html-tag-error", { message: reason }), "error");
     return failedAction(reason);
   }
@@ -134,14 +147,14 @@ export async function changeElementTag(
   host: HtmlEditControllerHost,
   newTag: string,
 ): Promise<EditorActionOutcome> {
-  const selection = host.coordinatedElementSelection;
+  const selection = host.context().coordinatedSelection;
   if (!selection) {
     return blockedAction(t("html-tag-select-element"));
   }
   const sourceNodeId = selection.sourceNodeId;
   if (!sourceNodeId) {
     const message = t("html-tag-identity-missing");
-    host.tagStatus = message;
+    host.html.tagStatus = message;
     host.setGlobalStatus(message, "error");
     return blockedAction(message);
   }
@@ -150,13 +163,13 @@ export async function changeElementTag(
     clearPendingTag(host);
     return noopAction(t("html-tag-already-applied"));
   }
-  const revision = ++host.htmlMutationRevision;
+  const revision = ++host.html.mutationRevision;
   const originalTag = observation.tag;
   const selector = observation.domPath;
-  host.pendingTag = newTag;
-  host.pendingTagOriginal = originalTag;
-  host.pendingTagSourceLocation = selection.sourceLocation;
-  host.tagStatus = t("html-tag-sending", { tag: newTag });
+  host.html.pendingTag = newTag;
+  host.html.pendingTagOriginal = originalTag;
+  host.html.pendingTagSourceLocation = selection.sourceLocation;
+  host.html.tagStatus = t("html-tag-sending", { tag: newTag });
   host.setHtmlPending("tag", true);
   host.setGlobalStatus(
     t("html-tag-executing", { oldTag: originalTag, newTag }),
@@ -172,13 +185,13 @@ export async function changeElementTag(
     revision,
     selection,
     (_patch, _selection) => {
-      host.tagStatus = t("html-tag-changed", { oldTag: originalTag, newTag });
+      host.html.tagStatus = t("html-tag-changed", { oldTag: originalTag, newTag });
     },
   );
 }
 
 export async function applyTagChange(host: HtmlEditControllerHost): Promise<EditorActionOutcome> {
-  if (!host.pendingTag && !host.htmlPending.tag) {
+  if (!host.html.pendingTag && !host.html.htmlPending.tag) {
     return noopAction(t("html-tag-no-pending-change"));
   }
   return blockedAction(

@@ -2,12 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 
-import {
-  clearNotification,
-  dismissNotification,
-  escalateGlobalStatus,
-  setGlobalStatus,
-} from "$lib/state/app-session-controller";
+import { NotificationCenterState } from "$lib/notifications/store.svelte";
+import { GlobalStatusState } from "$lib/status/state.svelte";
 
 if (!globalThis.window) globalThis.window = globalThis;
 
@@ -22,18 +18,7 @@ function deferred() {
 }
 
 function host() {
-  return {
-    globalStatusEvents: [],
-    globalStatusRevision: 0,
-    globalStatusSequence: 0,
-    globalStatusExpiryTimer: null,
-    globalStatusKernelTail: Promise.resolve(),
-    notifications: [],
-    dismissedNotificationIds: new Set(),
-    statusControllerHost() {
-      return this;
-    },
-  };
+  return new GlobalStatusState(new NotificationCenterState());
 }
 
 function eventFromInput(input, sequence) {
@@ -85,13 +70,13 @@ test("publicările sunt serializate și devin vizibile numai după receipt-ul Ru
   });
   const app = host();
 
-  setGlobalStatus(app, "Prima", "saving", {
+  app.set("Prima", "saving", {
     source: "test",
     dedupeKey: "test:lane",
     lifecycle: "until_replaced",
     escalation: "status_only",
   });
-  setGlobalStatus(app, "A doua", "saved", { source: "test", dedupeKey: "test:lane" });
+  app.set("A doua", "saved", { source: "test", dedupeKey: "test:lane" });
   await nextTurn();
 
   assert.equal(calls.length, 1);
@@ -108,7 +93,7 @@ test("publicările sunt serializate și devin vizibile numai după receipt-ul Ru
   const secondEvent = eventFromInput(calls[1], 2);
   firstEvent.resolution = "resolved";
   second.resolve(snapshot(2, [firstEvent, secondEvent]));
-  await app.globalStatusKernelTail;
+  await app.settled();
   assert.equal(app.globalStatusEvents.at(-1)?.message, "A doua");
   assert.equal(app.globalStatusRevision, 2);
 });
@@ -126,25 +111,34 @@ test("escaladarea și rezolvarea folosesc același eveniment Rust", async () => 
   });
   const app = host();
 
-  escalateGlobalStatus(app, {
+  app.escalate({
     id: "project.problem",
     level: "warning",
     title: "Titlu persistent",
     message: "Diagnostic complet",
     statusMessage: "Mesaj status",
   });
-  await app.globalStatusKernelTail;
+  await app.settled();
 
   assert.equal(app.globalStatusEvents[0].message, "Mesaj status");
-  assert.equal(app.notifications[0].title, "Titlu persistent");
-  assert.equal(app.notifications[0].statusEventId, publishedEvent.id);
+  assert.equal(app.notificationCenter.notifications[0].title, "Titlu persistent");
+  assert.equal(app.notificationCenter.notifications[0].statusEventId, publishedEvent.id);
 
-  dismissNotification(app, "project.problem");
-  assert.equal(app.notifications.length, 0);
-  assert.equal(app.dismissedNotificationIds.has("project.problem"), true);
-  clearNotification(app, "project.problem");
-  await app.globalStatusKernelTail;
+  app.notificationCenter.dismiss("project.problem");
+  assert.equal(app.notificationCenter.notifications.length, 0);
+  assert.equal(app.notificationCenter.wasDismissed("project.problem"), true);
+  app.clear("project.problem");
+  await app.settled();
   assert.equal(app.globalStatusEvents.length, 0);
-  assert.equal(app.notifications.length, 0);
-  assert.equal(app.dismissedNotificationIds.has("project.problem"), false);
+  assert.equal(app.notificationCenter.notifications.length, 0);
+  assert.equal(app.notificationCenter.wasDismissed("project.problem"), false);
+});
+
+test("destroy elimină timerul de expirare deținut de Global Status", () => {
+  const status = host();
+  status.globalStatusExpiryTimer = window.setTimeout(() => {}, 10_000);
+
+  status.destroy();
+
+  assert.equal(status.globalStatusExpiryTimer, null);
 });

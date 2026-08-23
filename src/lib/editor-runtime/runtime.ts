@@ -1,10 +1,4 @@
 import {
-  deleteSelectedHtmlElement,
-  duplicateSelectedHtmlElement,
-  type HtmlActionsControllerHost,
-} from "$lib/state/html-actions-controller";
-import type { SelectionControllerHost } from "$lib/state/selection-controller";
-import {
   blockedAction,
   committedAction,
   editorActionSucceeded,
@@ -16,6 +10,7 @@ import {
   captureEditorCommand,
   type EditorCommand,
   type EditorCommandResult,
+  type EditorHtmlTarget,
   type EditorSurface,
   type EditorTeraTarget,
   type EditorTransaction,
@@ -27,8 +22,8 @@ import { t } from "$lib/i18n/runtime.svelte";
 export type EditorRuntimeHost = {
   centerView: string;
   setCenterView: (view: "code") => Promise<boolean>;
-  htmlActionsControllerHost: () => HtmlActionsControllerHost;
-  selectionControllerHost: () => SelectionControllerHost;
+  deleteHtmlTarget: (target: EditorHtmlTarget) => Promise<EditorActionOutcome>;
+  duplicateHtmlTarget: (target: EditorHtmlTarget) => Promise<EditorActionOutcome>;
   selectHtmlTarget: (
     target: Extract<EditorCommand["target"], { kind: "html" }>,
     options?: { revealCode?: boolean },
@@ -144,9 +139,9 @@ export class EditorRuntime {
         this.host.selectHtmlTarget(command.target, { revealCode: true });
         return committedAction();
       case "delete-html":
-        return await deleteSelectedHtmlElement(this.host.htmlActionsControllerHost(), command.target);
+        return await this.host.deleteHtmlTarget(command.target);
       case "duplicate-html":
-        return await duplicateSelectedHtmlElement(this.host.htmlActionsControllerHost(), command.target);
+        return await this.host.duplicateHtmlTarget(command.target);
       case "select-tera":
         this.selectTera(command);
         return committedAction();

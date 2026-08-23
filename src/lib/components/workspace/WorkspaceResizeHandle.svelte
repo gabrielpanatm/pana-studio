@@ -3,7 +3,7 @@
   export let active = false;
   export let withBottomPanel = false;
   export let ariaLabel = "";
-  export let onDrag: (event: MouseEvent) => void;
+  export let onDrag: (event: PointerEvent) => void;
   export let onReset: () => void;
 </script>
 
@@ -17,7 +17,7 @@
   class:active
   type="button"
   aria-label={ariaLabel}
-  onmousedown={onDrag}
+  onpointerdown={onDrag}
   ondblclick={onReset}
 ></button>
 

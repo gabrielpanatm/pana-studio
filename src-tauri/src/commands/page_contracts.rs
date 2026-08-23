@@ -65,7 +65,6 @@ pub(super) struct PageContractSourceSnapshot {
     pub stylesheet_known: bool,
     pub page_js_config: PageJsConfig,
     pub page_js_base_config: PageJsConfig,
-    pub cachebust_assets: bool,
     template_revision: FileBufferTextSnapshot,
     stylesheet_revision: Option<FileBufferTextSnapshot>,
 }
@@ -319,7 +318,6 @@ fn read_page_contract_sources(
         stylesheet_known: stylesheet_revision.is_some(),
         page_js_config,
         page_js_base_config,
-        cachebust_assets: crate::commands::config::cachebust_assets_from_store(store)?,
         template_revision,
         stylesheet_revision,
     })

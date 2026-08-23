@@ -8,7 +8,15 @@ export function escapeHtmlAttribute(value: string) {
 
 const applicationAccentProperty = "--pana-studio-accent";
 const applicationTextOnAccentProperty = "--pana-studio-text-on-accent";
-const applicationMarkdownProperty = "--pana-studio-markdown";
+
+const previewEntityProperties = {
+  template: ["--pana-studio-entity-template", "--entity-template", "#2563eb"],
+  component: ["--pana-studio-entity-component", "--entity-component", "#7c3aed"],
+  markdown: ["--pana-studio-entity-markdown", "--entity-markdown", "#c96a06"],
+  runtime: ["--pana-studio-entity-runtime", "--entity-runtime", "#0891b2"],
+  readonly: ["--pana-studio-entity-readonly", "--entity-readonly", "#64748b"],
+  danger: ["--pana-studio-danger", "--danger", "#d94b4b"],
+} as const;
 
 function normalizedApplicationColor(value: string, fallback: string) {
   return /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : fallback;
@@ -27,10 +35,14 @@ export function applyApplicationAppearanceToPreviewDocument(
     applicationTextOnAccentProperty,
     normalizedApplicationColor(textOnAccent, "#ffffff"),
   );
-  previewDocument.documentElement.style.setProperty(
-    applicationMarkdownProperty,
-    "#f59e0b",
-  );
+  const applicationRoot = globalThis.document?.documentElement;
+  const applicationStyles = applicationRoot
+    ? globalThis.getComputedStyle?.(applicationRoot)
+    : null;
+  for (const [previewProperty, applicationProperty, fallback] of Object.values(previewEntityProperties)) {
+    const color = applicationStyles?.getPropertyValue(applicationProperty).trim() || fallback;
+    previewDocument.documentElement.style.setProperty(previewProperty, color);
+  }
 }
 
 export function buildPreviewStatusDocument(title: string, message: string) {

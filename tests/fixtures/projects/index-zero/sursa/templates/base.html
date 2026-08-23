@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ro" data-theme="index-zero">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#11100f">
+  <title>{% block title %}{{ config.title }} — {{ config.extra.perioada }}{% endblock title %}</title>
+  <meta name="description" content="{% block description %}{{ config.description }}{% endblock description %}">
+  <link rel="stylesheet" href="{{ get_url(path='css-framework/framework.css', cachebust=true) }}">
+  <link rel="stylesheet" href="{{ get_url(path='pagini/site.css', cachebust=true) }}">
+  <link rel="stylesheet" href="{{ get_url(path='pagini/laborator.css', cachebust=true) }}">
+  {% block css_pagina %}{% endblock css_pagina %}
+</head>
+<body>
+  <a class="salt-continut" href="#continut">Sari la conținut</a>
+  {% include "partials/antet.html" %}
+  <main id="continut">
+    {% block content %}{% endblock content %}
+  </main>
+  {% include "partials/subsol.html" %}
+  <script src="{{ get_url(path='js/site.js', cachebust=true) }}" defer></script>
+</body>
+</html>
+<!--
+·:·.·:·.·:·.·:·.·:·.·:·.·:·.·:·
+    proiectat & dezvoltat de
+      ∼∼  GABRIEL PANĂ  ∼∼
+           pana.tm.ro
+·:·.·:·.·:·.·:·.·:·.·:·.·:·.·:·
+-->

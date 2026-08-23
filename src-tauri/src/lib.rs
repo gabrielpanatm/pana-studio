@@ -19,7 +19,6 @@ mod system_preferences;
 mod versioning;
 mod zola_engine;
 #[macro_use]
-#[allow(dead_code)]
 mod tauri_command_registry;
 mod zola_links;
 mod zola_theme;
@@ -42,23 +41,21 @@ use commands::{
     app_home::read_app_home,
     audit::{apply_audit_fix, read_project_audit},
     blocks::{
-        apply_native_block_contract, plan_native_block_contract, read_block_runtime_snapshot,
         read_icon_catalog, read_native_block_registry, read_ui_block_graph, search_icon_catalog,
     },
     command_center::search_command_center,
     components::apply_component_mutation,
     config::{
-        read_application_settings, read_project_configuration, read_zola_base_url,
-        read_zola_project_settings, save_application_settings, save_project_configuration,
-        save_zola_base_url, save_zola_project_settings,
+        read_application_settings, read_project_configuration, save_application_settings,
+        save_project_configuration,
     },
     content_models::{
         apply_content_model_mutation, plan_content_model_mutation, read_content_model_catalog,
     },
     css::{
-        cleanup_page_css_contract, create_scss_variable, get_scss_variables,
-        resolve_css_inspector_context, set_css_rule, set_css_rule_at_viewport,
-        set_page_css_rule_at_viewport, set_reusable_css_rule_at_viewport, set_scss_variable,
+        create_scss_variable, get_scss_variables, resolve_css_inspector_context,
+        set_css_rule_at_viewport, set_page_css_rule_at_viewport, set_reusable_css_rule_at_viewport,
+        set_scss_variable,
     },
     data::{apply_data_mutation, read_data_node_editor},
     deploy::{
@@ -92,8 +89,8 @@ use commands::{
     },
     insert_catalog::read_insert_catalog,
     js::{
-        apply_motion_mutation, clear_page_js_draft, get_page_data_anims, get_page_js,
-        get_page_js_workspace_state, read_page_js_drafts, stage_page_js_draft,
+        apply_motion_mutation, clear_page_js_draft, get_page_js_workspace_state,
+        stage_page_js_draft,
     },
     kernel::{
         execute_preview_html_attributes_intent, execute_preview_html_delete_intent,
@@ -105,43 +102,47 @@ use commands::{
         read_kernel_observability_log, read_kernel_project_transition_blocked_audit,
         read_kernel_project_transition_decision_journal,
         read_kernel_project_transition_decision_recovery_ack_journal,
-        read_kernel_project_transition_decision_retention_hot_journals,
         read_kernel_project_transition_policy, read_kernel_project_transition_policy_matrix,
         read_write_authority_recovery_scan, resolve_global_status,
         resolve_write_authority_recovery,
     },
     mcp::{
         configure_codex_mcp, read_ai_context_status, read_codex_mcp_status,
-        save_ai_context_snapshot, write_ai_context_snapshot,
+        save_ai_context_snapshot,
     },
-    page_assets::{apply_page_asset_contract, import_project_asset, plan_page_asset_contract},
+    page_assets::{apply_page_asset_contract, import_project_asset},
     preview::{
-        acknowledge_canvas_projection_phase, acknowledge_canvas_projection_phases,
+        acknowledge_canvas_projection_phases, confirm_template_workbench_reuse,
         project_project_workspace_preview, project_template_workbench_preview,
         read_preview_document, record_preview_runtime_event, start_project_browser_preview,
         start_project_preview,
     },
     project::{
-        acknowledge_project_transition_decision_recovery_plan, apply_file_buffer_changeset,
-        clear_file_buffer_draft, close_project, execute_project_transition_decision_retention,
-        open_project, read_current_project_disk_manifest, read_file_buffer_store,
-        read_file_buffer_text, read_project_file, read_project_session,
-        read_project_workspace_history, read_project_workspace_state,
-        read_recovery_coordinator_scan, reattach_project_session,
-        record_project_transition_operator_decision,
-        recover_project_transition_decision_retention_hot_journal, recover_project_workspace_save,
-        redo_project_workspace, save_project_workspace, scan_project, set_file_buffer_draft,
-        start_project_disk_watch, stop_project_disk_watch, undo_project_workspace,
+        disk_watch::{
+            read_current_project_disk_manifest, scan_project, start_project_disk_watch,
+            stop_project_disk_watch,
+        },
+        file_buffers::{
+            apply_file_buffer_changeset, clear_file_buffer_draft, read_file_buffer_text,
+            set_file_buffer_draft,
+        },
+        lifecycle::{close_project, open_project, read_project_file, reattach_project_session},
+        transition_decisions::{
+            acknowledge_project_transition_decision_recovery_plan,
+            execute_project_transition_decision_retention,
+            record_project_transition_operator_decision,
+            recover_project_transition_decision_retention_hot_journal,
+        },
+        workspace_history_recovery::{
+            read_project_workspace_state, read_recovery_coordinator_scan,
+            recover_project_workspace_save, redo_project_workspace, save_project_workspace,
+            undo_project_workspace,
+        },
     },
-    project_model::{read_project_model, resolve_template_workbench_plan},
     publish::{
         current_publish_build_receipt, current_publish_preflight_receipt, run_publish_preflight,
     },
-    source_graph::{
-        create_site_archive_structure, create_site_page_structure, create_site_partial_structure,
-        create_site_single_structure, include_site_partial, read_source_graph,
-        read_taxonomy_catalog, read_template_catalog,
-    },
+    source_graph::{read_source_graph, read_taxonomy_catalog, read_template_catalog},
     startup::{
         acknowledge_project_frontend_hydrated, apply_startup_creation, cancel_project_open,
         inspect_project_open, inspect_startup_folder, plan_startup_creation,
@@ -155,22 +156,19 @@ use commands::{
     taxonomies::{apply_taxonomy_mutation, plan_taxonomy_mutation},
     templates::{
         workspace_create_listing_item, workspace_create_semantic_template,
-        workspace_create_template, workspace_create_template_collection,
         workspace_delete_listing_item, workspace_delete_template, workspace_duplicate_template,
         workspace_override_theme_template, workspace_rename_template,
         workspace_set_template_assignment, workspace_set_template_parent,
     },
-    themes::{apply_theme_change, plan_theme_change, read_theme_catalog},
     versioning::{
         cancel_version_network_operation, clear_version_upstream, commit_versioning,
         configure_version_remote, configure_version_upstream, configure_versioning_identity,
         create_version_branch, delete_version_branch, fetch_version_remote, initialize_versioning,
         integrate_version_target, preview_version, push_version_branch, read_version_diff,
         read_version_history, read_version_integration_plan, read_version_integration_recovery,
-        read_version_restore_recovery, read_version_sync_comparison, read_versioning_snapshot,
-        remove_version_remote, resolve_version_integration_recovery,
-        resolve_version_restore_recovery, restore_version, stage_all_versioning,
-        stage_versioning_paths, stop_version_preview, switch_version_branch,
+        read_version_restore_recovery, read_versioning_snapshot, remove_version_remote,
+        resolve_version_integration_recovery, resolve_version_restore_recovery, restore_version,
+        stage_all_versioning, stage_versioning_paths, stop_version_preview, switch_version_branch,
         unstage_all_versioning, unstage_versioning_paths,
     },
     window::reset_main_webview_zoom,
@@ -376,6 +374,30 @@ fn current_project_root_for_shutdown_guard(state: &AppState) -> Result<Option<St
         .map(|slot| slot.as_ref().map(|root| root.to_string_lossy().to_string()))
 }
 
+fn flush_current_workbench_projection<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<AppState>();
+    let session = match state.project_workspace.lock() {
+        Ok(workspace) => workspace
+            .as_ref()
+            .map(|workspace| workspace.session.clone()),
+        Err(_) => {
+            eprintln!("[Pană Studio] Workbench shutdown flush could not lock ProjectWorkspace.");
+            return;
+        }
+    };
+    let Some(session) = session else {
+        return;
+    };
+    let result = state.workbench.read(&session).and_then(|snapshot| {
+        state
+            .workbench_projection_persistence
+            .flush_latest(app, &session, &snapshot)
+    });
+    if let Err(error) = result {
+        eprintln!("[Pană Studio] Workbench shutdown flush failed: {error}");
+    }
+}
+
 fn request_frontend_project_close<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     project_root: String,
@@ -525,6 +547,7 @@ pub fn run() {
             }
         }
         RunEvent::ExitRequested { api, .. } => {
+            flush_current_workbench_projection(app_handle);
             if project_session_is_open_for_shutdown_guard(app_handle, "app_exit_requested") {
                 api.prevent_exit();
                 return;
@@ -538,6 +561,7 @@ pub fn run() {
             system_preferences::refresh_system_locale(app_handle);
         }
         RunEvent::Exit => {
+            flush_current_workbench_projection(app_handle);
             let state = app_handle.state::<AppState>();
             stop_source_browser(app_handle, state.inner());
             stop_project_preview(app_handle, state.inner());

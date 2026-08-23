@@ -11,19 +11,36 @@
   } from "@tabler/icons-svelte";
   import DeployPane from "$lib/components/DeployPane.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { PublishWorkspaceState } from "$lib/deploy/publish-state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
   import type {
     PublishPreflightGate,
     PublishPreflightRemediation,
-    WorkspaceSourceOpenOptions,
-  } from "$lib/types";
+  } from "$lib/deploy/contracts";
+  import type { SourceRange } from "$lib/source-graph/contracts";
+  import type { WorkspaceSourceOpenOptions } from "$lib/workbench/contracts";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    publishWorkspace,
+    workspaceMutations,
+    globalStatus,
+    scannedProject,
+    externalDiskWatchRevision,
+    saveActiveFile,
+    openAudit,
+    revealSourceRange,
     openWorkspaceSource,
   }: {
-    app: AppState;
+    publishWorkspace: PublishWorkspaceState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    globalStatus: GlobalStatusState;
+    scannedProject: boolean;
+    externalDiskWatchRevision: number;
+    saveActiveFile: () => void | Promise<void>;
+    openAudit: (focusObservability?: boolean) => void | Promise<void>;
+    revealSourceRange: (file: string, range: SourceRange) => void;
     openWorkspaceSource: (
       path: string,
       options?: WorkspaceSourceOpenOptions,
@@ -40,21 +57,21 @@
   let preflightRunning = $state(false);
   let authorityLoadKey = $state("");
 
-  const preflight = $derived(app.currentPublishPreflightReceipt());
+  const preflight = $derived(publishWorkspace.currentPreflight());
   const releaseReady = $derived(preflight?.status === "ready");
 
   $effect(() => {
-    const projectRoot = app.sessionProjectRoot;
-    const runtimeSessionId = app.kernelProjectSessionId;
-    const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
-    const diskGeneration = app.projectWorkspaceSnapshot?.diskGeneration;
-    const diskWatchRevision = app.externalDiskWatchRevision;
+    const projectRoot = workspaceMutations.identity?.expectedProjectRoot ?? "";
+    const runtimeSessionId = workspaceMutations.identity?.expectedSessionId ?? "";
+    const workspaceRevision = workspaceMutations.snapshot?.revision;
+    const diskGeneration = workspaceMutations.snapshot?.diskGeneration;
+    const diskWatchRevision = externalDiskWatchRevision;
     const key = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision ?? ""}\u0000${diskGeneration ?? ""}\u0000${diskWatchRevision}`;
     if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined || key === authorityLoadKey) return;
     authorityLoadKey = key;
-    app.invalidatePublishAuthorization();
-    void app.refreshPublishAuthorization().catch((error) => {
-      app.setGlobalStatus(t("publish-authorization-refresh-failed", { error: errorMessage(error) }), "error");
+    publishWorkspace.invalidate();
+    void publishWorkspace.refreshAuthorization().catch((error) => {
+      globalStatus.set(t("publish-authorization-refresh-failed", { error: errorMessage(error) }), "error");
     });
   });
 
@@ -89,13 +106,13 @@
     if (preflightRunning) return;
     preflightRunning = true;
     try {
-      const receipt = await app.runPublishPreflight();
-      app.setGlobalStatus(
+      const receipt = await publishWorkspace.runPreflight();
+      globalStatus.set(
         preflightResultLabel(receipt.status),
         receipt.status === "ready" ? "saved" : receipt.status === "blocked" ? "unsaved" : "error",
       );
     } catch (error) {
-      app.setGlobalStatus(
+      globalStatus.set(
         t("publish-preflight-failed", { error: error instanceof Error ? error.message : String(error) }),
         "error",
       );
@@ -105,19 +122,19 @@
   }
 
   async function saveSession() {
-    await app.saveActiveFile();
-    app.invalidatePublishAuthorization();
+    await saveActiveFile();
+    publishWorkspace.invalidate();
   }
 
   async function openAuditFinding(fingerprint: string) {
     const finding = preflight?.auditReceipt.findings.find((item) => item.fingerprint === fingerprint);
     const location = finding?.primaryLocation;
     if (!location) {
-      await app.setWorkbenchActivity("audit");
+      await openAudit();
       return;
     }
     await openWorkspaceSource(location.file, { surface: "code" });
-    if (location.range) app.revealSourceRange(location.file, location.range);
+    if (location.range) revealSourceRange(location.file, location.range);
   }
 
   async function runRemediation(remediation: PublishPreflightRemediation) {
@@ -126,13 +143,13 @@
         await saveSession();
         return;
       case "open_audit":
-        await app.setWorkbenchActivity("audit");
+        await openAudit();
         return;
       case "open_source":
         if (remediation.location) {
           await openWorkspaceSource(remediation.location.file, { surface: "code" });
           if (remediation.location.range) {
-            app.revealSourceRange(remediation.location.file, remediation.location.range);
+            revealSourceRange(remediation.location.file, remediation.location.range);
           }
         }
         return;
@@ -141,7 +158,7 @@
         selectView("configuration");
         return;
       case "reconcile_disk":
-        app.setGlobalStatus(t("publish-reconcile-disk-guidance"), "unsaved");
+        globalStatus.set(t("publish-reconcile-disk-guidance"), "unsaved");
         return;
       case "retry":
         await runPreflight();
@@ -261,17 +278,20 @@
           <div class="release-warning" role="status"><IconAlertTriangle size={15} /><span>{t("publish-gates-warning")}</span></div>
         {/if}
         <DeployPane
-          {app}
-          scannedProject={!!app.scannedProject}
-          cachebustAssets={app.cachebustAssets}
-          projectRoot={app.sessionProjectRoot}
-          runtimeSessionId={app.kernelProjectSessionId}
+          {scannedProject}
+          cachebustAssets={publishWorkspace.cachebustAssets}
+          projectRoot={workspaceMutations.identity?.expectedProjectRoot ?? ""}
+          runtimeSessionId={workspaceMutations.identity?.expectedSessionId ?? ""}
+          publishPreflight={publishWorkspace.currentPreflight()}
+          publishBuild={publishWorkspace.currentBuild()}
+          invalidatePublishAuthorization={() => publishWorkspace.invalidate()}
+          buildForPublish={() => publishWorkspace.buildForPublish()}
           workspaceMode
           actionsOnly
-          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as import("$lib/status/global-status").GlobalStatusKind)}
-          onCachebustAssetsChange={(value) => { app.cachebustAssets = value; }}
+          onStatusUpdate={(text, kind) => globalStatus.set(text, kind as import("$lib/status/global-status").GlobalStatusKind)}
+          onCachebustAssetsChange={(value) => { publishWorkspace.cachebustAssets = value; }}
         />
-        <button class="ui-button toolbar output-link" type="button" onclick={() => { void app.openAuditWorkspace("runtime", true); }}>{t("publish-open-log")}</button>
+        <button class="ui-button toolbar output-link" type="button" onclick={() => { void openAudit(true); }}>{t("publish-open-log")}</button>
       </aside>
     </div>
   {:else}
@@ -281,14 +301,17 @@
       </header>
       <div class="configuration-scroll">
         <DeployPane
-          {app}
-          scannedProject={!!app.scannedProject}
-          cachebustAssets={app.cachebustAssets}
-          projectRoot={app.sessionProjectRoot}
-          runtimeSessionId={app.kernelProjectSessionId}
+          {scannedProject}
+          cachebustAssets={publishWorkspace.cachebustAssets}
+          projectRoot={workspaceMutations.identity?.expectedProjectRoot ?? ""}
+          runtimeSessionId={workspaceMutations.identity?.expectedSessionId ?? ""}
+          publishPreflight={publishWorkspace.currentPreflight()}
+          publishBuild={publishWorkspace.currentBuild()}
+          invalidatePublishAuthorization={() => publishWorkspace.invalidate()}
+          buildForPublish={() => publishWorkspace.buildForPublish()}
           workspaceMode
-          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as import("$lib/status/global-status").GlobalStatusKind)}
-          onCachebustAssetsChange={(value) => { app.cachebustAssets = value; }}
+          onStatusUpdate={(text, kind) => globalStatus.set(text, kind as import("$lib/status/global-status").GlobalStatusKind)}
+          onCachebustAssetsChange={(value) => { publishWorkspace.cachebustAssets = value; }}
         />
       </div>
     </div>

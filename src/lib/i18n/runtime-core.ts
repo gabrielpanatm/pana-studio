@@ -20,7 +20,7 @@ export class FluentCatalogRuntime {
   locale: string;
   direction: "ltr" | "rtl";
   readonly baseLocale: string;
-  private readonly catalogs: FluentLocaleCatalogs;
+  private readonly catalogs: Record<string, FluentLocaleCatalog>;
   private readonly onFormatError: (
     locale: string,
     id: string,
@@ -37,21 +37,35 @@ export class FluentCatalogRuntime {
       errors: Error[],
     ) => void = () => {},
   ) {
-    this.catalogs = catalogs;
+    this.catalogs = { ...catalogs };
     this.baseLocale = baseLocale;
     this.onFormatError = onFormatError;
-    if (!this.hasLocale(baseLocale)) {
-      throw new Error(`Base Fluent locale ${baseLocale} is missing`);
+    const initialLocale = this.hasLocale(baseLocale)
+      ? baseLocale
+      : Object.keys(this.catalogs)[0];
+    if (!initialLocale) {
+      throw new Error("Fluent runtime requires at least one locale catalog");
     }
-    this.locale = baseLocale;
-    this.direction = catalogs[baseLocale].manifest.direction;
+    this.locale = initialLocale;
+    this.direction = this.catalogs[initialLocale].manifest.direction;
   }
 
   setLocale(locale: string) {
-    const effective = this.hasLocale(locale) ? locale : this.baseLocale;
+    const effective = this.hasLocale(locale)
+      ? locale
+      : this.hasLocale(this.baseLocale)
+      ? this.baseLocale
+      : this.locale;
     this.locale = effective;
     this.direction = this.catalogs[effective].manifest.direction;
     return { locale: this.locale, direction: this.direction };
+  }
+
+  installCatalog(catalog: FluentLocaleCatalog) {
+    const locale = catalog.manifest.locale;
+    if (!locale.trim()) throw new Error("Fluent catalog locale is empty");
+    this.catalogs[locale] = catalog;
+    this.bundles.delete(locale);
   }
 
   format(
@@ -60,7 +74,7 @@ export class FluentCatalogRuntime {
   ): string {
     const selected = this.formatFromBundle(this.locale, id, arguments_);
     if (selected !== null) return selected;
-    if (this.locale !== this.baseLocale) {
+    if (this.locale !== this.baseLocale && this.hasLocale(this.baseLocale)) {
       const fallback = this.formatFromBundle(this.baseLocale, id, arguments_);
       if (fallback !== null) return fallback;
     }
@@ -90,6 +104,10 @@ export class FluentCatalogRuntime {
 
   hasLocale(locale: string) {
     return Object.prototype.hasOwnProperty.call(this.catalogs, locale);
+  }
+
+  hasMessage(id: string) {
+    return Boolean(this.bundle(this.locale).getMessage(id));
   }
 
   private formatFromBundle(

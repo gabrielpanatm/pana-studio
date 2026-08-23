@@ -7,11 +7,12 @@ function source(relativePath) {
 }
 
 test("Setările sunt o suprafață globală, nu o activitate a proiectului", () => {
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/application/contracts.ts")
+    + source("../src/lib/workbench/contracts.ts");
   const rustWorkbench = source("../src-tauri/src/kernel/workbench/model.rs");
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
   const rail = source("../src/lib/components/workbench/ActivityRail.svelte");
-  const route = source("../src/routes/+page.svelte");
+  const application = source("../src/lib/components/application/ApplicationWorkspace.svelte");
   const startup = source("../src/lib/components/startup/StartupView.svelte");
 
   assert.match(types, /ApplicationSurface = "workbench" \| "settings"/);
@@ -25,10 +26,11 @@ test("Setările sunt o suprafață globală, nu o activitate a proiectului", () 
   );
   assert.match(center, /retainedAuxiliarySurface === "settings"[\s\S]*<SettingsWorkspace/);
   assert.match(
-    route,
-    /\{#if \(app\.projectLifecycle\.activeSession && app\.scannedProject\) \|\| app\.applicationSurface === "settings"\}/,
+    application,
+    /\{#if \(projectSession\.lifecycle\.activeSession && projectSession\.project\) \|\| shell\.surface === "settings"\}/,
   );
-  assert.match(startup, /app\.openApplicationSettings\(\)/);
+  assert.match(startup, /onclick=\{openApplicationSettings\}/);
+  assert.doesNotMatch(startup, /AppState|app\./);
   assert.match(rail, /settingsActive/);
   assert.match(rail, /aria-current=\{settingsActive \? "page"/);
   assert.doesNotMatch(rail, /settingsOpen|toggleSettings/);
@@ -55,7 +57,7 @@ test("preferințele aplicației au contract Rust cu revizie și CAS", () => {
   const model = source("../src-tauri/src/commands/config/model.rs");
   const implementation = source("../src-tauri/src/commands/config/app_config.rs");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
-  const appState = source("../src/lib/state/app.svelte.ts");
+  const preferences = source("../src/lib/application/preferences.svelte.ts");
 
   assert.match(model, /pub struct ApplicationSettingsSnapshot/);
   assert.match(model, /pub brand_accent: String/);
@@ -75,6 +77,10 @@ test("preferințele aplicației au contract Rust cu revizie și CAS", () => {
   );
   assert.match(registry, /read_application_settings/);
   assert.match(registry, /save_application_settings/);
-  assert.match(appState, /applicationSettingsSaveTail/);
-  assert.match(appState, /persistBlockPropertiesLayout/);
+  assert.match(preferences, /private saveTail: Promise<void>/);
+  assert.match(preferences, /persistBlockPropertiesLayout/);
+  assert.doesNotMatch(
+    source("../src/lib/components/application/ApplicationWorkspace.svelte"),
+    /ApplicationSettingsSnapshot/,
+  );
 });

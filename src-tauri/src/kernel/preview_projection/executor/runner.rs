@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 use crate::{
     kernel::project_workspace::ProjectWorkspace,
@@ -38,7 +38,7 @@ pub(super) struct PreviewStructuralPlanBlocked {
 }
 
 pub(super) struct PreviewStructuralPlanCommitted<P> {
-    pub(super) before_model: ProjectModel,
+    pub(super) before_model: Arc<ProjectModel>,
     pub(super) patch: P,
     pub(super) commit: PreviewStructuralWriteCommit,
 }
@@ -59,7 +59,7 @@ where
 pub(super) fn run_preview_structural_plan_with_model<P, Plan>(
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     spec: PreviewStructuralPlanSpec,
     plan: impl FnOnce(&ProjectModel) -> Plan,
 ) -> Result<Result<PreviewStructuralPlanCommitted<P>, PreviewStructuralPlanBlocked>, String>
@@ -117,7 +117,7 @@ where
 fn run_preview_structural_plan_with_model_in_history_group<P, Plan>(
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
-    before_model: ProjectModel,
+    before_model: Arc<ProjectModel>,
     spec: PreviewStructuralPlanSpec,
     history_group_id: Option<&str>,
     plan: impl FnOnce(&ProjectModel) -> Plan,

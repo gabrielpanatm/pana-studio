@@ -3,7 +3,7 @@
 </script>
 
 <script lang="ts">
-  import type { ScssVariable } from "$lib/types";
+  import type { ScssVariable } from "$lib/css/contracts";
   import { IconBolt } from "@tabler/icons-svelte";
   import { resolvePickerColor } from "$lib/inspector/color-picker-model";
   import PanaColorPicker from "$lib/components/ui/PanaColorPicker.svelte";

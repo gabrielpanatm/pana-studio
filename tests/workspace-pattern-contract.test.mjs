@@ -19,7 +19,6 @@ const canonicalActivityWorkspaces = {
   blocks: "../src/lib/components/creation/BlocksWorkspace.svelte",
   templates: "../src/lib/components/templates/TemplatesWorkspace.svelte",
   taxonomies: "../src/lib/components/taxonomies/TaxonomiesWorkspace.svelte",
-  themes: "../src/lib/components/themes/ThemesWorkspace.svelte",
   audit: "../src/lib/components/audit/AuditWorkspace.svelte",
   publish: "../src/lib/components/publish/PublishWorkspace.svelte",
   versioning: "../src/lib/components/VersionsPanel.svelte",
@@ -37,25 +36,40 @@ const tabbedActivityWorkspaces = {
   publish: canonicalActivityWorkspaces.publish,
 };
 
+function designImplementation() {
+  return [
+    workspaces.design,
+    "../src/lib/components/creation/design-system/contracts.ts",
+    "../src/lib/components/creation/design-system/DesignTokensWorkspace.svelte",
+    "../src/lib/components/creation/design-system/DesignClassesWorkspace.svelte",
+    "../src/lib/components/creation/design-system/StylesheetsWorkspace.svelte",
+    "../src/lib/components/creation/design-system/FontManagerWorkspace.svelte",
+    "../src/lib/components/creation/design-system/font-manager/controller.svelte.ts",
+    "../src/lib/components/creation/design-system/font-manager/FontInstaller.svelte",
+    "../src/lib/components/creation/design-system/font-manager/FontDetail.svelte",
+  ].map(source).join("\n");
+}
+
 test("workspaces-urile folosesc același model catalog plus panou contextual", () => {
   for (const [name, path] of Object.entries(workspaces)) {
     const workspace = source(path);
+    const implementation = name === "design" ? designImplementation() : workspace;
     if (name === "content") {
-      assert.match(workspace, /type DetailMode = "info" \| "create"/, name);
-      assert.match(workspace, /app\.workbenchSnapshot\?\.contentWorkspace\.mode === "edit"/, name);
-      assert.match(workspace, /app\.openContentPageEditor\(page\.file\)/, name);
+      assert.match(implementation, /type DetailMode = "info" \| "create"/, name);
+      assert.match(implementation, /contentWorkspace\?\.mode === "edit"/, name);
+      assert.match(implementation, /commands\.openPageEditor\(page\.file\)/, name);
     } else {
-      assert.match(workspace, /type DetailMode = "info" \| "create" \| "edit"/, name);
-      assert.match(workspace, /detailMode === "edit"/, name);
+      assert.match(implementation, /type DetailMode = "info" \| "create" \| "edit"/, name);
+      assert.match(implementation, /detailMode === "edit"/, name);
     }
     assert.match(workspace, /class="workspace-header"/, name);
     assert.match(workspace, /class="workspace-toolbar"/, name);
     assert.match(workspace, /role="tablist"/, name);
     assert.match(workspace, /type="search"/, name);
     assert.match(workspace, /class="[^"]*\btoolbar-action\b[^"]*"/, name);
-    assert.match(workspace, /detailMode === "create"/, name);
-    assert.match(workspace, /t\("(?:design|components|content|assets|data)-add/, name);
-    assert.doesNotMatch(workspace, /window\.(?:prompt|confirm)/, name);
+    assert.match(implementation, /detailMode === "create"/, name);
+    assert.match(implementation, /t\("(?:design|components|content|assets|data)-add/, name);
+    assert.doesNotMatch(implementation, /window\.(?:prompt|confirm)/, name);
   }
 });
 
@@ -153,13 +167,13 @@ test("activitățile folosesc contractul vizual central pentru shell, taburi și
 });
 
 test("Sistem de design creează și editează prin comenzile ProjectWorkspace", () => {
-  const workspace = source(workspaces.design);
+  const workspace = designImplementation();
   const css = source("../src-tauri/src/commands/css.rs");
   const design = source("../src-tauri/src/commands/design_system.rs");
-  const io = source("../src/lib/project/io.ts");
+  const io = source("../src/lib/css/io.ts");
 
-  assert.match(workspace, /app\.createDesignSystemVariable/);
-  assert.match(workspace, /app\.createDesignSystemClass/);
+  assert.match(workspace, /createVariable/);
+  assert.match(workspace, /createClass/);
   assert.match(workspace, /createProjectTextFile/);
   assert.match(workspace, /downloadGoogleFontFamily/);
   assert.match(workspace, /t\("design-edit"\)/);
@@ -176,7 +190,7 @@ test("listele Tera sunt surse reale în ComponentGraph, fără catalog paralel",
   const palette = source("../src/lib/tera/palette.ts");
   const graph = source("../src-tauri/src/source_graph/component_graph.rs");
   const commands = source("../src-tauri/src/commands/components.rs");
-  const app = source("../src/lib/state/app.svelte.ts");
+  const composition = source("../src/lib/application/composition.svelte.ts");
   const route = source("../src/routes/+page.svelte");
 
   assert.equal(existsSync(new URL("../src/lib/loops/storage.ts", import.meta.url)), false);
@@ -185,12 +199,12 @@ test("listele Tera sunt surse reale în ComponentGraph, fără catalog paralel",
     existsSync(new URL("../src/lib/components/creation/LoopBuilderPanel.svelte", import.meta.url)),
     false,
   );
-  assert.doesNotMatch(app, /loadLoopDefinitionsForProject|saveLoopDefinitionsForProject/);
+  assert.doesNotMatch(composition, /loadLoopDefinitionsForProject|saveLoopDefinitionsForProject/);
   assert.doesNotMatch(route, /data\/pana-studio\/loops\.json|loadProjectLoopDefinitions/);
-  assert.match(palette, /id:\s*"for:items"[\s\S]*kind:\s*"for"/);
+  assert.match(palette, /item\.kind === "for"/);
   assert.match(palette, /\{% for \$\{item\.expression/);
   assert.match(graph, /ComponentDefinitionKind::InlineRepeat/);
-  assert.match(workspace, /app\.sourceGraph\?\.componentGraph/);
+  assert.match(workspace, /sourceGraph\?\.componentGraph/);
   assert.match(workspace, /applyComponentMutation/);
   assert.match(commands, /commit_project_workspace_session_mutation[\s\S]*stage_validated_component_mutation/);
   assert.doesNotMatch(workspace, /registerLoopDefinition|removeLoopDefinition/);
@@ -198,25 +212,23 @@ test("listele Tera sunt surse reale în ComponentGraph, fără catalog paralel",
 
 test("Conținut are două panouri și elimină fluxul legacy cu prompt", () => {
   const workspace = source(workspaces.content);
-  const controller = source("../src/lib/state/project-controller.ts");
 
   assert.match(workspace, /type ContentView = "all" \| "pages" \| "sections"/);
   assert.match(workspace, /class="toolbar-filter"[\s\S]*bind:value=\{sectionFilter\}/);
   assert.match(workspace, /class="content-list"/);
   assert.match(workspace, /class="detail-panel"/);
-  assert.match(workspace, /app\.createContentPageFromInput/);
-  assert.match(workspace, /app\.readPageSettingsDocument/);
-  assert.match(workspace, /app\.updatePageFrontmatterSource/);
+  assert.match(workspace, /commands\.createPage/);
+  assert.match(workspace, /commands\.readPageSettings/);
+  assert.match(workspace, /commands\.updateFrontmatterSource/);
   assert.doesNotMatch(workspace, /class="collections"/);
-  assert.doesNotMatch(controller, /export async function createContentPage\(/);
-  assert.doesNotMatch(controller, /window\.prompt/);
+  assert.doesNotMatch(workspace, /window\.prompt/);
 });
 
 test("Resurse importă binar create-only prin Rust și expune resursele staged", () => {
   const workspace = source(workspaces.assets);
   const commands = source("../src-tauri/src/commands/page_assets.rs");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
-  const io = source("../src/lib/project/io.ts");
+  const io = source("../src/lib/page-assets/io.ts");
 
   assert.match(workspace, /type AssetView = "all" \| "images" \| "fonts" \| "other"/);
   assert.match(workspace, /stagedBinaryResources/);

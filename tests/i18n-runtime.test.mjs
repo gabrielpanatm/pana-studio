@@ -7,12 +7,12 @@ import { test } from "node:test";
 import { FluentCatalogRuntime } from "$lib/i18n/runtime-core";
 import {
   BASE_LOCALE,
-  localeCatalogs,
+  availableLocales,
+  loadLocaleCatalog,
 } from "$lib/i18n/generated/catalog";
 import {
   APPLICATION_BOOT_PROJECTION_STORAGE_KEY,
   isApplicationBootProjection,
-  parseApplicationBootProjection,
   storeApplicationBootProjection,
 } from "$lib/system-preferences/boot-projection";
 
@@ -24,7 +24,13 @@ function collectSvelteFiles(directory) {
   });
 }
 
-test("runtime-ul Fluent schimbă limba fără restart și folosește fallbackul en-US", () => {
+test("runtime-ul Fluent schimbă limba fără restart și folosește fallbackul en-US", async () => {
+  const localeCatalogs = Object.fromEntries(
+    await Promise.all(availableLocales.map(async (locale) => [
+      locale,
+      await loadLocaleCatalog(locale),
+    ])),
+  );
   const runtime = new FluentCatalogRuntime(localeCatalogs, BASE_LOCALE);
   assert.equal(runtime.format("settings-language-title"), "Interface language");
 
@@ -37,6 +43,19 @@ test("runtime-ul Fluent schimbă limba fără restart și folosește fallbackul 
   assert.equal(runtime.locale, "en-US");
   assert.equal(runtime.format("common-loading"), "Loading…");
   assert.equal(runtime.format("missing-message"), "[translation unavailable]");
+});
+
+test("runtime-ul Fluent pornește cu un singur catalog și îl extinde la cerere", async () => {
+  const romanian = await loadLocaleCatalog("ro");
+  const runtime = new FluentCatalogRuntime({ ro: romanian }, BASE_LOCALE);
+
+  assert.equal(runtime.locale, "ro");
+  assert.equal(runtime.hasLocale(BASE_LOCALE), false);
+  assert.equal(runtime.format("settings-language-title"), "Limba interfeței");
+
+  runtime.installCatalog(await loadLocaleCatalog(BASE_LOCALE));
+  runtime.setLocale(BASE_LOCALE);
+  assert.equal(runtime.format("settings-language-title"), "Interface language");
 });
 
 test("direcția este metadată de catalog, inclusiv pentru un locale RTL", () => {
@@ -79,8 +98,12 @@ test("boot-ul nativ nu afișează fereastra înaintea snapshotului Rust", () => 
     new URL("../src/app.html", import.meta.url),
     "utf8",
   );
-  const appState = readFileSync(
-    new URL("../src/lib/state/app.svelte.ts", import.meta.url),
+  const lifecycle = readFileSync(
+    new URL("../src/lib/application/workspace-page-lifecycle.ts", import.meta.url),
+    "utf8",
+  );
+  const preferences = readFileSync(
+    new URL("../src/lib/application/preferences.svelte.ts", import.meta.url),
     "utf8",
   );
   const rustModel = readFileSync(
@@ -93,13 +116,14 @@ test("boot-ul nativ nu afișează fereastra înaintea snapshotului Rust", () => 
   );
 
   assert.equal(JSON.parse(config).app.windows[0].visible, false);
-  assert.match(page, /app\.initFromStorage[\s\S]*finally\(revealApplication\)/);
-  assert.match(page, /getCurrentWindow\(\)\.show\(\)/);
+  assert.match(page, /<ApplicationWorkspace/);
+  assert.match(lifecycle, /initializeApplicationRuntime\(runtime\)/);
+  assert.match(lifecycle, /getCurrentWindow\(\)\.show\(\)/);
   assert.doesNotMatch(appHtml, /localStorage\.getItem\("pana-studio-ui-theme"\)/);
   assert.match(appHtml, /pana-studio-boot-projection-v1/);
   assert.match(appHtml, /__PANA_APPLY_BOOT_PROJECTION__/);
   assert.doesNotMatch(appHtml, /Pană Studio is loading|Preparing the visual editor/);
-  assert.match(appState, /storeApplicationBootProjection\(window\.localStorage, snapshot\.boot\)/);
+  assert.match(preferences, /storeApplicationBootProjection\(window\.localStorage, snapshot\.boot\)/);
   assert.match(rustModel, /pub struct ApplicationBootProjection/);
   assert.match(rustBoot, /read_application_settings[\s\S]*settings\.boot[\s\S]*window\.eval/);
 });
@@ -121,16 +145,10 @@ test("cache-ul de boot acceptă numai proiecția versionată a snapshotului Rust
     loadingSubtitle: "Se pregătește editorul vizual",
   };
   assert.equal(isApplicationBootProjection(projection), true);
-  assert.deepEqual(
-    parseApplicationBootProjection(JSON.stringify(projection)),
-    projection,
-  );
   assert.equal(
     isApplicationBootProjection({ ...projection, authority: "local_storage" }),
     false,
   );
-  assert.equal(parseApplicationBootProjection("{invalid"), null);
-
   const stored = new Map();
   assert.equal(
     storeApplicationBootProjection(
@@ -210,4 +228,23 @@ test("generatorul i18n nu invalidează inutil HMR și publică atomic catalogul"
   assert.match(generator, /const temporaryPath = `\$\{path\}\.\$\{process\.pid\}\.tmp`/);
   assert.match(generator, /writeFileSync\(temporaryPath,\s*source\)/);
   assert.match(generator, /renameSync\(temporaryPath,\s*path\)/);
+});
+
+test("catalogul generat încarcă dinamic o singură limbă și nu publică ID-uri runtime", () => {
+  const catalog = readFileSync(
+    new URL("../src/lib/i18n/generated/catalog.ts", import.meta.url),
+    "utf8",
+  );
+  const layout = readFileSync(
+    new URL("../src/routes/+layout.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(catalog, /\(\) => import\("\.\/catalog\.en-US"\)/);
+  assert.match(catalog, /\(\) => import\("\.\/catalog\.ro"\)/);
+  assert.doesNotMatch(catalog, /^import \{ localeCatalog/m);
+  assert.doesNotMatch(catalog, /export const messageIds/);
+  assert.match(catalog, /export type MessageId =/);
+  assert.match(layout, /await readApplicationSettings\(\)/);
+  assert.match(layout, /await initializeLocalization\(locale\)/);
 });

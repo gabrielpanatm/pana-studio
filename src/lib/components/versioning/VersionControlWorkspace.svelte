@@ -1,12 +1,27 @@
 <script lang="ts">
   import VersionsPanel from "$lib/components/VersionsPanel.svelte";
-  import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-workspace-preview-coordinator";
-  import type { AppState } from "$lib/state/app.svelte";
-  import type { ProjectWorkspaceSnapshot } from "$lib/types";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceSnapshot } from "$lib/project/workspace-contract";
+  import type { VersionPreviewReceipt } from "$lib/versioning/contracts";
   import { errorMessage } from "$lib/util";
   import { t } from "$lib/i18n/runtime.svelte";
 
-  let { app }: { app: AppState } = $props();
+  let {
+    globalStatus,
+    workspaceMutations,
+    activeScannedPath,
+    activeVersionPreview,
+    showVersionPreview,
+    returnToLivePreview,
+  }: {
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    activeScannedPath: string | null;
+    activeVersionPreview: VersionPreviewReceipt | null;
+    showVersionPreview: (receipt: VersionPreviewReceipt) => Promise<void>;
+    returnToLivePreview: () => Promise<void>;
+  } = $props();
 
   async function reconcilePublishedGitWorkspace(
     workspace: ProjectWorkspaceSnapshot | null,
@@ -14,18 +29,18 @@
   ) {
     if (!workspace) return;
     if (
-      workspace.projectRoot !== app.sessionProjectRoot
-      || workspace.runtimeSessionId !== app.kernelProjectSessionId
+      workspace.projectRoot !== workspaceMutations.snapshot?.projectRoot
+      || workspace.runtimeSessionId !== workspaceMutations.snapshot?.runtimeSessionId
     ) return;
-    app.projectWorkspaceSnapshot = workspace;
+    if (!workspaceMutations.publishSnapshot(workspace)) return;
     const warnings: string[] = [];
     try {
-      const derived = await app.reconcileWorkspaceDerivedState({
+      const derived = await workspaceMutations.reconcile({
         expectedProjectRoot: workspace.projectRoot,
         expectedSessionId: workspace.runtimeSessionId,
         expectedWorkspaceRevision: workspace.revision,
         topologyChanged: true,
-        preferredRelativePath: app.activeScannedPath,
+        preferredRelativePath: activeScannedPath,
         refreshSourceGraph: true,
         refreshScss: true,
       });
@@ -34,7 +49,7 @@
       warnings.push(errorMessage(error));
     }
     try {
-      await projectLatestProjectWorkspacePreview(app, {
+      await workspaceMutations.projectPreview({
         reason: "workspace-mutation",
         minimumWorkspaceRevision: workspace.revision,
         requestedPaths: changedPaths,
@@ -44,26 +59,26 @@
       warnings.push(`Preview: ${errorMessage(error)}`);
     }
     if (warnings.length > 0) {
-      app.escalateGlobalStatus({
+      globalStatus.escalate({
         id: "versioning.derived-projection",
         level: "warning",
         title: t("versions-projection-resync-title"),
         message: [...new Set(warnings)].join(" "),
       });
     } else {
-      app.clearNotification("versioning.derived-projection");
+      globalStatus.clear("versioning.derived-projection");
     }
   }
 </script>
 
 <VersionsPanel
-  projectRoot={app.sessionProjectRoot}
-  sessionId={app.kernelProjectSessionId}
-  workspace={app.projectWorkspaceSnapshot}
-  onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
-  activePreviewCommitOid={app.activeVersionPreview?.commitOid ?? null}
-  showPreview={async (receipt) => { await app.showVersionPreview(receipt); }}
-  returnToLivePreview={async () => { await app.returnToLivePreview(); }}
+  projectRoot={workspaceMutations.snapshot?.projectRoot ?? ""}
+  sessionId={workspaceMutations.snapshot?.runtimeSessionId ?? ""}
+  workspace={workspaceMutations.snapshot}
+  onStatusUpdate={(text, kind) => globalStatus.set(text, kind)}
+  activePreviewCommitOid={activeVersionPreview?.commitOid ?? null}
+  showPreview={showVersionPreview}
+  {returnToLivePreview}
   afterRestore={async (receipt) => {
     await reconcilePublishedGitWorkspace(receipt.workspace, receipt.changedPaths);
   }}

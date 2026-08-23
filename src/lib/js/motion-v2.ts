@@ -8,7 +8,7 @@ import type {
   MotionTarget,
   MotionTrigger,
   MotionValue,
-} from "$lib/types";
+} from "$lib/js/contracts";
 
 export function motionId(prefix: string): string {
   const value = globalThis.crypto?.randomUUID?.()

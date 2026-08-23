@@ -61,13 +61,9 @@ test("Save rămâne saved când Source Graph și Preview 404 eșuează după rec
         workspace: savedWorkspace,
       };
     }
-    if (command === "project_project_workspace_preview") {
-      previewCalls += 1;
-      throw new Error("HTTP/1.1 404 Not Found");
-    }
     throw new Error(`Comandă IPC neașteptată: ${command}`);
   });
-  const host = {
+  const state = {
     sessionProjectRoot: "/project",
     kernelProjectSessionId: "session:runtime",
     editorMutationEpoch: 0,
@@ -87,34 +83,55 @@ test("Save rămâne saved când Source Graph și Preview 404 eșuează după rec
       structure: false,
     },
     pendingTag: null,
-    scssVariables: [],
     refreshToken: 0,
     jsRefreshToken: 0,
-    previewWorkspaceRevision: null,
-    pendingCanvasProjection: null,
-    canProjectWorkspacePreview: () => true,
+  };
+  const host = {
+    context: () => ({
+      projectRoot: state.sessionProjectRoot,
+      runtimeSessionId: state.kernelProjectSessionId,
+      editorMutationEpoch: state.editorMutationEpoch,
+      workspace: state.projectWorkspaceSnapshot,
+      diskState: state.diskState,
+      activeScannedPath: state.activeScannedPath,
+    }),
+    incrementSaveRequest() { state.saveRequest += 1; },
+    acceptWorkspace(workspace) { state.projectWorkspaceSnapshot = workspace; },
+    markDiskSaved() {},
+    bumpRefreshTokens() {
+      state.refreshToken += 1;
+      state.jsRefreshToken += 1;
+    },
     setGlobalStatus(text, kind) {
       statuses.push({ text, kind });
     },
-    setInspectorPending(area, pending) {
-      this.inspectorPending[area] = pending;
+    html: {
+      get inspectorPending() { return state.inspectorPending; },
+      get pending() { return state.htmlPending; },
+      get pendingTag() { return state.pendingTag; },
+      setInspectorPending(area, pending) { state.inspectorPending[area] = pending; },
+      applyTagChange: async () => noopAction(),
+      applyClasses: async () => noopAction(),
+      draft: {
+        applyAttributes: async () => noopAction(),
+        applyText: async () => noopAction(),
+      },
+      applyImageSource: async () => noopAction(),
     },
-    applyTagChange: async () => noopAction(),
-    applyClassesToHtml: async () => noopAction(),
-    applyAttributesToHtml: async () => noopAction(),
-    applyImageSourceToHtml: async () => noopAction(),
-    applyTextContentToHtml: async () => noopAction(),
     async reconcileWorkspaceDerivedState() {
       throw new Error("Source Graph indisponibil");
     },
-    requestPreviewRefresh: async () => true,
+    async projectLatestPreview() {
+      previewCalls += 1;
+      throw new Error("HTTP/1.1 404 Not Found");
+    },
     acceptProjectWorkspaceSaveBaseline() {},
   };
 
   assert.equal(await saveSessionDrafts(host), true);
   assert.equal(saveCalls, 1);
   assert.equal(previewCalls, 1);
-  assert.equal(host.projectWorkspaceSnapshot, savedWorkspace);
+  assert.equal(state.projectWorkspaceSnapshot, savedWorkspace);
   assert.equal(statuses.at(-1)?.kind, "saved");
   assert.match(statuses.at(-1)?.text ?? "", /Atomically saved/);
   assert.match(statuses.at(-1)?.text ?? "", /interface must resynchronize/i);

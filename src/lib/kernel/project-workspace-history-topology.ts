@@ -1,5 +1,5 @@
-import type { CommittedHistoryProjectionContext } from "$lib/state/project-controller";
-import type { ProjectWorkspaceUndoRedoCommandReceipt } from "$lib/types";
+import type { CommittedHistoryProjectionContext } from "$lib/project/controller-contracts";
+import type { ProjectWorkspaceUndoRedoCommandReceipt } from "$lib/project/workspace-contract";
 
 export type ProjectWorkspaceHistoryTopologyHost = {
   activeScannedPath: string | null;

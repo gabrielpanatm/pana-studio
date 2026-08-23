@@ -1,5 +1,7 @@
-import type { ProjectSettingsSnapshot, ZolaProjectSettings } from "$lib/types";
-export type { ProjectSettingsSnapshot } from "$lib/types";
+import type {
+  ProjectSettingsSnapshot,
+  ZolaProjectSettings,
+} from "$lib/project/lifecycle-contract";
 
 export type ProjectSettingsDraft = {
   cachebustAssetsDraft: boolean;

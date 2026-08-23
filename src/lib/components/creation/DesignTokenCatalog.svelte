@@ -11,47 +11,33 @@
     IconStack2,
     IconTypography,
   } from "@tabler/icons-svelte";
-  import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type {
     DesignTokenCatalogSnapshot,
     DesignTokenSnapshot,
-  } from "$lib/types";
+  } from "$lib/css/design-system-contract";
 
   let {
     catalog,
     loading = false,
     error = "",
-    query = "",
-    category = "all",
+    tokens,
     selectedId = "",
     selectToken,
   }: {
     catalog: DesignTokenCatalogSnapshot | null;
     loading?: boolean;
     error?: string;
-    query?: string;
-    category?: string;
+    tokens: DesignTokenSnapshot[];
     selectedId?: string;
     selectToken: (token: DesignTokenSnapshot) => void;
   } = $props();
 
-  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
-  const visibleTokens = $derived(
-    (catalog?.tokens ?? []).filter((token) => (
-      (category === "all" || token.categoryId === category)
-      && (
-        !normalizedQuery
-        || `${token.name} ${token.rawValue} ${token.resolvedValue ?? ""} ${token.sourcePath} ${token.groupLabel}`
-          .toLocaleLowerCase(l10n.locale)
-          .includes(normalizedQuery)
-      )
-    )),
-  );
   const visibleCategories = $derived(
     (catalog?.categories ?? [])
       .map((entry) => ({
         ...entry,
-        tokens: visibleTokens.filter((token) => token.categoryId === entry.id),
+        tokens: tokens.filter((token) => token.categoryId === entry.id),
       }))
       .filter((entry) => entry.tokens.length > 0),
   );

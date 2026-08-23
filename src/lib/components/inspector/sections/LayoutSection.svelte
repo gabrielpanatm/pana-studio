@@ -1,11 +1,10 @@
 <script lang="ts">
-  import type { ScssVariable } from "$lib/types";
+  import type { ScssVariable } from "$lib/css/contracts";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import {
     IconLayoutGrid,
     IconSquare,
     IconColumns,
-    IconLayoutRows,
     IconMinus,
     IconDots,
     IconEyeOff,

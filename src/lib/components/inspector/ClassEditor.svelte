@@ -1,5 +1,8 @@
 <script lang="ts">
-  import type { CssProperty, InstalledFontVariationAxis, ProjectFile, ScssVariable } from "$lib/types";
+  import type { ScssVariable } from "$lib/css/contracts";
+  import type { CssProperty } from "$lib/css/property-contract";
+  import type { InstalledFontVariationAxis } from "$lib/fonts/contracts";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import TypographySection from "./sections/TypographySection.svelte";
   import BackgroundSection from "./sections/BackgroundSection.svelte";
@@ -64,12 +67,12 @@
     {onGridOverlayChange}
     edit={cssPropertyEdit}
   />
-  <PositionSection   {pendingValues} {rulesMap} {scssVariables} edit={cssPropertyEdit} />
+  <PositionSection   {pendingValues} {rulesMap} edit={cssPropertyEdit} />
   <SizeSection       {pendingValues} {rulesMap} {scssVariables} edit={cssPropertyEdit} />
   <BorderSection     {pendingValues} {rulesMap} {scssVariables} edit={cssPropertyEdit} />
   <ShadowSection     {pendingValues} {rulesMap} {scssVariables} edit={cssPropertyEdit} />
-  <TransformSection  {pendingValues} {rulesMap} {scssVariables} edit={cssPropertyEdit} />
-  <EffectsSection    {pendingValues} {rulesMap} {scssVariables} {scannedAssets} edit={cssPropertyEdit} />
+  <TransformSection  {pendingValues} {rulesMap} edit={cssPropertyEdit} />
+  <EffectsSection    {pendingValues} {rulesMap} {scannedAssets} edit={cssPropertyEdit} />
 </div>
 
 <style>

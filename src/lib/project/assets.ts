@@ -1,5 +1,5 @@
 import { zolaRelativePath } from "$lib/project/files";
-import type { ProjectFile } from "$lib/types";
+import type { ProjectFile } from "$lib/project/lifecycle-contract";
 
 export type ProjectAssetOrigin = {
   kind: "local" | "theme" | "project";

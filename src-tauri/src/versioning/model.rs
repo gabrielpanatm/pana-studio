@@ -1,9 +1,7 @@
-use serde::{Deserialize, Serialize};
-use std::sync::{atomic::AtomicBool, Arc};
-
 use crate::{
     kernel::project_workspace::ProjectWorkspaceSnapshot, localization::LocalizedDiagnostic,
 };
+use serde::{Deserialize, Serialize};
 
 pub const VERSIONING_SCHEMA_VERSION: u32 = 2;
 
@@ -388,27 +386,6 @@ pub struct VersionNetworkCancelReceipt {
     pub schema_version: u32,
     pub operation_id: String,
     pub cancellation_requested: bool,
-}
-
-#[derive(Clone)]
-pub(crate) struct VersionNetworkOperationControl {
-    pub operation_id: String,
-    pub project_root: String,
-    pub session_id: String,
-    pub kind: VersionNetworkOperationKind,
-    pub cancellation: Arc<AtomicBool>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VersionSyncComparison {
-    pub schema_version: u32,
-    pub local_ref: String,
-    pub upstream_ref: String,
-    pub ahead: u64,
-    pub behind: u64,
-    pub local_only: Vec<VersionHistoryEntry>,
-    pub remote_only: Vec<VersionHistoryEntry>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

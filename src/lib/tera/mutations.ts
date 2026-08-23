@@ -1,4 +1,4 @@
-import type { SourceGraphNode } from "$lib/types";
+import type { SourceGraphNode } from "$lib/source-graph/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
 
 const templateLevelTeraKinds = new Set(["extends", "block", "import", "macro"]);

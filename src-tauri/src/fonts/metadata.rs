@@ -235,7 +235,7 @@ mod tests {
     use super::*;
 
     const INTER_VARIABLE: &[u8] = include_bytes!(
-        "../../resources/theme-packs/cadru/theme/static/fonturi/inter-400-700-latin-ext.woff2"
+        "../../resources/project-starters/cadru/project/static/fonturi/inter-400-700-latin-ext.woff2"
     );
 
     #[test]

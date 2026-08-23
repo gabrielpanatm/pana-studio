@@ -144,10 +144,6 @@ export function htmlTagCapability(tag: string): HtmlTagCapability | null {
     : null;
 }
 
-export function htmlTagAcceptsChildren(tag: string): boolean {
-  return htmlEditorSchema.tags[tag.trim().toLowerCase()]?.acceptsChildren === true;
-}
-
 export function htmlAttributeDefinition(name: string): HtmlAttributeDefinition | null {
   const normalized = name.trim().toLowerCase();
   const fixed = htmlEditorSchema.attributes[normalized];
@@ -214,13 +210,6 @@ export function htmlAttributePreviewMode(name: string, tag: string): HtmlPreview
   const definition = htmlAttributeDefinition(name);
   if (!definition || !definition.sourceEditable) return "blocked";
   return definition.previewMode ?? (definition.liveProjectable ? "live" : "sourceOnly");
-}
-
-export function htmlAttributeAppliesToTag(name: string, tag: string): boolean {
-  const definition = htmlAttributeDefinition(name);
-  if (!definition) return name.startsWith("data-") || name.startsWith("aria-");
-  if (!definition.elements?.length) return true;
-  return definition.elements.includes(tag.trim().toLowerCase());
 }
 
 export function htmlAttributeValueError(name: string, value: string): string | null {

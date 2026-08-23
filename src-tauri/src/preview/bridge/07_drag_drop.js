@@ -136,16 +136,15 @@
 
   function normalizedInsertElementPayload(element) {
     var data = element || {};
+    var kind = data.kind === "html" ? "html" : data.kind === "block" ? "block" : "";
+    if (!kind) return null;
     var tag = String(data.tag || "div").trim().toLowerCase();
     if (!/^[a-z][a-z0-9-]*$/.test(tag)) tag = "div";
-    var legacyComponent = data.kind === "component";
-    var kind = data.kind === "block" || legacyComponent ? "block" : "html";
-    var blockId = typeof data.blockId === "string"
-      ? data.blockId
-      : legacyComponent && typeof data.componentId === "string" ? data.componentId : "";
+    var blockId = typeof data.blockId === "string" ? data.blockId.trim() : "";
     var blockKind = data.blockKind === "js" || data.blockKind === "css" || data.blockKind === "static"
       ? data.blockKind
-      : data.componentKind === "js" || data.componentKind === "css" ? data.componentKind : "";
+      : "";
+    if (kind === "block" && (!blockId || !blockKind)) return null;
     return {
       id: String(data.id || tag),
       kind: kind,
@@ -234,9 +233,9 @@
 
     var element = normalizedInsertElementPayload(data && data.element);
     var drop = previewInsertTargetFromData(data);
-    var invalid = !drop.target;
+    var invalid = !element || !drop.target;
     var message = invalid
-      ? "Alege o destinație."
+      ? element ? "Alege o destinație." : "Element de inserare invalid."
       : previewDropLabel(drop.position) + " <" + element.tag + ">";
     updatePreviewDragIndicator(drop.event, drop.target, drop.position, invalid, message);
   }
@@ -245,7 +244,7 @@
     var element = normalizedInsertElementPayload(data && data.element);
     var drop = previewInsertTargetFromData(data);
     resetPreviewInsertDragState();
-    if (!drop.target || !drop.position) return;
+    if (!element || !drop.target || !drop.position) return;
     post("preview-insert-drop", {
       targetRenderInstanceId: closestPreviewSourceAttribute(drop.target, CANVAS_AGENT_RENDER_ATTR),
       targetSessionId: closestPreviewSourceAttribute(drop.target, SESSION_ID_ATTR),

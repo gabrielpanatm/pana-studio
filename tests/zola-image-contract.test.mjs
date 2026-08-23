@@ -6,7 +6,7 @@ import {
   decodeZolaImagePresentation,
   resolveZolaImageSource,
 } from "$lib/html/zola-image";
-import { htmlAttributeRecordForKernel } from "$lib/state/html-actions-controller";
+import { htmlAttributeRecordForKernel } from "$lib/editor/html-actions/attribute-values";
 
 function image(relativePath) {
   return {

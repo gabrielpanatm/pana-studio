@@ -25,12 +25,15 @@ function productionSources(relativeDirectory, extensions) {
 
 const inspectorFiles = {
   shell: source("../src/lib/components/InspectorPane.svelte"),
+  cssCoordinator: source("../src/lib/components/inspector/CssInspectorCoordinator.svelte"),
   html: source("../src/lib/components/inspector/HtmlPane.svelte"),
+  htmlCoordinator: source("../src/lib/components/inspector/HtmlInspectorCoordinator.svelte"),
   css: source("../src/lib/components/inspector/panes/CssPane.svelte"),
   js: source("../src/lib/components/inspector/JsPane.svelte"),
   block: source("../src/lib/components/inspector/BlockPropertiesPane.svelte"),
   motion: source("../src/lib/components/inspector/js/MotionStudioPanel.svelte"),
   workspace: source("../src/lib/components/workspace/WorkspaceInspectorArea.svelte"),
+  application: source("../src/lib/components/application/ApplicationWorkspace.svelte"),
 };
 
 test("inspector editors do not consume the legacy selection presentation", () => {
@@ -44,18 +47,46 @@ test("inspector editors do not consume the legacy selection presentation", () =>
 
   assert.match(inspectorFiles.shell, /selectionSummary=\{presentedInspectorSelectionSummary\}/);
   assert.match(inspectorFiles.shell, /physicalFacts=\{presentedHtmlPhysicalFacts\}/);
-  assert.match(inspectorFiles.shell, /advanceStableHtmlInspectorProjection/);
+  assert.match(inspectorFiles.htmlCoordinator, /advanceStableHtmlInspectorProjection/);
   assert.match(
     inspectorFiles.shell,
-    /selectionContext=\{presentedSelectionSnapshot\?\.aggregateCapabilities\.primaryOnlyEditsAllowed/,
+    /const blockSelectionContext = \$derived\([\s\S]*presentedSelectionSnapshot\?\.aggregateCapabilities\.primaryOnlyEditsAllowed/,
   );
   assert.match(
     inspectorFiles.shell,
-    /dynamicSelectionContext=\{presentedSelectionSnapshot\?\.aggregateCapabilities\.primaryOnlyEditsAllowed/,
+    /const dynamicBlockSelectionContext = \$derived\([\s\S]*presentedSelectionSnapshot\?\.aggregateCapabilities\.primaryOnlyEditsAllowed/,
   );
-  assert.match(inspectorFiles.workspace, /inspectorSelectionSummary=\{app\.inspectorSelectionSummary\}/);
-  assert.match(inspectorFiles.workspace, /inspectorHtmlPhysicalFacts=\{app\.inspectorHtmlPhysicalFacts\}/);
-  assert.match(inspectorFiles.workspace, /inspectorBlockSelectionContext=\{app\.inspectorBlockSelectionContext\}/);
+  assert.match(inspectorFiles.shell, /selectionContext=\{blockSelectionContext\}/);
+  assert.match(inspectorFiles.shell, /dynamicSelectionContext=\{dynamicBlockSelectionContext\}/);
+  assert.match(inspectorFiles.application, /inspectorSelectionSummary:\s*selectionWorkspace\.session\.inspectorSummary/);
+  assert.match(inspectorFiles.application, /inspectorHtmlPhysicalFacts:\s*selectionWorkspace\.htmlPhysicalFacts/);
+  assert.match(inspectorFiles.application, /inspectorBlockSelectionContext:\s*selectionWorkspace\.blockContext/);
+});
+
+test("inspector shell owns routing while domain coordinators own their state machines", () => {
+  assert.match(
+    inspectorFiles.shell,
+    /import\("\$lib\/components\/inspector\/CssInspectorCoordinator\.svelte"\)/,
+  );
+  assert.match(
+    inspectorFiles.shell,
+    /import\("\$lib\/components\/inspector\/JsPane\.svelte"\)/,
+  );
+  assert.match(
+    inspectorFiles.shell,
+    /import\("\$lib\/components\/inspector\/BlockPropertiesPane\.svelte"\)/,
+  );
+  assert.match(inspectorFiles.shell, /hidden=\{inspectorTab !== "css"\}/);
+  assert.match(inspectorFiles.shell, /hidden=\{inspectorTab !== "js"\}/);
+  assert.match(
+    inspectorFiles.shell,
+    /selectionSnapshot\?\.focus\.kind === "cssRule"[\s\S]*untrack\(\(\) => \{ void changeInspectorTab\("css"\); \}\)/,
+  );
+  assert.match(inspectorFiles.cssCoordinator, /registerEditFlushHandler\(\s*"inspector-css-workspace"/);
+  assert.match(inspectorFiles.htmlCoordinator, /advanceStableHtmlInspectorProjection/);
+  for (const coordinator of [inspectorFiles.cssCoordinator, inspectorFiles.htmlCoordinator]) {
+    assert.doesNotMatch(coordinator, /\bAppState\b|as unknown as|as AppState/);
+  }
 });
 
 test("editor selection availability comes from the Rust summary", () => {
@@ -79,7 +110,7 @@ test("editor selection availability comes from the Rust summary", () => {
 });
 
 test("a CSS rule selected in Code is a first-class Rust source subject", () => {
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/editor/contracts.ts");
   const rust = source("../src-tauri/src/kernel/selection_coordinator.rs");
   const navigation = source("../src-tauri/src/commands/editor_navigation.rs");
   const pane = inspectorFiles.css;
@@ -101,7 +132,7 @@ test("a CSS rule selected in Code is a first-class Rust source subject", () => {
 });
 
 test("HTML physical facts remain narrow and cannot become selection authority", () => {
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/canvas/contracts.ts");
   const start = types.indexOf("export type InspectorHtmlPhysicalFacts");
   const end = types.indexOf("export type ZolaImageOperation", start);
   const contract = types.slice(start, end);
@@ -123,13 +154,14 @@ test("HTML physical facts remain narrow and cannot become selection authority", 
   );
 });
 
-test("AppState exposes only exact Rust-accepted inspector projections", () => {
-  const app = source("../src/lib/state/app.svelte.ts");
-  const htmlStart = app.indexOf("coordinatedElementSelection = $derived.by");
-  const blockEnd = app.indexOf("selectionEpoch = $derived", htmlStart);
-  const adapters = app.slice(htmlStart, blockEnd);
+test("selection session exposes only exact Rust-accepted inspector projections", () => {
+  const workspace = source("../src/lib/editor/selection-workspace.svelte.ts");
+  const session = source("../src/lib/state/editor-selection-session.svelte.ts");
+  const htmlStart = workspace.indexOf("get coordinatedElement()");
+  const blockEnd = workspace.indexOf("get selectionEpoch()", htmlStart);
+  const adapters = workspace.slice(htmlStart, blockEnd);
 
-  assert.match(adapters, /this\.acceptedSelectionObservation/);
+  assert.match(adapters, /this\.session\.acceptedObservation/);
   assert.match(adapters, /accepted\.selectionRevision !== semantic\.selectionRevision/);
   assert.match(adapters, /accepted\.renderInstanceId !== primary\?\.anchor\.renderInstanceId/);
   assert.match(adapters, /summary\.selectionRevision !== coordinated\.snapshot\.selectionRevision/);
@@ -141,29 +173,29 @@ test("AppState exposes only exact Rust-accepted inspector projections", () => {
     /\bselectionPresentation\b|\bSelectionInfo\b/,
   );
 
-  const acceptanceStart = app.indexOf("async acceptSelectionObservation(");
-  const acceptanceEnd = app.indexOf(
-    "private projectSelectionCoordinatorSnapshot(",
+  const acceptanceStart = session.indexOf("async acceptObservation(");
+  const acceptanceEnd = session.indexOf(
+    "private projectCoordinatorSnapshot(",
     acceptanceStart,
   );
-  const acceptance = app.slice(acceptanceStart, acceptanceEnd);
+  const acceptance = session.slice(acceptanceStart, acceptanceEnd);
   const summary = acceptance.indexOf(
-    "this.inspectorSelectionSummary = receipt.inspectorSummary",
+    "this.inspectorSummary = receipt.inspectorSummary",
   );
   const editorFields = acceptance.indexOf(
-    "this.applySelectionState(accepted.observation)",
+    "this.host().applySelectionState(accepted.observation)",
   );
   const returned = acceptance.indexOf("return accepted");
   assert.ok(summary >= 0 && editorFields > summary && returned > editorFields);
 });
 
 test("the legacy opaque presentation protocol is absent repo-wide", () => {
-  const app = source("../src/lib/state/app.svelte.ts");
-  const io = source("../src/lib/project/io.ts");
+  const selectionWorkspace = source("../src/lib/editor/selection-workspace.svelte.ts");
+  const io = source("../src/lib/editor/selection-io.ts");
   const rust = source("../src-tauri/src/kernel/selection_coordinator.rs");
   const commands = source("../src-tauri/src/commands/editor_navigation.rs");
 
-  for (const contents of [app, io, rust, commands]) {
+  for (const contents of [selectionWorkspace, io, rust, commands]) {
     assert.doesNotMatch(
       contents,
       /\bSelectionPresentation(?:Input|Receipt)?\b|\bselectionPresentation\b|physicalSelectionPresentation/,

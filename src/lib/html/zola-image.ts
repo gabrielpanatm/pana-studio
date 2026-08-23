@@ -2,12 +2,12 @@ import { projectAssetPublicUrl } from "$lib/project/assets";
 import { zolaRelativePath } from "$lib/project/files";
 import { t } from "$lib/i18n/runtime.svelte";
 import type {
-  ProjectFile,
-  ProjectZolaImageIntent,
   ZolaImageFormat,
   ZolaImageOperation,
   ZolaImagePresentation,
-} from "$lib/types";
+} from "$lib/canvas/contracts";
+import type { ProjectZolaImageIntent } from "$lib/preview/contracts";
+import type { ProjectFile } from "$lib/project/lifecycle-contract";
 
 const SUPPORTED_SOURCE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "avif"]);
 
@@ -55,10 +55,6 @@ export function decodeZolaImagePresentation(payload: string | null): ZolaImagePr
   } catch {
     return null;
   }
-}
-
-export function zolaImagePresentationFromElement(element: Element): ZolaImagePresentation | null {
-  return decodeZolaImagePresentation(element.getAttribute("data-pana-zola-image"));
 }
 
 export function resolveZolaImageSource(

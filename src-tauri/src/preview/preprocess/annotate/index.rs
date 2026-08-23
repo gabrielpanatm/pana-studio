@@ -39,6 +39,7 @@ pub(super) struct TeraScopeAnchor {
 struct SetPreludeAnchor {
     variable: String,
     start: usize,
+    end: usize,
     location: String,
     parent: Option<String>,
 }
@@ -390,6 +391,7 @@ impl SourceIdIndex {
                             set_preludes.push(SetPreludeAnchor {
                                 variable,
                                 start: item.start,
+                                end: item.end,
                                 location: source_location.clone(),
                                 parent: parent.clone(),
                             });
@@ -397,7 +399,13 @@ impl SourceIdIndex {
                     }
                     if item.opens_scope() {
                         let prelude = if kind == SourceNodeKind::For {
-                            take_loop_prelude_for(&item.label, parent.as_ref(), &mut set_preludes)
+                            take_loop_prelude_for(
+                                source,
+                                &item.label,
+                                item.start,
+                                parent.as_ref(),
+                                &mut set_preludes,
+                            )
                         } else {
                             None
                         };
@@ -460,6 +468,7 @@ impl SourceIdIndex {
                             set_preludes.push(SetPreludeAnchor {
                                 variable,
                                 start: item.start,
+                                end: item.end,
                                 location: source_location.clone(),
                                 parent: parent.clone(),
                             });
@@ -467,7 +476,13 @@ impl SourceIdIndex {
                     }
                     if item.opens_scope() {
                         let prelude = if kind == SourceNodeKind::For {
-                            take_loop_prelude_for(&item.label, parent.as_ref(), &mut set_preludes)
+                            take_loop_prelude_for(
+                                source,
+                                &item.label,
+                                item.start,
+                                parent.as_ref(),
+                                &mut set_preludes,
+                            )
                         } else {
                             None
                         };
@@ -493,13 +508,20 @@ impl SourceIdIndex {
 }
 
 fn take_loop_prelude_for(
+    source: &str,
     for_label: &str,
+    for_start: usize,
     parent: Option<&String>,
     set_preludes: &mut Vec<SetPreludeAnchor>,
 ) -> Option<SetPreludeAnchor> {
     let collection_root = for_collection_root(for_label)?;
     let index = set_preludes.iter().rev().position(|candidate| {
-        candidate.variable == collection_root && candidate.parent.as_ref() == parent
+        candidate.variable == collection_root
+            && candidate.parent.as_ref() == parent
+            && source
+                .get(candidate.end..for_start)
+                .map(|gap| gap.trim().is_empty())
+                .unwrap_or(false)
     })?;
     Some(set_preludes.remove(set_preludes.len() - 1 - index))
 }

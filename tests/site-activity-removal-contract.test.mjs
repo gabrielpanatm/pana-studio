@@ -26,8 +26,9 @@ test("dashboardul și utilitarele dedicate activității Site sunt eliminate", (
 });
 
 test("Site nu mai este activitate sau center view, dar valorile vechi au migrare Rust", () => {
-  const types = source("../src/lib/types.ts");
-  const appState = source("../src/lib/state/app.svelte.ts");
+  const types = source("../src/lib/application/contracts.ts")
+    + source("../src/lib/workbench/contracts.ts");
+  const application = source("../src/lib/components/application/ApplicationWorkspace.svelte");
   const workbenchModel = source("../src-tauri/src/kernel/workbench/model.rs");
   const contextModel = source("../src-tauri/src/kernel/context_hub/model.rs");
   const commandSearch = source("../src-tauri/src/kernel/command_center/search.rs");
@@ -43,7 +44,7 @@ test("Site nu mai este activitate sau center view, dar valorile vechi au migrare
 
   assert.doesNotMatch(centerView, /"site"/);
   assert.doesNotMatch(workbenchActivity, /"site"/);
-  assert.doesNotMatch(appState, /activity === "site"|centerView = "site"|view === "site"/);
+  assert.doesNotMatch(application, /activity === "site"|centerView = "site"|view === "site"/);
   assert.doesNotMatch(commandSearch, /WorkbenchActivity::Site/);
   assert.doesNotMatch(workbenchModel, /^\s*Site,\s*$/m);
   assert.doesNotMatch(contextModel, /^\s*Site,\s*$/m);

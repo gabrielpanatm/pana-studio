@@ -14,7 +14,7 @@ test("Stocare este un tab separat, între Sistem și Despre", () => {
     /\["general", "ai", "system", "storage", "about"\]/,
   );
   assert.match(workspace, /import StoragePane from/);
-  assert.match(workspace, /activeSection === "storage"[\s\S]*<StoragePane \{app\} \/>/);
+  assert.match(workspace, /activeSection === "storage"[\s\S]*<StoragePane \{globalStatus\} \/>/);
 });
 
 test("frontendul expune numai operațiile tipizate ale mecanismului de stocare", () => {

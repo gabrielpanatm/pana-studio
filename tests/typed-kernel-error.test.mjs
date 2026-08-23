@@ -13,11 +13,12 @@ test("structured editor recovery stays visible and non-retryable in UI copy", ()
       retryForbidden: true,
     },
   });
+  const visibleMessage = message.replaceAll("\u2068", "").replaceAll("\u2069", "");
 
-  assert.match(message, /^RECOVERY_REQUIRED \[command-save-42, domain_effect\]:/);
-  assert.match(message, /Commitul este vizibil/);
-  assert.match(message, /Do not retry automatically\.$/);
-  assert.doesNotMatch(message, /\[object Object\]/);
+  assert.match(visibleMessage, /^RECOVERY_REQUIRED \[command-save-42, domain_effect\]:/);
+  assert.match(visibleMessage, /Commitul este vizibil/);
+  assert.match(visibleMessage, /Do not retry automatically\.$/);
+  assert.doesNotMatch(visibleMessage, /\[object Object\]/);
 });
 
 test("structured editor rejection exposes its diagnostic", () => {

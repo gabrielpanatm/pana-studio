@@ -1,0 +1,12 @@
+// ============================================================
+// FRAMEWORK.SCSS — Entry Point Global
+// Singurul fisier compilat de Zola -> /css-framework/framework.css
+// Contine tot CSS-ul global: reset, variabile, baza, layout, componente.
+//
+// CSS per pagina NU intra aici — sta in sursa/sass/pagini/[pagina].scss
+// ============================================================
+
+@import './variabile';
+@import './baza';
+@import './layout';
+@import './componente';

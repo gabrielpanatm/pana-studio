@@ -1,4 +1,7 @@
-import type { HtmlPendingArea, InspectorPendingArea } from "$lib/types";
+import type {
+  HtmlPendingArea,
+  InspectorPendingArea,
+} from "$lib/canvas/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export type SessionDirtyArea = "workspace" | "html" | "css" | "js";

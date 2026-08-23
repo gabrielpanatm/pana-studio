@@ -1,4 +1,4 @@
-import type { InspectorPendingArea } from "$lib/types";
+import type { InspectorPendingArea } from "$lib/canvas/contracts";
 
 export type InspectorPendingSource = "session" | "inspector-pane" | "motion-timeline";
 

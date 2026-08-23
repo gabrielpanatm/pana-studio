@@ -9,8 +9,8 @@
     DynamicValueSource,
     DynamicWidgetProperties,
     DynamicWidgetSnapshot,
-    SourceGraph,
-  } from "$lib/types";
+  } from "$lib/content-models/contracts";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
 
   let {
     snapshot,

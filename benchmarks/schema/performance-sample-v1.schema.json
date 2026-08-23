@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pana.invalid/schemas/performance-sample-v1.schema.json",
+  "title": "Pană Studio performance sample v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "recordedUnixMs",
+    "layer",
+    "scenario",
+    "profile",
+    "mode",
+    "metric",
+    "value",
+    "unit",
+    "iteration",
+    "status",
+    "attributes"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "recordedUnixMs": { "type": "integer", "minimum": 0 },
+    "layer": { "type": "string", "minLength": 1 },
+    "scenario": { "type": "string", "minLength": 1 },
+    "profile": { "type": "string", "minLength": 1 },
+    "mode": { "type": "string", "minLength": 1 },
+    "metric": { "type": "string", "minLength": 1 },
+    "value": { "type": "number", "minimum": 0 },
+    "unit": { "type": "string", "minLength": 1 },
+    "iteration": { "type": "integer", "minimum": 0 },
+    "status": { "type": "string", "minLength": 1 },
+    "attributes": { "type": "object" }
+  }
+}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Galerie | INDEX ZERO{% endblock title %}
+{% block description %}Opt cadre originale din universul vizual INDEX ZERO.{% endblock description %}
+{% block content %}
+<section class="pagina-arhiva galerie">
+  <header class="titlu-arhiva container-larg"><p class="eticheta-tehnica">IMAGINE / 08 CADRE</p><h1>Galerie</h1><p>Fotografii originale generate pentru acest proiect și optimizate local în WebP.</p></header>
+  <div class="grila-galerie">
+    {% for indice in range(start=1, end=9) %}
+    <figure>
+      <button type="button" data-gallery-open="{{ indice }}" aria-label="Mărește cadrul {{ indice }}">
+        <img src="{{ get_url(path='imagini/vizual-0' ~ indice ~ '.webp') }}" alt="Cadru editorial INDEX ZERO {{ indice }}" width="1536" height="1024" loading="lazy">
+      </button>
+      <figcaption><span>0{{ indice }}</span> INDEX ZERO / ARHIVĂ VIZUALĂ</figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+<dialog class="dialog-galerie" data-gallery-dialog>
+  <button type="button" data-gallery-close>Închide</button>
+  <img src="{{ get_url(path='imagini/vizual-01.webp') }}" alt="" width="1536" height="1024" data-gallery-image>
+  <p data-gallery-caption>Cadru editorial INDEX ZERO 1</p>
+</dialog>
+{% endblock content %}

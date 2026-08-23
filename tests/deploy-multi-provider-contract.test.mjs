@@ -11,7 +11,7 @@ test("contractul public deploy este generic, tipizat și nu mai expune intrarea 
   const engine = source("../src-tauri/src/deploy/engine.rs");
   const commands = source("../src-tauri/src/commands/deploy.rs");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
-  const io = source("../src/lib/project/io.ts");
+  const io = source("../src/lib/deploy/io.ts");
 
   for (const provider of ["Bunny", "Ftp", "Sftp", "S3", "CloudflarePages"]) {
     assert.match(model, new RegExp(`DeployTargetProvider[\\s\\S]*${provider}\\(`));
@@ -55,7 +55,7 @@ test("DeployPane oferă configurarea tuturor țintelor, test, plan, progres și 
 test("credentialele sunt referențiate public și materialul secret rămâne backend-only", () => {
   const credentials = source("../src-tauri/src/deploy/credentials.rs");
   const model = source("../src-tauri/src/deploy/model.rs");
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/deploy/contracts.ts");
 
   assert.match(model, /pub credential_env_prefix: String/);
   assert.match(credentials, /enum StoredDeployCredential/);

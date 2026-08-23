@@ -79,7 +79,7 @@ pub(crate) fn migrate_legacy_component_catalog(
         transaction_id: None,
     };
 
-    let mut candidate = workspace.clone();
+    let mut candidate = workspace.fork_candidate();
     let candidate_identity = current_identity(&candidate);
     candidate.stage_composite_changes(
         &candidate_identity,

@@ -12,7 +12,7 @@
     IconTrash,
   } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
+  import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
   import {
     actionTargetsDataAnim,
     actionSpan,
@@ -41,7 +41,7 @@
     MotionTargetKind,
     MotionTrigger,
     MotionTriggerCommand,
-  } from "$lib/types";
+  } from "$lib/js/contracts";
 
   let {
     workspace,

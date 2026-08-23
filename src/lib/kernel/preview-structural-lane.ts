@@ -1,11 +1,12 @@
+import type { SelectionSnapshot } from "$lib/editor/contracts";
 import type {
   PreviewProjectionIntentReceipt,
-  PreviewStructuralSelectionIdentity,
   PreviewStructuralCommandIdentity,
-  SelectionSnapshot,
-} from "$lib/types";
+  PreviewStructuralSelectionIdentity,
+} from "$lib/preview/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
 import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
+import type { EditorSelectionSessionController } from "$lib/state/editor-selection-session.svelte";
 
 const MAX_PENDING_STRUCTURAL_OPERATIONS_PER_SESSION = 32;
 
@@ -16,7 +17,7 @@ export type PreviewStructuralSessionHost = {
   projectTransitionFrontendLeaseActive?: boolean;
   kernelUndoRedoFrontendLeaseActive?: boolean;
   aiEditLeaseFrontendLockActive?: boolean;
-  selectionSnapshot?: SelectionSnapshot | null;
+  editorSelection: Pick<EditorSelectionSessionController, "selectionSnapshot">;
   beginPreviewStructuralWriteBoundary: () => Promise<void>;
   endPreviewStructuralWriteBoundary: () => void;
 };
@@ -82,7 +83,7 @@ export function capturePreviewStructuralSessionLease(
     sessionId,
     projectSessionEpoch: host.projectSessionEpoch,
     selection: captureStructuralSelectionIdentity(
-      host.selectionSnapshot,
+      host.editorSelection.selectionSnapshot,
       projectRoot,
       sessionId,
     ),
@@ -258,14 +259,4 @@ export async function drainPreviewStructuralLanes() {
     const tails = [...structuralLanes.values()].map((lane) => lane.tail);
     await Promise.all(tails.map((tail) => tail.catch(() => undefined)));
   }
-}
-
-export function previewStructuralLaneSnapshot() {
-  return {
-    sessionCount: structuralLanes.size,
-    pendingCount: [...structuralLanes.values()].reduce(
-      (total, lane) => total + lane.pendingCount,
-      0,
-    ),
-  };
 }

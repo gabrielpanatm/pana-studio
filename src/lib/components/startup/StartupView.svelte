@@ -12,19 +12,55 @@
     IconSparkles as Sparkles,
   } from "@tabler/icons-svelte";
   import WriteAuthorityRecoveryControl from "$lib/components/kernel/WriteAuthorityRecoveryControl.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
-  import type { StartupCreationKind, WriteAuthorityRecoveryScan } from "$lib/types";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { WriteAuthorityRecoveryScan } from "$lib/kernel/recovery-contract";
+  import type {
+    StartupCreationCatalog,
+    StartupCreationKind,
+    StartupCreationPlan,
+    StartupFlowSnapshot,
+  } from "$lib/project/lifecycle-contract";
 
-  let { app }: { app: AppState } = $props();
+  let {
+    startupFlow,
+    startupError,
+    startupPending,
+    startupCreationPlan,
+    startupCreationCatalog,
+    startupSelectedOptionId,
+    globalStatus,
+    openApplicationSettings,
+    cancelStartupCreationPlan,
+    applyStartupProject,
+    selectStartupCreationOption,
+    openProjectFolder,
+    planStartupProject,
+    retryStartupProjectOpen,
+  }: {
+    startupFlow: StartupFlowSnapshot;
+    startupError: string;
+    startupPending: boolean;
+    startupCreationPlan: StartupCreationPlan | null;
+    startupCreationCatalog: StartupCreationCatalog | null;
+    startupSelectedOptionId: string | null;
+    globalStatus: GlobalStatusState;
+    openApplicationSettings: () => void;
+    cancelStartupCreationPlan: () => void;
+    applyStartupProject: () => void | Promise<void>;
+    selectStartupCreationOption: (optionId: string) => void;
+    openProjectFolder: () => void | Promise<void>;
+    planStartupProject: () => void | Promise<void>;
+    retryStartupProjectOpen: () => void | Promise<void>;
+  } = $props();
 
-  const candidate = $derived(app.startupFlow.candidate);
+  const candidate = $derived(startupFlow.candidate);
   const writeAuthorityRecoveryRequired = $derived(
-    app.startupError.includes("WRITE_AUTHORITY_RECOVERY_BLOCKED"),
+    startupError.includes("WRITE_AUTHORITY_RECOVERY_BLOCKED"),
   );
   let startupRecoveryScan = $state<WriteAuthorityRecoveryScan | null>(null);
-  const planning = $derived(Boolean(app.startupCreationPlan));
+  const planning = $derived(Boolean(startupCreationPlan));
   const busyLabel = $derived(
-    app.startupCreationPlan
+    startupCreationPlan
       ? "Creăm și validăm proiectul…"
       : candidate?.kind === "valid_project"
         ? "Deschidem proiectul valid…"
@@ -33,8 +69,7 @@
 
   function kindLabel(kind: StartupCreationKind) {
     if (kind === "minimal") return "MINIMAL";
-    if (kind === "starter") return "STARTER";
-    return "ȘABLON";
+    return "PUNCT DE PORNIRE";
   }
 
   function formatBytes(value: number) {
@@ -61,14 +96,14 @@
       class="startup-settings ui-icon-button"
       aria-label="Setările aplicației"
       title="Setările aplicației"
-      onclick={() => app.openApplicationSettings()}
+      onclick={openApplicationSettings}
     >
       <Settings size={17} stroke={1.8} />
     </button>
   </header>
 
   <main class="startup-content">
-    {#if app.startupPending}
+    {#if startupPending}
       <section class="startup-state-card startup-progress" aria-live="polite" aria-busy="true">
         <div class="startup-state-icon is-progress">
           <LoaderCircle size={26} stroke={1.8} />
@@ -80,12 +115,12 @@
         </p>
         <div class="startup-progress-track"><span></span></div>
       </section>
-    {:else if planning && app.startupCreationPlan}
+    {:else if planning && startupCreationPlan}
       <section class="startup-review" aria-labelledby="startup-review-title">
         <button
           type="button"
           class="startup-back ui-button"
-          onclick={() => app.cancelStartupCreationPlan()}
+          onclick={cancelStartupCreationPlan}
         >
           <ArrowLeft size={15} />
           Înapoi la catalog
@@ -97,18 +132,18 @@
               <ShieldCheck size={25} stroke={1.7} />
             </div>
             <p class="startup-eyebrow">PLAN RUST CONFIRMAT</p>
-            <h1 id="startup-review-title">{app.startupCreationPlan.optionName}</h1>
+            <h1 id="startup-review-title">{startupCreationPlan.optionName}</h1>
             <p>
               Planul este legat de snapshot-ul dosarului gol. Orice schimbare pe disk îl invalidează.
             </p>
             <dl class="startup-plan-facts">
               <div>
                 <dt>Fișiere noi</dt>
-                <dd>{app.startupCreationPlan.affectedFiles.length}</dd>
+                <dd>{startupCreationPlan.affectedFiles.length}</dd>
               </div>
               <div>
                 <dt>Dimensiune</dt>
-                <dd>{formatBytes(app.startupCreationPlan.totalBytes)}</dd>
+                <dd>{formatBytes(startupCreationPlan.totalBytes)}</dd>
               </div>
               <div>
                 <dt>Suprascrieri</dt>
@@ -118,7 +153,7 @@
             <button
               type="button"
               class="startup-primary ui-button ui-button-accent"
-              onclick={() => app.applyStartupProject()}
+              onclick={() => { void applyStartupProject(); }}
             >
               <Check size={16} stroke={2} />
               Creează și deschide proiectul
@@ -131,10 +166,10 @@
                 <span>PUBLICAȚII PLANIFICATE</span>
                 <strong>Conținutul proiectului</strong>
               </div>
-              <span class="startup-count">{app.startupCreationPlan.affectedFiles.length}</span>
+              <span class="startup-count">{startupCreationPlan.affectedFiles.length}</span>
             </div>
             <div class="startup-file-list">
-              {#each app.startupCreationPlan.affectedFiles as path}
+              {#each startupCreationPlan.affectedFiles as path}
                 <div class="startup-file-row">
                   <FileCode2 size={15} stroke={1.7} />
                   <code>{path}</code>
@@ -160,19 +195,19 @@
           </div>
         </div>
 
-        {#if app.startupError}
-          <p class="startup-inline-error" role="alert">{app.startupError}</p>
+        {#if startupError}
+          <p class="startup-inline-error" role="alert">{startupError}</p>
         {/if}
 
         <div class="startup-option-grid">
-          {#each app.startupCreationCatalog?.options ?? [] as option}
+          {#each startupCreationCatalog?.options ?? [] as option}
             <button
               type="button"
               class="startup-option ui-entity-selectable"
               class:has-preview={Boolean(option.previewDataUrl)}
-              data-ui-selected={app.startupSelectedOptionId === option.id ? "true" : undefined}
-              aria-pressed={app.startupSelectedOptionId === option.id}
-              onclick={() => app.selectStartupCreationOption(option.id)}
+              data-ui-selected={startupSelectedOptionId === option.id ? "true" : undefined}
+              aria-pressed={startupSelectedOptionId === option.id}
+              onclick={() => selectStartupCreationOption(option.id)}
             >
               <div class="startup-option-preview">
                 {#if option.previewDataUrl}
@@ -184,7 +219,7 @@
                   </div>
                 {/if}
                 <span class="startup-option-kind">{kindLabel(option.kind)}</span>
-                {#if app.startupSelectedOptionId === option.id}
+                {#if startupSelectedOptionId === option.id}
                   <span class="startup-selected-mark"><Check size={13} stroke={2.2} /></span>
                 {/if}
               </div>
@@ -198,15 +233,15 @@
         </div>
 
         <footer class="startup-catalog-actions">
-          <button type="button" class="ui-button" onclick={() => app.openProjectFolder()}>
+          <button type="button" class="ui-button" onclick={() => { void openProjectFolder(); }}>
             <FolderOpen size={15} />
             Alege alt dosar
           </button>
           <button
             type="button"
             class="ui-button ui-button-accent"
-            disabled={!app.startupSelectedOptionId}
-            onclick={() => app.planStartupProject()}
+            disabled={!startupSelectedOptionId}
+            onclick={() => { void planStartupProject(); }}
           >
             Continuă cu selecția
           </button>
@@ -228,8 +263,8 @@
           Rust a validat structura proiectului. Deschiderea continuă în Workbench; dacă Preview-ul
           găsește o eroare Zola, fișierul diagnostic va fi deschis direct în Cod pentru reparare.
         </p>
-        {#if app.startupError && !writeAuthorityRecoveryRequired}
-          <p class="startup-inline-error">{app.startupError}</p>
+        {#if startupError && !writeAuthorityRecoveryRequired}
+          <p class="startup-inline-error">{startupError}</p>
         {/if}
         {#if writeAuthorityRecoveryRequired}
           <div class="startup-recovery-intro" role="alert">
@@ -242,19 +277,19 @@
           <div class="startup-recovery-control">
             <WriteAuthorityRecoveryControl
               onScanUpdate={(scan) => { startupRecoveryScan = scan; }}
-              onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
+              onStatusUpdate={(text, kind) => globalStatus.set(text, kind)}
             />
           </div>
           <div class="startup-recovery-actions">
-            <button type="button" class="ui-button" onclick={() => app.openProjectFolder()}>
+            <button type="button" class="ui-button" onclick={() => { void openProjectFolder(); }}>
               <FolderOpen size={16} />
               Alege alt dosar
             </button>
             <button
               type="button"
               class="ui-button ui-button-accent"
-              disabled={startupRecoveryScan?.blocked !== false || app.startupPending}
-              onclick={() => app.retryStartupProjectOpen()}
+              disabled={startupRecoveryScan?.blocked !== false || startupPending}
+              onclick={() => { void retryStartupProjectOpen(); }}
             >
               <Check size={16} stroke={2} />
               Redeschide proiectul după recuperare
@@ -264,7 +299,7 @@
           <button
             type="button"
             class="startup-primary ui-button"
-            onclick={() => app.openProjectFolder()}
+            onclick={() => { void openProjectFolder(); }}
           >
             <FolderOpen size={16} />
             Alege alt dosar
@@ -305,13 +340,13 @@
             </div>
           {/each}
         </div>
-        {#if app.startupError}
-          <p class="startup-inline-error">{app.startupError}</p>
+        {#if startupError}
+          <p class="startup-inline-error">{startupError}</p>
         {/if}
         <button
           type="button"
           class="startup-primary ui-button ui-button-accent"
-          onclick={() => app.openProjectFolder()}
+          onclick={() => { void openProjectFolder(); }}
         >
           <FolderOpen size={16} />
           Alege alt dosar
@@ -324,18 +359,18 @@
           <h1>Construiește vizual.<br /><span>Păstrează controlul sursei.</span></h1>
           <p class="startup-lead">
             Deschide un proiect Zola existent sau alege un dosar gol pentru a porni dintr-un
-            starter ori șablon verificat.
+            punct de pornire verificat.
           </p>
           <button
             type="button"
             class="startup-open ui-button ui-button-accent"
-            onclick={() => app.openProjectFolder()}
+            onclick={() => { void openProjectFolder(); }}
           >
             <FolderOpen size={18} stroke={1.8} />
             Deschide dosar
           </button>
-          {#if app.startupError}
-            <p class="startup-inline-error">{app.startupError}</p>
+          {#if startupError}
+            <p class="startup-inline-error">{startupError}</p>
           {/if}
         </div>
 

@@ -7,7 +7,7 @@ use std::{
 use crate::kernel::project_workspace::WorkspaceProjectionSnapshot;
 use crate::project::{
     model::{ProjectFile, ProjectFileKind, ProjectFileRole, ProjectScan},
-    strip_zola_root_prefix, zola_project_root,
+    require_projected_entry_capacity, strip_zola_root_prefix, zola_project_root, PROJECT_CAPACITY,
 };
 use crate::zola_theme::{
     active_theme_from_source, is_template_relative_path, read_active_theme,
@@ -15,8 +15,6 @@ use crate::zola_theme::{
 };
 
 use super::scope::is_derived_or_internal_dir;
-
-pub(crate) const MAX_SCAN_FILES: usize = 500;
 
 pub fn scan_project_root(root: &Path) -> Result<ProjectScan, String> {
     if !root.exists() {
@@ -43,6 +41,7 @@ pub fn scan_project_root(root: &Path) -> Result<ProjectScan, String> {
 
     collect_project_files(&root, &root, &mut files, zola_mode, output_root.as_deref())?;
     files.sort_by(compare_project_files);
+    require_projected_entry_capacity(files.len())?;
 
     Ok(ProjectScan {
         root: root.to_string_lossy().to_string(),
@@ -72,6 +71,14 @@ pub(crate) fn scan_project_disk_manifest(
     }
     if manifest.truncated {
         return Err("ProjectScan a refuzat un manifest autoritar trunchiat.".to_string());
+    }
+    if manifest.max_files != PROJECT_CAPACITY.max_tracked_files
+        || manifest.files.len() > PROJECT_CAPACITY.max_tracked_files
+    {
+        return Err(format!(
+            "ProjectScan a refuzat un manifest incompatibil cu limita autoritară de {} fișiere.",
+            PROJECT_CAPACITY.max_tracked_files
+        ));
     }
     let zola_mode = is_zola_project(&root);
     let active_theme = zola_mode.then(|| read_active_theme(&root)).flatten();
@@ -131,7 +138,7 @@ pub(crate) fn scan_project_disk_manifest(
         });
     }
     files.sort_by(compare_project_files);
-    files.truncate(MAX_SCAN_FILES);
+    require_projected_entry_capacity(files.len())?;
     Ok(ProjectScan {
         root: root_text,
         preview_base_url: None,
@@ -152,8 +159,8 @@ pub(crate) fn scan_project_disk_manifest(
 pub fn scan_project_workspace_projection(
     projection: &WorkspaceProjectionSnapshot,
 ) -> Result<ProjectScan, String> {
-    let mut scan = scan_project_workspace_projection_full(projection)?;
-    scan.files.truncate(MAX_SCAN_FILES);
+    let scan = scan_project_workspace_projection_full(projection)?;
+    require_projected_entry_capacity(scan.files.len())?;
     Ok(scan)
 }
 
@@ -174,8 +181,8 @@ pub(crate) fn apply_project_model_preview_routes<'a>(
 }
 
 /// Builds the complete logical Files namespace for one immutable workspace
-/// revision. This is intentionally separate from the bounded compatibility
-/// scan: FileExplorer owns its own explicit truncation contract and must see
+/// revision. This is intentionally separate from the bounded project scan:
+/// FileExplorer owns its own explicit truncation contract and must see
 /// the complete candidate set before choosing a hierarchy-safe prefix.
 pub(crate) fn scan_project_workspace_projection_full(
     projection: &WorkspaceProjectionSnapshot,
@@ -293,24 +300,19 @@ fn collect_project_files(
     zola_mode: bool,
     output_root: Option<&Path>,
 ) -> Result<(), String> {
-    if files.len() >= MAX_SCAN_FILES {
-        return Ok(());
-    }
-
-    let entries = fs::read_dir(current).map_err(|error| {
-        format!(
-            "Nu am putut citi folderul {}: {}",
-            current.to_string_lossy(),
-            error
-        )
-    })?;
+    let mut entries = fs::read_dir(current)
+        .map_err(|error| {
+            format!(
+                "Nu am putut citi folderul {}: {}",
+                current.to_string_lossy(),
+                error
+            )
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Nu am putut citi o intrare: {error}"))?;
+    entries.sort_by_key(|entry| entry.file_name());
 
     for entry in entries {
-        if files.len() >= MAX_SCAN_FILES {
-            break;
-        }
-
-        let entry = entry.map_err(|error| format!("Nu am putut citi o intrare: {}", error))?;
         let path = entry.path();
         let file_name = entry.file_name().to_string_lossy().to_string();
         let file_type = entry.file_type().map_err(|error| {
@@ -331,14 +333,17 @@ fn collect_project_files(
             }
 
             let relative_path = relative_project_path(root, &path)?;
-            files.push(ProjectFile {
-                name: file_name,
-                relative_path,
-                absolute_path: path.to_string_lossy().to_string(),
-                role: ProjectFileRole::Asset,
-                kind: ProjectFileKind::Dir,
-                preview_path: None,
-            });
+            push_project_file(
+                files,
+                ProjectFile {
+                    name: file_name,
+                    relative_path,
+                    absolute_path: path.to_string_lossy().to_string(),
+                    role: ProjectFileRole::Asset,
+                    kind: ProjectFileKind::Dir,
+                    preview_path: None,
+                },
+            )?;
 
             collect_project_files(root, &path, files, zola_mode, output_root)?;
             continue;
@@ -362,16 +367,30 @@ fn collect_project_files(
         };
         let preview_path = project_preview_path(&relative_path, &kind, &role, zola_mode);
 
-        files.push(ProjectFile {
-            name: file_name,
-            relative_path,
-            absolute_path: path.to_string_lossy().to_string(),
-            role,
-            kind,
-            preview_path,
-        });
+        push_project_file(
+            files,
+            ProjectFile {
+                name: file_name,
+                relative_path,
+                absolute_path: path.to_string_lossy().to_string(),
+                role,
+                kind,
+                preview_path,
+            },
+        )?;
     }
 
+    Ok(())
+}
+
+fn push_project_file(files: &mut Vec<ProjectFile>, file: ProjectFile) -> Result<(), String> {
+    if files.len() >= PROJECT_CAPACITY.max_projected_entries {
+        return Err(format!(
+            "Scanarea proiectului a găsit mai mult de {} intrări și a fost oprită explicit.",
+            PROJECT_CAPACITY.max_projected_entries
+        ));
+    }
+    files.push(file);
     Ok(())
 }
 
@@ -575,7 +594,10 @@ fn is_real_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::{read_project_disk_manifest, AcceptedProjectDiskManifest};
+    use crate::project::{
+        read_project_disk_manifest, AcceptedProjectDiskManifest, ProjectDiskManifest,
+        ProjectDiskManifestEntry,
+    };
     use std::{
         collections::{HashMap, HashSet},
         fs,
@@ -734,6 +756,50 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_scan_has_no_legacy_five_hundred_entry_cliff() {
+        let root = temp_project_root("capacity-boundaries");
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let root = root.canonicalize().unwrap();
+        let root_text = root.to_string_lossy().into_owned();
+
+        for count in [499, 500, 501, 991, 1_000] {
+            let manifest = synthetic_manifest(&root_text, count);
+            let scan = scan_project_disk_manifest(&root, &manifest).unwrap();
+            let projected_files = scan
+                .files
+                .iter()
+                .filter(|file| file.kind != ProjectFileKind::Dir)
+                .count();
+            assert_eq!(projected_files, count, "frontiera {count}");
+        }
+
+        let error = match scan_project_disk_manifest(&root, &synthetic_manifest(&root_text, 1_001))
+        {
+            Ok(_) => panic!("frontiera 1001 trebuia refuzată"),
+            Err(error) => error,
+        };
+        assert!(error.contains("limita autoritară"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn synthetic_manifest(root: &str, count: usize) -> ProjectDiskManifest {
+        ProjectDiskManifest {
+            root: root.to_string(),
+            files: (0..count)
+                .map(|index| ProjectDiskManifestEntry {
+                    relative_path: format!("content/page-{index:04}.md"),
+                    modified_ms: 0,
+                    size: 1,
+                    version_token: format!("test-{index}"),
+                })
+                .collect(),
+            truncated: false,
+            max_files: PROJECT_CAPACITY.max_tracked_files,
+        }
+    }
+
+    #[test]
     fn scan_excludes_generated_export_tree_from_editable_projection() {
         let root = temp_project_root("generated-export");
         fs::create_dir_all(root.join("content")).unwrap();
@@ -817,8 +883,9 @@ mod tests {
                     "templates/draft.html".to_string(),
                     "unsaved draft".to_string(),
                 ),
-            ]),
-            resource_bytes: HashMap::new(),
+            ])
+            .into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::from(["static/removed.js".to_string()]),
             changed_paths: HashSet::from([
                 "zola.toml".to_string(),
@@ -826,7 +893,7 @@ mod tests {
                 "templates/draft.html".to_string(),
                 "static/removed.js".to_string(),
             ]),
-            accepted_disk,
+            accepted_disk: accepted_disk.into(),
         };
 
         // These live-disk changes happen after the immutable lease was

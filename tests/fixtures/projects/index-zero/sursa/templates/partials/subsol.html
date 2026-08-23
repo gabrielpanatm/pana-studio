@@ -1,0 +1,34 @@
+<footer class="subsol-site">
+  <div class="subsol-identitate">
+    <p class="eticheta-tehnica">INDEX ZERO / 2027</p>
+    <h2>Arta nu optimizează lumea.<br>O face vizibilă.</h2>
+    <p>Festival imaginar construit pentru a împinge un editor vizual până la limite măsurabile.</p>
+  </div>
+  <div class="subsol-linkuri">
+    <div>
+      <h3>Explorează</h3>
+      <a href="{{ get_url(path='@/program.md') }}">Program complet</a>
+      <a href="{{ get_url(path='@/ghid.md') }}">Ghid de participare</a>
+      <a href="{{ get_url(path='@/despre.md') }}">Despre proiect</a>
+      <a href="{{ get_url(path='@/contact.md') }}">Contact demonstrativ</a>
+      <a href="{{ get_url(path='@/intrebari-frecvente.md') }}">Întrebări frecvente</a>
+      <a href="{{ get_url(path='@/accesibilitate.md') }}">Accesibilitate</a>
+    </div>
+    <div>
+      <h3>Legal</h3>
+      <a href="{{ get_url(path='@/legal/termeni.md') }}">Termeni</a>
+      <a href="{{ get_url(path='@/legal/confidentialitate.md') }}">Confidențialitate</a>
+      <a href="{{ get_url(path='@/legal/cookies.md') }}">Cookie-uri</a>
+      <a href="{{ get_url(path='@/legal/anpc.md') }}">ANPC / SAL</a>
+    </div>
+    <div>
+      <h3>Contact fictiv</h3>
+      <a href="mailto:{{ config.extra.email }}">{{ config.extra.email }}</a>
+      <p>Strada Semnalului 0<br>Timișoara, România</p>
+    </div>
+  </div>
+  <div class="subsol-final">
+    <p>© {{ config.extra.an }} INDEX ZERO. Nicio entitate, adresă sau tranzacție de pe acest site nu este reală.</p>
+    <a class="anpc-link" href="{{ get_url(path='@/legal/anpc.md') }}"><img src="{{ get_url(path='imagini/anpc-sal.webp') }}" alt="Soluționarea alternativă a litigiilor" width="250" height="63" loading="lazy"></a>
+  </div>
+</footer>

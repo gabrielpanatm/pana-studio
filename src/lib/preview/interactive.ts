@@ -1,4 +1,6 @@
-import type { CanvasProjectionIdentity } from "$lib/project/io";
+import type {
+  CanvasProjectionIdentity,
+} from "$lib/contracts/canvas-projection";
 
 export const INTERACTIVE_PREVIEW_MESSAGE_SOURCE = "pana-studio-interactive";
 export const INTERACTIVE_PREVIEW_SCHEMA_VERSION = 1;

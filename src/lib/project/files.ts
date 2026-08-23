@@ -1,4 +1,8 @@
-import type { ProjectFile, ProjectScan, SourceLanguage } from "$lib/types";
+import type { SourceLanguage } from "$lib/application/contracts";
+import type {
+  ProjectFile,
+  ProjectScan,
+} from "$lib/project/lifecycle-contract";
 
 export function scannedCacheKey(file: Pick<ProjectFile, "relativePath">) {
   return `scanned:${file.relativePath}`;
@@ -25,11 +29,6 @@ export function themeNameForZolaPath(relativePath: string) {
   return normalizedZolaPath(relativePath).match(/^themes\/([^/]+)\//)?.[1] ?? null;
 }
 
-export function zolaPathWithoutThemeRoot(relativePath: string) {
-  const normalized = normalizedZolaPath(relativePath);
-  return normalized.match(/^themes\/[^/]+\/(.+)$/)?.[1] ?? normalized;
-}
-
 export function logicalTemplateName(templatePath: string) {
   const normalized = normalizedZolaPath(templatePath);
   const themed = normalized.match(/^themes\/[^/]+\/templates\/(.+)$/);
@@ -37,43 +36,15 @@ export function logicalTemplateName(templatePath: string) {
   return normalized.replace(/^templates\//, "");
 }
 
-export function zolaTemplatePathForName(templateName: string) {
-  const normalized = logicalTemplateName(templateName);
-  if (!normalized) return null;
-  return `templates/${normalized}`;
-}
-
 export function isZolaTemplatePath(relativePath: string) {
   const normalized = normalizedZolaPath(relativePath);
   return normalized.startsWith("templates/") || /^themes\/[^/]+\/templates\//.test(normalized);
-}
-
-export function isLocalTemplatePath(relativePath: string) {
-  return normalizedZolaPath(relativePath).startsWith("templates/");
 }
 
 export function isActiveThemeTemplatePath(relativePath: string, activeTheme?: string | null) {
   const normalized = normalizedZolaPath(relativePath);
   if (normalized.startsWith("templates/")) return true;
   return Boolean(activeTheme && normalized.startsWith(`themes/${activeTheme}/templates/`));
-}
-
-export function extractTemplateNameFromSource(sourceText: string) {
-  const frontMatterMatch = sourceText.match(/^(\+\+\+|---)\s*\n([\s\S]*?)\n\1/m);
-
-  if (!frontMatterMatch) {
-    return null;
-  }
-
-  const frontMatter = frontMatterMatch[2];
-  const tomlMatch = frontMatter.match(/^\s*template\s*=\s*"([^"]+)"/m);
-
-  if (tomlMatch) {
-    return tomlMatch[1].trim();
-  }
-
-  const yamlMatch = frontMatter.match(/^\s*template\s*:\s*["']?([^"'\n]+)["']?/m);
-  return yamlMatch?.[1]?.trim() ?? null;
 }
 
 export function detectSourceLanguage(path: string): SourceLanguage {
@@ -112,10 +83,6 @@ export function previewUrlForScannedFile(file: ProjectFile, options: { previewBa
 
 export function currentHtmlRelativePath(activePreviewPath: string) {
   return activePreviewPath;
-}
-
-export function currentHtmlCacheKey(relativePath: string) {
-  return `scanned:${relativePath}`;
 }
 
 export function currentSourceRelativePath(activeScannedPath: string | null) {

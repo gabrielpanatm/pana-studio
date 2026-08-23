@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { IconChevronDown, IconPhoto } from "@tabler/icons-svelte";
-  import type { ProjectFile } from "$lib/types";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
   import { t } from "$lib/i18n/runtime.svelte";
   import {
     assetEditLeaseMatches,

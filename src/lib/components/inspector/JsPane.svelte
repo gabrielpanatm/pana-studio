@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { InspectorSelectionSummarySnapshot } from "$lib/types";
-  import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
+  import type { InspectorSelectionSummarySnapshot } from "$lib/editor/contracts";
+  import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
   import MotionStudioPanel from "$lib/components/inspector/js/MotionStudioPanel.svelte";
   import InspectorEmptyState from "$lib/components/inspector/InspectorEmptyState.svelte";
   import { t } from "$lib/i18n/runtime.svelte";

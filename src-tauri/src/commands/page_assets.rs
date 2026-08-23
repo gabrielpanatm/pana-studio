@@ -7,7 +7,6 @@ use crate::{
     commands::page_contracts::{
         apply_authoritative_page_contract, PageContractAuthorityReceipt, PageContractMutationPlan,
     },
-    commands::project::require_current_project_root,
     commands::workspace_entries::{
         current_workspace_identity, finish_mutation, mutation_metadata, require_bound_workspace,
         WorkspaceEntryMutationReceipt,
@@ -82,16 +81,6 @@ pub struct PageAssetContractApplyInput {
     pub expected_project_root: String,
     pub expected_session_id: String,
     pub template_path: String,
-}
-
-#[tauri::command]
-pub fn plan_page_asset_contract(
-    mut input: PageAssetContractRequest,
-    state: State<AppState>,
-) -> Result<PageAssetContractPlan, String> {
-    let _ = require_current_project_root(&state)?;
-    input.template_path = strip_zola_root_prefix(&input.template_path).to_string();
-    Ok(plan_contract(input))
 }
 
 #[tauri::command(async)]

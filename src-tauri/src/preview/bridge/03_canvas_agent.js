@@ -1,5 +1,5 @@
   var CANVAS_AGENT_SOURCE = "pana-studio-canvas-agent";
-  var CANVAS_AGENT_SCHEMA_VERSION = 2;
+  var CANVAS_AGENT_MESSAGE_SCHEMA_VERSION = 2;
   var CANVAS_AGENT_RENDER_ATTR = "data-pana-render-instance-id";
   var CANVAS_AGENT_HOVER_ID = "pana-studio-canvas-agent-hover";
   var CANVAS_AGENT_SELECTION_ID = "pana-studio-canvas-agent-selection";
@@ -49,7 +49,7 @@
   function postCanvasAgent(type, payload) {
     window.parent.postMessage(Object.assign({
       source: CANVAS_AGENT_SOURCE,
-      schemaVersion: CANVAS_AGENT_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: type,
       agentInstanceId: canvasAgentInstanceId
     }, payload || {}), "*");
@@ -64,7 +64,7 @@
   }
 
   function activateCanvasAgent(data) {
-    if (!data || data.schemaVersion !== CANVAS_AGENT_SCHEMA_VERSION) return false;
+    if (!data || data.schemaVersion !== CANVAS_AGENT_MESSAGE_SCHEMA_VERSION) return false;
     if (data.agentInstanceId !== canvasAgentInstanceId) return false;
     var epoch = Number(data.documentEpoch);
     var lastAcceptedSequence = Number(data.lastAcceptedSequence);
@@ -719,14 +719,45 @@
       "outline: 1px dashed var(--pana-studio-accent, #1d7f6a) !important;",
       "outline-offset: -1px !important;",
       "}",
-      "[" + CANVAS_AGENT_HOVER_ATTR + "=\"tera\"] {",
-      "outline-color: #3b82f6 !important;",
+      "[" + CANVAS_AGENT_HOVER_ATTR + "=\"template\"] {",
+      "outline-color: var(--pana-studio-entity-template, #2563eb) !important;",
+      "}",
+      "[" + CANVAS_AGENT_HOVER_ATTR + "=\"component\"] {",
+      "outline-color: var(--pana-studio-entity-component, #7c3aed) !important;",
       "}",
       "[" + CANVAS_AGENT_HOVER_ATTR + "=\"markdown\"] {",
-      "outline-color: var(--pana-studio-markdown, #f59e0b) !important;",
+      "outline-color: var(--pana-studio-entity-markdown, #c96a06) !important;",
+      "}",
+      "[" + CANVAS_AGENT_HOVER_ATTR + "=\"runtime\"] {",
+      "outline-color: var(--pana-studio-entity-runtime, #0891b2) !important;",
+      "}",
+      "[" + CANVAS_AGENT_HOVER_ATTR + "=\"readonly\"] {",
+      "outline-color: var(--pana-studio-entity-readonly, #64748b) !important;",
       "}"
     ].join("");
     document.head.appendChild(style);
+  }
+
+  function canvasAgentEntityKind(data) {
+    if (data && data.actions && data.actions.readOnly === true) return "readonly";
+    if (data && data.targetKind === "runtimeElement") return "runtime";
+    if (data && data.targetKind === "boundary") {
+      if (data.boundaryKind === "component") return "component";
+      if (data.boundaryKind === "markdown") return "markdown";
+      return "template";
+    }
+    return "html";
+  }
+
+  function canvasAgentEntityColor(data) {
+    switch (canvasAgentEntityKind(data)) {
+      case "template": return "var(--pana-studio-entity-template, #2563eb)";
+      case "component": return "var(--pana-studio-entity-component, #7c3aed)";
+      case "markdown": return "var(--pana-studio-entity-markdown, #c96a06)";
+      case "runtime": return "var(--pana-studio-entity-runtime, #0891b2)";
+      case "readonly": return "var(--pana-studio-entity-readonly, #64748b)";
+      default: return "var(--pana-studio-accent, #1d7f6a)";
+    }
   }
 
   function clearCanvasAgentHoverTargets() {
@@ -741,11 +772,7 @@
   function renderCanvasAgentHover(data) {
     canvasAgentOverlayRequests.hover = data;
     var elements = canvasAgentProjectionElements(data.projection);
-    var hoverKind = data.targetKind === "teraBoundary"
-      ? "tera"
-      : data.targetKind === "markdownBoundary"
-        ? "markdown"
-        : "html";
+    var hoverKind = canvasAgentEntityKind(data);
     clearCanvasAgentHoverTargets();
     if (elements.length === 0) return;
     ensureCanvasAgentHoverStyle();
@@ -817,7 +844,7 @@
 
     canvasAgentOverlayRequests.drag = data;
     var overlay = ensureCanvasAgentDragIndicator();
-    var isTera = data.targetKind === "teraBoundary";
+    var entityColor = canvasAgentEntityColor(data);
     var permission = data.dragPermission && typeof data.dragPermission === "object"
       ? data.dragPermission
       : null;
@@ -827,21 +854,10 @@
         || permission.state === "blocked")
       ? permission.state
       : "pending";
-    var pendingAccent = isTera
-      ? "#3b82f6"
-      : "var(--pana-studio-accent, #1d7f6a)";
-    var accent = permissionState === "allowed"
-      ? "#15803d"
-      : permissionState === "blocked"
-        ? "#dc2626"
-        : pendingAccent;
-    var fill = permissionState === "allowed"
-      ? "rgba(21,128,61,0.10)"
-      : permissionState === "blocked"
-        ? "rgba(220,38,38,0.10)"
-        : isTera
-          ? "rgba(59,130,246,0.10)"
-          : "color-mix(in srgb, var(--pana-studio-accent, #1d7f6a) 10%, transparent)";
+    var accent = permissionState === "blocked"
+      ? "var(--pana-studio-danger, #d94b4b)"
+      : entityColor;
+    var fill = "color-mix(in srgb, " + accent + " 10%, transparent)";
     var axis = canvasAgentDropAxis(primary);
     var edge = position === "before" ? "before" : "after";
 
@@ -883,7 +899,8 @@
   function renderCanvasAgentAction(overlay, data, rect) {
     var action = overlay.querySelector("[" + CANVAS_AGENT_ACTION_ATTR + "]");
     var canEnterBoundary = data
-      && data.targetKind === "teraBoundary"
+      && data.targetKind === "boundary"
+      && data.boundaryKind !== "markdown"
       && data.actions
       && data.actions.canEnterBoundary === true
       && typeof data.editorNodeId === "string"
@@ -906,9 +923,9 @@
         "display: none",
         "height: 26px",
         "padding: 0 9px",
-        "border: 1px solid #2563eb",
+        "border: 1px solid var(--pana-studio-entity-template, #2563eb)",
         "border-radius: 6px",
-        "background: #2563eb",
+        "background: var(--pana-studio-entity-template, #2563eb)",
         "color: #fff",
         "font: 12px/24px system-ui, sans-serif",
         "white-space: nowrap",
@@ -922,7 +939,8 @@
         var request = canvasAgentPrimarySelectionRequest();
         if (
           !request
-          || request.targetKind !== "teraBoundary"
+          || request.targetKind !== "boundary"
+          || request.boundaryKind === "markdown"
           || !request.actions
           || request.actions.canEnterBoundary !== true
         ) return;
@@ -937,6 +955,9 @@
       });
       overlay.appendChild(action);
     }
+    var actionColor = canvasAgentEntityColor(data);
+    action.style.borderColor = actionColor;
+    action.style.background = actionColor;
     action.style.top = rect && rect.top < 34 ? "2px" : "-30px";
     action.style.display = "block";
   }
@@ -1012,16 +1033,10 @@
       overlay.style.display = "none";
       return;
     }
-    var isTera = member.targetKind === "teraBoundary";
-    var isMarkdown = member.targetKind === "markdownBoundary";
     overlay.style.display = "block";
     overlay.style.borderStyle = primary ? "solid" : "dashed";
     overlay.style.borderWidth = primary ? "2px" : "1px";
-    overlay.style.borderColor = isTera
-      ? "#3b82f6"
-      : isMarkdown
-        ? "var(--pana-studio-markdown, #f59e0b)"
-        : "var(--pana-studio-accent, #1d7f6a)";
+    overlay.style.borderColor = canvasAgentEntityColor(member);
     overlay.style.left = Math.round(rect.left) + "px";
     overlay.style.top = Math.round(rect.top) + "px";
     overlay.style.width = Math.round(rect.width) + "px";
@@ -1097,14 +1112,8 @@
       overlay.style.display = "none";
       return;
     }
-    var isTera = data.targetKind === "teraBoundary";
-    var isMarkdown = data.targetKind === "markdownBoundary";
     overlay.style.display = "block";
-    overlay.style.borderColor = isTera
-      ? "#3b82f6"
-      : isMarkdown
-        ? "var(--pana-studio-markdown, #f59e0b)"
-        : "var(--pana-studio-accent, #1d7f6a)";
+    overlay.style.borderColor = canvasAgentEntityColor(data);
     overlay.style.left = Math.round(rect.left) + "px";
     overlay.style.top = Math.round(rect.top) + "px";
     overlay.style.width = Math.round(rect.width) + "px";
@@ -1141,7 +1150,7 @@
       "z-index: 2147483644",
       "display: none",
       "overflow: visible",
-      "border: 1px solid #7c3aed",
+      "border: 1px solid var(--pana-studio-accent, #1d7f6a)",
       "background: transparent",
       "box-shadow: inset 0 0 0 1px rgba(255,255,255,0.42)",
       "pointer-events: none",
@@ -1160,7 +1169,7 @@
       axis === "column" ? "top:" + Math.round(crossOffset) + "px" : "left:" + Math.round(crossOffset) + "px",
       axis === "column" ? "width:1px" : "height:1px",
       axis === "column" ? "height:" + Math.max(0, Math.round(length)) + "px" : "width:" + Math.max(0, Math.round(length)) + "px",
-      "background:#7c3aed",
+      "background:var(--pana-studio-accent, #1d7f6a)",
       "opacity:.82",
       "pointer-events:none"
     ].join(";");
@@ -1175,7 +1184,7 @@
       "height:15px",
       "place-items:center",
       "border-radius:4px",
-      "background:#7c3aed",
+      "background:var(--pana-studio-accent, #1d7f6a)",
       "color:#fff",
       "font:9px/1 system-ui,sans-serif"
     ].join(";");
@@ -1193,7 +1202,7 @@
       axis === "column" ? "top:" + Math.round(crossOffset) + "px" : "left:" + Math.round(crossOffset) + "px",
       axis === "column" ? "width:" + Math.round(breadth) + "px" : "height:" + Math.round(breadth) + "px",
       axis === "column" ? "height:" + Math.round(length) + "px" : "width:" + Math.round(length) + "px",
-      "background:rgba(124,58,237,.10)",
+      "background:color-mix(in srgb, var(--pana-studio-accent, #1d7f6a) 10%, transparent)",
       "pointer-events:none"
     ].join(";");
     overlay.appendChild(gap);
@@ -1217,7 +1226,7 @@
         "overflow:hidden",
         "padding:2px 5px",
         "border-radius:4px",
-        "background:rgba(124,58,237,.88)",
+        "background:color-mix(in srgb, var(--pana-studio-accent, #1d7f6a) 88%, transparent)",
         "color:#fff",
         "font:10px/1.2 system-ui,sans-serif",
         "text-overflow:ellipsis",
@@ -1377,6 +1386,9 @@
   }, true);
   document.addEventListener("pointerleave", function (event) {
     if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;
+    // A capture listener on `document` observes pointerleave for every child
+    // ancestor. A null relatedTarget identifies an actual viewport exit.
+    if (event.relatedTarget !== null) return;
     clearCanvasAgentHoverDwell();
     emitCanvasAgentGesture(event, "pointerMove", true);
   }, true);

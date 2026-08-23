@@ -1,0 +1,15 @@
+schema_version = 1
+id = "minimal"
+kind = "minimal"
+display_name = "Proiect minimal"
+summary = "Structură Zola curată, cu o singură pagină și surse complet locale."
+version = "1.0.0"
+category = "minimal"
+capabilities = [
+  "local-sources",
+  "minimal-structure",
+]
+
+[zola]
+minimum = "0.22.0"
+tested = "0.22.1"

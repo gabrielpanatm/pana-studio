@@ -13,67 +13,28 @@
     IconSettings,
     IconX,
   } from "@tabler/icons-svelte";
-  import {
-    cancelVersionNetworkOperation,
-    clearVersionUpstream,
-    commitVersioning,
-    configureVersionRemote,
-    configureVersionUpstream,
-    configureVersioningIdentity,
-    createVersionBranch,
-    deleteVersionBranch,
-    fetchVersionRemote,
-    initializeVersioning,
-    integrateVersionTarget,
-    previewVersion,
-    readVersionDiff,
-    readVersionHistory,
-    readVersionIntegrationPlan,
-    readVersionIntegrationRecovery,
-    readVersionRestoreRecovery,
-    readVersionSyncComparison,
-    readVersioningSnapshot,
-    removeVersionRemote,
-    resolveVersionIntegrationRecovery,
-    resolveVersionRestoreRecovery,
-    restoreVersioning,
-    pushVersionBranch,
-    stageAllVersioning,
-    stageVersioningPaths,
-    switchVersionBranch,
-    unstageAllVersioning,
-    unstageVersioningPaths,
-  } from "$lib/project/io";
-  import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { UI_TERM_IDS } from "$lib/i18n/ui-terms";
   import type { GlobalStatusKind } from "$lib/status/global-status";
+  import type { ProjectWorkspaceSnapshot } from "$lib/project/workspace-contract";
   import type {
-    ProjectWorkspaceSnapshot,
-    VersionDiffKind,
-    VersionDiffReceipt,
     VersionFileStatus,
-    VersionHistoryEntry,
-    VersionIntegrationMode,
-    VersionIntegrationPlan,
     VersionIntegrationReceipt,
-    VersionIntegrationRecoveryAction,
-    VersionIntegrationRecoveryItem,
     VersionIntegrationRecoveryResolutionReceipt,
-    VersionIntegrationRecoveryScan,
     VersionNetworkProgressEvent,
-    VersionSyncComparison,
-    VersioningMutationIdentity,
-    VersioningSessionIdentity,
-    VersioningSnapshot,
     VersionPreviewReceipt,
     VersionRestoreReceipt,
-    VersionRestoreRecoveryAction,
-    VersionRestoreRecoveryItem,
     VersionRestoreRecoveryResolutionReceipt,
-    VersionRestoreRecoveryScan,
-  } from "$lib/types";
+  } from "$lib/versioning/contracts";
+  import { VersioningIntegrationController } from "$lib/versioning/integration-controller.svelte";
+  import { VersioningNetworkController } from "$lib/versioning/network-controller.svelte";
+  import {
+    VersioningOperationState,
+    type VersioningPanelHost,
+  } from "$lib/versioning/panel-context.svelte";
+  import { VersioningRecoveryController } from "$lib/versioning/recovery-controller.svelte";
+  import { VersioningSnapshotController } from "$lib/versioning/snapshot-controller.svelte";
 
   let {
     projectRoot = "",
@@ -98,42 +59,92 @@
     afterRestore: (receipt: VersionRestoreReceipt) => void | Promise<void>;
     afterRecovery: (receipt: VersionRestoreRecoveryResolutionReceipt) => void | Promise<void>;
     afterIntegration: (receipt: VersionIntegrationReceipt) => void | Promise<void>;
-    afterIntegrationRecovery: (receipt: VersionIntegrationRecoveryResolutionReceipt) => void | Promise<void>;
+    afterIntegrationRecovery: (
+      receipt: VersionIntegrationRecoveryResolutionReceipt,
+    ) => void | Promise<void>;
   } = $props();
 
-  let snapshot = $state<VersioningSnapshot | null>(null);
-  let history = $state<VersionHistoryEntry[]>([]);
-  let historyHasMore = $state(false);
-  let diff = $state<VersionDiffReceipt | null>(null);
-  let loading = $state(false);
-  let busyAction = $state("");
-  let error = $state("");
-  let commitMessage = $state("");
-  let identityName = $state("");
-  let identityEmail = $state("");
-  let restoreEntry = $state<VersionHistoryEntry | null>(null);
-  let restoreMessage = $state("");
-  let restoreConfirmation = $state("");
-  let recovery = $state<VersionRestoreRecoveryScan | null>(null);
-  let integrationRecovery = $state<VersionIntegrationRecoveryScan | null>(null);
-  let syncComparison = $state<VersionSyncComparison | null>(null);
-  let integrationPlan = $state<VersionIntegrationPlan | null>(null);
-  let integrationDiff = $state<VersionDiffReceipt | null>(null);
-  let integrationMessage = $state("");
-  let remoteName = $state("origin");
-  let remoteFetchUrl = $state("");
-  let remotePushUrl = $state("");
-  let selectedRemote = $state("");
-  let selectedRemoteBranch = $state("");
-  let newBranchName = $state("");
-  let pendingBranchRemoval = $state("");
-  let branchRemovalConfirmation = $state("");
-  let pendingRemoteRemoval = $state("");
-  let remoteRemovalConfirmation = $state("");
-  let activeNetwork = $state<VersionNetworkProgressEvent | null>(null);
-  let hydratedIdentityToken = "";
-  let requestSerial = 0;
+  const host: VersioningPanelHost = {
+    projectRoot: () => projectRoot,
+    sessionId: () => sessionId,
+    workspaceDirty: () => workspace?.dirty ?? false,
+    activePreviewCommitOid: () => activePreviewCommitOid,
+    onStatusUpdate: (text, kind) => onStatusUpdate(text, kind),
+    showPreview: (receipt) => showPreview(receipt),
+    returnToLivePreview: () => returnToLivePreview(),
+    afterRestore: (receipt) => afterRestore(receipt),
+    afterRecovery: (receipt) => afterRecovery(receipt),
+    afterIntegration: (receipt) => afterIntegration(receipt),
+    afterIntegrationRecovery: (receipt) => afterIntegrationRecovery(receipt),
+  };
+  const operations = new VersioningOperationState(host);
+  const snapshotController = new VersioningSnapshotController(operations);
+  const integrationController = new VersioningIntegrationController(
+    snapshotController,
+    operations,
+  );
+  const networkController = new VersioningNetworkController(
+    snapshotController,
+    operations,
+    {
+      clearIntegration: () => integrationController.clearPlan(),
+      selectionChanged: (remote, branch) => (
+        integrationController.selectionChanged(remote, branch)
+      ),
+    },
+  );
+  const recoveryController = new VersioningRecoveryController(
+    snapshotController,
+    operations,
+  );
+  integrationController.bindNetwork(networkController);
+  snapshotController.registerParticipant({
+    reset: () => networkController.reset(),
+    onSnapshot: (snapshot) => networkController.onSnapshot(snapshot),
+  });
+  snapshotController.registerParticipant(integrationController.participant());
+  snapshotController.registerParticipant(recoveryController.participant());
+  operations.setMutationBlocker(() => {
+    if (workspace?.dirty) return t("versions-blocked-editor-dirty");
+    if (recoveryController.recovery?.items.length) return t("versions-blocked-restore");
+    if (integrationController.recovery?.items.length) {
+      return t("versions-blocked-integration");
+    }
+    return "";
+  });
 
+  const snapshot = $derived(snapshotController.snapshot);
+  const history = $derived(snapshotController.history);
+  const historyHasMore = $derived(snapshotController.historyHasMore);
+  const diff = $derived(snapshotController.diff);
+  const loading = $derived(snapshotController.loading);
+  const busyAction = $derived(operations.busyAction);
+  const error = $derived(operations.error);
+  const commitMessage = $derived(snapshotController.commitMessage);
+  const identityName = $derived(snapshotController.identityName);
+  const identityEmail = $derived(snapshotController.identityEmail);
+  const recovery = $derived(recoveryController.recovery);
+  const restoreEntry = $derived(recoveryController.restoreEntry);
+  const restoreMessage = $derived(recoveryController.restoreMessage);
+  const restoreConfirmation = $derived(recoveryController.restoreConfirmation);
+  const integrationRecovery = $derived(integrationController.recovery);
+  const integrationPlan = $derived(integrationController.plan);
+  const integrationDiff = $derived(integrationController.diff);
+  const integrationMessage = $derived(integrationController.message);
+  const remoteName = $derived(networkController.remoteName);
+  const remoteFetchUrl = $derived(networkController.remoteFetchUrl);
+  const selectedRemote = $derived(networkController.selectedRemote);
+  const selectedRemoteBranch = $derived(networkController.selectedRemoteBranch);
+  const newBranchName = $derived(integrationController.newBranchName);
+  const pendingBranchRemoval = $derived(integrationController.pendingBranchRemoval);
+  const branchRemovalConfirmation = $derived(
+    integrationController.branchRemovalConfirmation,
+  );
+  const pendingRemoteRemoval = $derived(networkController.pendingRemoteRemoval);
+  const remoteRemovalConfirmation = $derived(
+    networkController.remoteRemovalConfirmation,
+  );
+  const activeNetwork = $derived(networkController.activeNetwork);
   const stagedFiles = $derived(snapshot?.files.filter((file) => file.staged) ?? []);
   const unstagedFiles = $derived(snapshot?.files.filter((file) => file.unstaged) ?? []);
   const workspaceDirty = $derived(workspace?.dirty ?? false);
@@ -144,803 +155,61 @@
         ? t("versions-blocked-restore")
         : integrationRecovery?.items.length
           ? t("versions-blocked-integration")
-        : "",
+          : "",
   );
-  const usableRemotes = $derived(snapshot?.remotes.filter((remote) => remote.usable) ?? []);
+  const usableRemotes = $derived(
+    snapshot?.remotes.filter((remote) => remote.usable) ?? [],
+  );
   const selectedRemoteBranches = $derived(
-    snapshot?.remoteBranches.filter((branch) => branch.remote === selectedRemote) ?? [],
+    snapshot?.remoteBranches.filter(
+      (branch) => branch.remote === selectedRemote,
+    ) ?? [],
   );
 
-  function readIdentity(): VersioningSessionIdentity | null {
-    if (!projectRoot || !sessionId) return null;
-    return {
-      expectedProjectRoot: projectRoot,
-      expectedSessionId: sessionId,
-    };
-  }
-
-  function mutationIdentity(): VersioningMutationIdentity {
-    if (!snapshot) throw new Error(t("versions-git-unavailable"));
-    const identity = readIdentity();
-    if (!identity) throw new Error(t("versions-session-unavailable"));
-    return {
-      ...identity,
-      expectedStatusToken: snapshot.statusToken,
-      expectedHeadOid: snapshot.headOid,
-    };
-  }
-
-  function errorMessage(value: unknown) {
-    return value instanceof Error ? value.message : String(value);
-  }
-
-  async function settlePublishedEffect(
-    label: string,
-    projection: () => void | Promise<void>,
-  ) {
-    try {
-      await projection();
-      return true;
-    } catch (reason) {
-      error = t("versions-projection-failed", {
-        label,
-        message: errorMessage(reason),
-      });
-      onStatusUpdate(error, "error");
-      return false;
-    }
-  }
-
-  function hydrateIdentity(next: VersioningSnapshot) {
-    if (hydratedIdentityToken === next.projectRoot) return;
-    identityName = next.userName ?? "";
-    identityEmail = next.userEmail ?? "";
-    hydratedIdentityToken = next.projectRoot;
-  }
-
-  function hydrateRemoteSelection(next: VersioningSnapshot) {
-    const remote = next.remotes.find((item) => item.name === selectedRemote && item.usable)
-      ?? next.remotes.find((item) => item.name === next.upstream?.remote && item.usable)
-      ?? next.remotes.find((item) => item.usable);
-    selectedRemote = remote?.name ?? "";
-    const remoteBranch = next.remoteBranches.find(
-      (branch) => branch.remote === selectedRemote && branch.name === selectedRemoteBranch,
-    ) ?? next.remoteBranches.find(
-      (branch) => branch.remote === selectedRemote && branch.name === next.upstream?.remoteBranch,
-    ) ?? next.remoteBranches.find((branch) => branch.remote === selectedRemote);
-    selectedRemoteBranch = remoteBranch?.name ?? "";
-    if (!integrationMessage.trim() || integrationMessage === t("versions-default-integration-message")) {
-      integrationMessage = selectedRemoteBranch
-        ? t("versions-integration-message", {
-          remote: selectedRemote,
-          branch: selectedRemoteBranch,
-        })
-        : t("versions-default-integration-message");
-    }
-  }
-
-  async function refresh(options: { keepDiff?: boolean } = {}) {
-    const identity = readIdentity();
-    if (!identity) {
-      snapshot = null;
-      history = [];
-      diff = null;
-      integrationPlan = null;
-      integrationDiff = null;
-      return;
-    }
-    const serial = ++requestSerial;
-    loading = true;
-    error = "";
-    try {
-      const next = await readVersioningSnapshot(identity);
-      if (serial !== requestSerial) return;
-      snapshot = next;
-      hydrateIdentity(next);
-      hydrateRemoteSelection(next);
-      if (!options.keepDiff) {
-        diff = null;
-        integrationPlan = null;
-        integrationDiff = null;
-      }
-      await Promise.all([
-        refreshHistory(true, serial),
-        refreshRecovery(serial),
-        refreshIntegrationRecovery(serial),
-        refreshSyncComparison(serial),
-      ]);
-    } catch (reason) {
-      if (serial !== requestSerial) return;
-      error = errorMessage(reason);
-    } finally {
-      if (serial === requestSerial) loading = false;
-    }
-  }
-
-  async function refreshHistory(reset = true, parentSerial = requestSerial) {
-    const identity = readIdentity();
-    if (!identity || snapshot?.repositoryState !== "ready" || !snapshot.headOid) {
-      history = [];
-      historyHasMore = false;
-      return;
-    }
-    const offset = reset ? 0 : history.length;
-    const page = await readVersionHistory(identity, offset, 30);
-    if (parentSerial !== requestSerial) return;
-    history = reset ? page.entries : [...history, ...page.entries];
-    historyHasMore = page.hasMore;
-  }
-
-  async function refreshRecovery(parentSerial = requestSerial) {
-    const identity = readIdentity();
-    if (!identity || snapshot?.repositoryState !== "ready") {
-      recovery = null;
-      return;
-    }
-    const next = await readVersionRestoreRecovery(identity);
-    if (parentSerial === requestSerial) recovery = next;
-  }
-
-  async function refreshIntegrationRecovery(parentSerial = requestSerial) {
-    const identity = readIdentity();
-    if (!identity || snapshot?.repositoryState !== "ready") {
-      integrationRecovery = null;
-      return;
-    }
-    const next = await readVersionIntegrationRecovery(identity);
-    if (parentSerial === requestSerial) integrationRecovery = next;
-  }
-
-  async function refreshSyncComparison(parentSerial = requestSerial) {
-    const identity = readIdentity();
-    if (!identity || snapshot?.repositoryState !== "ready" || !snapshot.upstream?.oid) {
-      syncComparison = null;
-      return;
-    }
-    try {
-      const next = await readVersionSyncComparison(identity);
-      if (parentSerial === requestSerial) syncComparison = next;
-    } catch {
-      if (parentSerial === requestSerial) syncComparison = null;
-    }
-  }
-
-  async function runSnapshotMutation(
-    label: string,
-    operation: () => Promise<VersioningSnapshot>,
-  ) {
-    if (mutationBlockedReason) {
-      error = mutationBlockedReason;
-      return;
-    }
-    busyAction = label;
-    error = "";
-    try {
-      snapshot = await operation();
-      if (snapshot) hydrateIdentity(snapshot);
-      if (snapshot) hydrateRemoteSelection(snapshot);
-      diff = null;
-      integrationPlan = null;
-      integrationDiff = null;
-      if (!(await settlePublishedEffect(
-        t("versions-backend-effect", { label }),
-        async () => {
-          await refreshHistory(true);
-          await refreshIntegrationRecovery();
-          await refreshSyncComparison();
-        },
-      ))) return;
-      onStatusUpdate(label, "saved");
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(`${label}: ${error}`, "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function runFileMutation(
-    label: string,
-    operation: () => Promise<{ snapshot: VersioningSnapshot }>,
-  ) {
-    if (mutationBlockedReason) {
-      error = mutationBlockedReason;
-      return;
-    }
-    busyAction = label;
-    error = "";
-    try {
-      const receipt = await operation();
-      snapshot = receipt.snapshot;
-      diff = null;
-      integrationPlan = null;
-      integrationDiff = null;
-      onStatusUpdate(label, "saved");
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(`${label}: ${error}`, "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function commit() {
-    if (!commitMessage.trim()) {
-      error = t("versions-commit-message-required");
-      return;
-    }
-    if (mutationBlockedReason) {
-      error = mutationBlockedReason;
-      return;
-    }
-    busyAction = "commit";
-    error = "";
-    try {
-      const receipt = await commitVersioning(mutationIdentity(), commitMessage);
-      commitMessage = "";
-      if (receipt.snapshot) snapshot = receipt.snapshot;
-      else await refresh();
-      if (!(await settlePublishedEffect(
-        t("versions-commit-published-backend"),
-        () => refreshHistory(true),
-      ))) return;
-      diff = null;
-      integrationPlan = null;
-      integrationDiff = null;
-      const diagnostic = receipt.diagnostic
-        ? ` ${t("versions-technical-details-available")}`
-        : "";
-      onStatusUpdate(
-        t("versions-created-status", {
-          oid: receipt.commitOid.slice(0, 8),
-          diagnostic,
-        }),
-        receipt.publicationStatus === "published" ? "saved" : "error",
-      );
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-commit-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function showFileDiff(file: VersionFileStatus, kind: VersionDiffKind) {
-    const identity = readIdentity();
-    if (!identity) return;
-    busyAction = `diff:${kind}:${file.path}`;
-    error = "";
-    try {
-      diff = await readVersionDiff(identity, { kind, path: file.path });
-    } catch (reason) {
-      error = errorMessage(reason);
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function showCommitDiff(entry: VersionHistoryEntry) {
-    const identity = readIdentity();
-    if (!identity) return;
-    busyAction = `diff:commit:${entry.oid}`;
-    error = "";
-    try {
-      diff = await readVersionDiff(identity, { kind: "commit", commitOid: entry.oid });
-    } catch (reason) {
-      error = errorMessage(reason);
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function previewCommit(entry: VersionHistoryEntry) {
-    const identity = readIdentity();
-    if (!identity) return;
-    busyAction = `preview:${entry.oid}`;
-    error = "";
-    try {
-      if (activePreviewCommitOid) await returnToLivePreview();
-      const receipt = await previewVersion(identity, entry.oid);
-      await showPreview(receipt);
-      onStatusUpdate(
-        t("versions-preview-status", { oid: receipt.shortOid }),
-        "saved",
-      );
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-preview-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  function requestRestore(entry: VersionHistoryEntry) {
-    if (entry.oid === snapshot?.headOid) {
-      error = t("versions-already-current");
-      return;
-    }
-    restoreEntry = entry;
-    restoreMessage = t("versions-restore-message", {
-      oid: entry.shortOid,
-      subject: entry.subject,
-    });
-    restoreConfirmation = "";
-    error = "";
-  }
-
-  function cancelRestore() {
-    restoreEntry = null;
-    restoreMessage = "";
-    restoreConfirmation = "";
-  }
-
-  async function restoreCommit() {
-    const entry = restoreEntry;
-    if (!entry) return;
-    if (!snapshot?.clean) {
-      error = t("versions-restore-clean-required");
-      return;
-    }
-    if (workspaceDirty) {
-      error = mutationBlockedReason;
-      return;
-    }
-    if (!restoreMessage.trim()) {
-      error = t("versions-restore-message-required");
-      return;
-    }
-    if (restoreConfirmation.trim() !== entry.shortOid) {
-      error = t("versions-confirmation-exact", { value: entry.shortOid });
-      return;
-    }
-    busyAction = `restore:${entry.oid}`;
-    error = "";
-    try {
-      if (activePreviewCommitOid) await returnToLivePreview();
-      const receipt = await restoreVersioning(
-        mutationIdentity(),
-        entry.oid,
-        restoreMessage,
-      );
-      if (receipt.snapshot) snapshot = receipt.snapshot;
-      if (!(await settlePublishedEffect(
-        t("versions-restore-terminal-backend"),
-        () => afterRestore(receipt),
-      ))) return;
-      if (receipt.status === "recovery_required") {
-        await refresh();
-        error = t("versions-restore-recovery-required");
-        onStatusUpdate(error, "error");
-        return;
-      }
-      await refresh();
-      cancelRestore();
-      const diagnostic = receipt.diagnostic
-        ? ` ${t("versions-technical-details-available")}`
-        : "";
-      onStatusUpdate(
-        receipt.status === "noop"
-          ? t("versions-restore-noop-status", { oid: entry.shortOid, diagnostic })
-          : t("versions-restored-status", { oid: entry.shortOid, diagnostic }),
-        "restored",
-      );
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-restore-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  function recoveryActionLabel(action: VersionRestoreRecoveryAction) {
-    if (action === "finalize") return t("versions-recovery-finalize-restore");
-    if (action === "rollback") return t("versions-recovery-rollback");
-    return t("versions-recovery-clear-marker");
-  }
-
-  async function resolveRecovery(
-    item: VersionRestoreRecoveryItem,
-    action: VersionRestoreRecoveryAction,
-  ) {
-    busyAction = `recovery:${item.transactionId}:${action}`;
-    error = "";
-    try {
-      const receipt = await resolveVersionRestoreRecovery(
-        mutationIdentity(),
-        item.recoveryRef,
-        action,
-      );
-      if (receipt.snapshot) snapshot = receipt.snapshot;
-      if (!(await settlePublishedEffect(
-        t("versions-restore-recovery-backend"),
-        () => afterRecovery(receipt),
-      ))) return;
-      await refresh();
-      if (!receipt.resolved) {
-        error = t("versions-recovery-not-finished");
-        onStatusUpdate(error, "error");
-        return;
-      }
-      onStatusUpdate(
-        t("versions-recovery-resolved", {
-          action: recoveryActionLabel(action),
-        }),
-        "restored",
-      );
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-recovery-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  function networkOperationId(kind: "fetch" | "push") {
-    const random = globalThis.crypto?.randomUUID?.().replaceAll("-", "")
-      ?? Math.random().toString(16).slice(2);
-    return `${kind}-${Date.now()}-${random}`;
-  }
-
-  function editRemote(name: string) {
-    const remote = snapshot?.remotes.find((item) => item.name === name);
-    if (!remote) return;
-    remoteName = remote.name;
-    remoteFetchUrl = remote.usable ? remote.fetchUrl : "";
-    remotePushUrl = remote.usable && remote.pushUrl !== remote.fetchUrl ? remote.pushUrl : "";
-    pendingRemoteRemoval = "";
-    remoteRemovalConfirmation = "";
-  }
-
-  async function saveRemote() {
-    if (!remoteName.trim() || !remoteFetchUrl.trim()) {
-      error = t("versions-remote-required");
-      return;
-    }
-    await runSnapshotMutation(t("versions-remote-saved"), () => configureVersionRemote(
-      mutationIdentity(),
-      {
-        name: remoteName.trim(),
-        fetchUrl: remoteFetchUrl.trim(),
-        pushUrl: remotePushUrl.trim() || null,
-      },
-    ));
-  }
-
-  async function removeRemoteConfirmed() {
-    if (!pendingRemoteRemoval || remoteRemovalConfirmation !== pendingRemoteRemoval) {
-      error = t("versions-remote-confirmation-mismatch");
-      return;
-    }
-    const name = pendingRemoteRemoval;
-    await runSnapshotMutation(t("versions-remote-removed", { name }), () => removeVersionRemote(
-      mutationIdentity(),
-      name,
-    ));
-    pendingRemoteRemoval = "";
-    remoteRemovalConfirmation = "";
-  }
-
-  async function fetchRemote() {
-    if (!selectedRemote) {
-      error = t("versions-choose-remote");
-      return;
-    }
-    const operationId = networkOperationId("fetch");
-    activeNetwork = {
-      schemaVersion: 2,
-      projectRoot,
-      sessionId,
-      operationId,
-      kind: "fetch",
-      status: "started",
-      messageDiagnostic: {
-        schemaVersion: 1,
-        code: "versions-fetch-started",
-        arguments: {},
-      },
-    };
-    busyAction = `fetch:${selectedRemote}`;
-    error = "";
-    try {
-      const receipt = await fetchVersionRemote(mutationIdentity(), {
-        operationId,
-        remote: selectedRemote,
-        prune: true,
-      });
-      snapshot = receipt.snapshot;
-      hydrateRemoteSelection(receipt.snapshot);
-      integrationPlan = null;
-      integrationDiff = null;
-      if (!(await settlePublishedEffect(
-        t("versions-fetch-backend", { remote: selectedRemote }),
-        async () => {
-          await Promise.all([
-            refreshHistory(true),
-            refreshIntegrationRecovery(),
-            refreshSyncComparison(),
-          ]);
-        },
-      ))) return;
-      onStatusUpdate(
-        receipt.changed
-          ? t("versions-fetch-updated", { remote: selectedRemote })
-          : t("versions-fetch-no-updates", { remote: selectedRemote }),
-        "saved",
-      );
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-fetch-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function pushBranch() {
-    if (!snapshot?.branch || !selectedRemote) {
-      error = t("versions-push-required");
-      return;
-    }
-    const branch = snapshot.branch;
-    const remoteBranch = selectedRemoteBranch || branch;
-    const operationId = networkOperationId("push");
-    activeNetwork = {
-      schemaVersion: 2,
-      projectRoot,
-      sessionId,
-      operationId,
-      kind: "push",
-      status: "started",
-      messageDiagnostic: {
-        schemaVersion: 1,
-        code: "versions-push-started",
-        arguments: {},
-      },
-    };
-    busyAction = `push:${selectedRemote}/${remoteBranch}`;
-    error = "";
-    try {
-      const receipt = await pushVersionBranch(mutationIdentity(), {
-        operationId,
-        remote: selectedRemote,
-        remoteBranch,
-        setUpstream: !snapshot.upstream
-          || snapshot.upstream.remote !== selectedRemote
-          || snapshot.upstream.remoteBranch !== remoteBranch,
-      });
-      snapshot = receipt.snapshot;
-      hydrateRemoteSelection(receipt.snapshot);
-      integrationPlan = null;
-      integrationDiff = null;
-      await refreshSyncComparison();
-      onStatusUpdate(
-        t("versions-push-published", {
-          branch,
-          remote: selectedRemote,
-          remoteBranch,
-        }),
-        "saved",
-      );
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-push-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function cancelNetwork() {
-    const identity = readIdentity();
-    if (!identity || !activeNetwork) return;
-    try {
-      const receipt = await cancelVersionNetworkOperation(identity, activeNetwork.operationId);
-      if (!receipt.cancellationRequested) {
-        activeNetwork = null;
-      }
-    } catch (reason) {
-      error = errorMessage(reason);
-    }
-  }
-
-  async function saveUpstream() {
-    if (!snapshot?.branch || !selectedRemote || !selectedRemoteBranch) {
-      error = t("versions-upstream-required");
-      return;
-    }
-    await runSnapshotMutation(t("versions-upstream-saved"), () => configureVersionUpstream(
-      mutationIdentity(),
-      {
-        localBranch: snapshot!.branch!,
-        remote: selectedRemote,
-        remoteBranch: selectedRemoteBranch,
-      },
-    ));
-  }
-
-  async function removeUpstream() {
-    if (!snapshot?.branch) return;
-    await runSnapshotMutation(t("versions-upstream-removed"), () => clearVersionUpstream(
-      mutationIdentity(),
-      snapshot!.branch!,
-    ));
-  }
-
-  async function createBranch() {
-    const name = newBranchName.trim();
-    if (!name) {
-      error = t("versions-branch-name-required");
-      return;
-    }
-    await runSnapshotMutation(t("versions-branch-created", { name }), () => createVersionBranch(
-      mutationIdentity(),
-      name,
-    ));
-    newBranchName = "";
-  }
-
-  async function switchBranch(branch: string, oid: string | null) {
-    if (!oid || !snapshot?.clean) {
-      error = t("versions-switch-clean-required");
-      return;
-    }
-    busyAction = `switch:${branch}`;
-    error = "";
-    try {
-      const receipt = await switchVersionBranch(mutationIdentity(), branch, oid);
-      if (receipt.snapshot) snapshot = receipt.snapshot;
-      if (!(await settlePublishedEffect(
-        t("versions-branch-switched-backend", { branch }),
-        () => afterIntegration(receipt),
-      ))) return;
-      await refresh();
-      onStatusUpdate(t("versions-active-branch", { branch }), "restored");
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-switch-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function deleteBranch(branch: string) {
-    if (branchRemovalConfirmation !== branch) {
-      error = t("versions-delete-branch-confirmation", { branch });
-      return;
-    }
-    await runSnapshotMutation(t("versions-branch-removed", { branch }), () => deleteVersionBranch(
-      mutationIdentity(),
-      branch,
-    ));
-    pendingBranchRemoval = "";
-    branchRemovalConfirmation = "";
-  }
-
-  function selectedTarget() {
-    return snapshot?.remoteBranches.find(
-      (branch) => branch.remote === selectedRemote && branch.name === selectedRemoteBranch,
-    ) ?? null;
-  }
-
-  async function analyzeIntegration() {
-    const identity = readIdentity();
-    const target = selectedTarget();
-    if (!identity || !target) {
-      error = t("versions-integration-target-required");
-      return;
-    }
-    busyAction = `plan:${target.refName}`;
-    error = "";
-    try {
-      const [plan, previewDiff] = await Promise.all([
-        readVersionIntegrationPlan(identity, target.refName, target.oid),
-        readVersionDiff(identity, {
-          kind: "integration",
-          targetRef: target.refName,
-          expectedTargetOid: target.oid,
-        }),
-      ]);
-      integrationPlan = plan;
-      integrationDiff = previewDiff;
-      integrationMessage = t("versions-integration-message", {
-        remote: target.remote,
-        branch: target.name,
-      });
-    } catch (reason) {
-      error = errorMessage(reason);
-      integrationPlan = null;
-      integrationDiff = null;
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  async function applyIntegration(mode: VersionIntegrationMode) {
-    const plan = integrationPlan;
-    if (!plan || !integrationMessage.trim()) return;
-    busyAction = `integrate:${mode}`;
-    error = "";
-    try {
-      if (activePreviewCommitOid) await returnToLivePreview();
-      const receipt = await integrateVersionTarget(mutationIdentity(), {
-        targetRef: plan.targetRef,
-        expectedTargetOid: plan.targetOid,
-        mode,
-        message: integrationMessage.trim(),
-      });
-      if (receipt.snapshot) snapshot = receipt.snapshot;
-      integrationPlan = null;
-      integrationDiff = null;
-      if (!(await settlePublishedEffect(
-        t("versions-integration-backend"),
-        () => afterIntegration(receipt),
-      ))) return;
-      await refresh();
-      if (receipt.status === "conflict_resolution_required") {
-        onStatusUpdate(
-          t("versions-conflicts-count", { count: receipt.conflictPaths.length }),
-          "error",
-        );
-      } else if (receipt.status === "recovery_required") {
-        error = t("versions-integration-recovery-required");
-        onStatusUpdate(error, "error");
-      } else {
-        onStatusUpdate(
-          receipt.status === "noop"
-            ? t("versions-target-already-integrated")
-            : t("versions-integration-published"),
-          "restored",
-        );
-      }
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-integration-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
-
-  function integrationRecoveryActionLabel(action: VersionIntegrationRecoveryAction) {
-    if (action === "finalize") return t("versions-recovery-finalize-integration");
-    if (action === "continue") return t("versions-recovery-continue-merge");
-    if (action === "rollback") return t("versions-recovery-cancel-return");
-    return t("versions-recovery-clear-marker");
-  }
-
-  async function resolveIntegrationRecovery(
-    item: VersionIntegrationRecoveryItem,
-    action: VersionIntegrationRecoveryAction,
-  ) {
-    busyAction = `integration-recovery:${item.transactionId}:${action}`;
-    error = "";
-    try {
-      const receipt = await resolveVersionIntegrationRecovery(
-        mutationIdentity(),
-        item.recoveryRef,
-        action,
-      );
-      if (receipt.snapshot) snapshot = receipt.snapshot;
-      if (!(await settlePublishedEffect(
-        t("versions-integration-recovery-backend"),
-        () => afterIntegrationRecovery(receipt),
-      ))) return;
-      await refresh();
-      if (!receipt.resolved) {
-        error = t("versions-integration-still-recovery");
-        onStatusUpdate(error, "error");
-      } else {
-        onStatusUpdate(
-          t("versions-integration-recovery-status", {
-            action: integrationRecoveryActionLabel(action),
-          }),
-          "restored",
-        );
-      }
-    } catch (reason) {
-      error = errorMessage(reason);
-      onStatusUpdate(t("versions-integration-recovery-blocked", { message: error }), "error");
-    } finally {
-      busyAction = "";
-    }
-  }
+  const refresh = snapshotController.refresh.bind(snapshotController);
+  const refreshHistory = snapshotController.refreshHistory.bind(snapshotController);
+  const errorMessage = operations.errorMessage.bind(operations);
+  const commit = snapshotController.commit.bind(snapshotController);
+  const showFileDiff = snapshotController.showFileDiff.bind(snapshotController);
+  const showCommitDiff = snapshotController.showCommitDiff.bind(snapshotController);
+  const previewCommit = snapshotController.previewCommit.bind(snapshotController);
+  const requestRestore = recoveryController.requestRestore.bind(recoveryController);
+  const cancelRestore = recoveryController.cancelRestore.bind(recoveryController);
+  const restoreCommit = recoveryController.restoreCommit.bind(recoveryController);
+  const recoveryActionLabel = recoveryController.recoveryActionLabel.bind(
+    recoveryController,
+  );
+  const resolveRecovery = recoveryController.resolveRecovery.bind(recoveryController);
+  const editRemote = networkController.editRemote.bind(networkController);
+  const saveRemote = networkController.saveRemote.bind(networkController);
+  const removeRemoteConfirmed = networkController.removeRemoteConfirmed.bind(
+    networkController,
+  );
+  const fetchRemote = networkController.fetchRemote.bind(networkController);
+  const pushBranch = networkController.pushBranch.bind(networkController);
+  const cancelNetwork = networkController.cancelNetwork.bind(networkController);
+  const saveUpstream = integrationController.saveUpstream.bind(integrationController);
+  const removeUpstream = integrationController.removeUpstream.bind(
+    integrationController,
+  );
+  const createBranch = integrationController.createBranch.bind(integrationController);
+  const switchBranch = integrationController.switchBranch.bind(integrationController);
+  const deleteBranch = integrationController.deleteBranch.bind(integrationController);
+  const selectedTarget = integrationController.selectedTarget.bind(
+    integrationController,
+  );
+  const analyzeIntegration = integrationController.analyzeIntegration.bind(
+    integrationController,
+  );
+  const applyIntegration = integrationController.applyIntegration.bind(
+    integrationController,
+  );
+  const integrationRecoveryActionLabel = (
+    integrationController.recoveryActionLabel.bind(integrationController)
+  );
+  const resolveIntegrationRecovery = integrationController.resolveRecovery.bind(
+    integrationController,
+  );
 
   function kindLabel(file: VersionFileStatus) {
     const labels: Record<VersionFileStatus["kind"], string> = {
@@ -1007,55 +276,12 @@
     });
   }
 
-  onMount(() => {
-    let disposed = false;
-    let unlisten: () => void = () => {};
-    void listen<VersionNetworkProgressEvent>(
-      "pana-versioning-network-progress",
-      (event) => {
-        const payload = event.payload;
-        if (payload.projectRoot !== projectRoot || payload.sessionId !== sessionId) return;
-        activeNetwork = payload;
-        if (["completed", "failed", "cancelled"].includes(payload.status)) {
-          window.setTimeout(() => {
-            if (activeNetwork?.operationId === payload.operationId) activeNetwork = null;
-          }, 2500);
-        }
-      },
-    ).then((cleanup) => {
-      if (disposed) cleanup();
-      else unlisten = cleanup;
-    });
-    return () => {
-      disposed = true;
-      unlisten();
-    };
-  });
+  onMount(() => networkController.start());
 
   $effect(() => {
-    const root = projectRoot;
-    const session = sessionId;
-    if (!root || !session) {
-      requestSerial += 1;
-      snapshot = null;
-      history = [];
-      diff = null;
-      error = "";
-      recovery = null;
-      integrationRecovery = null;
-      syncComparison = null;
-      integrationPlan = null;
-      integrationDiff = null;
-      pendingRemoteRemoval = "";
-      remoteRemovalConfirmation = "";
-      pendingBranchRemoval = "";
-      branchRemovalConfirmation = "";
-      activeNetwork = null;
-      cancelRestore();
-      hydratedIdentityToken = "";
-      return;
-    }
-    void refresh();
+    projectRoot;
+    sessionId;
+    snapshotController.synchronize();
   });
 </script>
 
@@ -1170,7 +396,7 @@
             <strong>{t("versions-not-initialized")}</strong>
             <p>{t("versions-init-description")}</p>
           </div>
-          <button class="ui-button primary" type="button" disabled={!!busyAction || workspaceDirty} onclick={() => runSnapshotMutation(t("versions-repository-initialized"), () => initializeVersioning(mutationIdentity()))}>
+          <button class="ui-button primary" type="button" disabled={!!busyAction || workspaceDirty} onclick={snapshotController.initialize.bind(snapshotController)}>
             <IconGitBranch size={15} stroke={1.9} /> {t("versions-initialize")}
           </button>
         </section>
@@ -1178,9 +404,9 @@
         <details class="identity-card" open={!snapshot.userName || !snapshot.userEmail}>
           <summary><IconSettings size={15} stroke={1.8} /> {t("versions-local-identity")}</summary>
           <div class="identity-fields">
-            <label>{t("versions-name")}<input bind:value={identityName} autocomplete="name" /></label>
-            <label>{t("versions-email")}<input type="email" bind:value={identityEmail} autocomplete="email" /></label>
-            <button class="ui-button primary" type="button" disabled={!!busyAction || workspaceDirty || !identityName.trim() || !identityEmail.trim()} onclick={() => runSnapshotMutation(t("versions-identity-saved"), () => configureVersioningIdentity(mutationIdentity(), { name: identityName, email: identityEmail }))}>
+            <label>{t("versions-name")}<input bind:value={snapshotController.identityName} autocomplete="name" /></label>
+            <label>{t("versions-email")}<input type="email" bind:value={snapshotController.identityEmail} autocomplete="email" /></label>
+            <button class="ui-button primary" type="button" disabled={!!busyAction || workspaceDirty || !identityName.trim() || !identityEmail.trim()} onclick={snapshotController.saveIdentity.bind(snapshotController)}>
               {t("versions-save-identity")}
             </button>
           </div>
@@ -1197,7 +423,7 @@
                     <strong>{remote.name}</strong>
                     <small title={remote.fetchUrl}>{remote.fetchUrl}</small>
                   </button>
-                  <button type="button" class="mini-button" title={t("versions-remove-remote")} aria-label={t("versions-remove-remote-label", { name: remote.name })} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => { pendingRemoteRemoval = remote.name; remoteRemovalConfirmation = ""; }}>
+                  <button type="button" class="mini-button" title={t("versions-remove-remote")} aria-label={t("versions-remove-remote-label", { name: remote.name })} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => networkController.requestRemoteRemoval(remote.name)}>
                     <IconX size={13} stroke={1.9} />
                   </button>
                   {#if remote.diagnostic}<p>{t("versions-remote-configuration-invalid")}</p>{/if}
@@ -1206,16 +432,16 @@
             </div>
           {/if}
           <div class="remote-form">
-            <label>{t("versions-name")}<input bind:value={remoteName} placeholder="origin" autocomplete="off" /></label>
-            <label class="span-2">{t("versions-fetch-url")}<input bind:value={remoteFetchUrl} placeholder="https://github.com/organization/site.git" autocomplete="off" spellcheck="false" /></label>
-            <label class="span-2">{t("versions-push-url-optional")}<input bind:value={remotePushUrl} placeholder="ssh://git@github.com/organization/site.git" autocomplete="off" spellcheck="false" /></label>
+            <label>{t("versions-name")}<input bind:value={networkController.remoteName} placeholder="origin" autocomplete="off" /></label>
+            <label class="span-2">{t("versions-fetch-url")}<input bind:value={networkController.remoteFetchUrl} placeholder="https://github.com/organization/site.git" autocomplete="off" spellcheck="false" /></label>
+            <label class="span-2">{t("versions-push-url-optional")}<input bind:value={networkController.remotePushUrl} placeholder="ssh://git@github.com/organization/site.git" autocomplete="off" spellcheck="false" /></label>
             <button type="button" class="span-2" disabled={!!busyAction || !!mutationBlockedReason || !remoteName.trim() || !remoteFetchUrl.trim()} onclick={saveRemote}>{t("versions-save-remote")}</button>
           </div>
           {#if pendingRemoteRemoval}
             <div class="destructive-confirmation">
               <p>{t("versions-remove-remote-description")}</p>
-              <label>{t("versions-type-value", { value: pendingRemoteRemoval })}<input bind:value={remoteRemovalConfirmation} autocomplete="off" /></label>
-              <div><button type="button" onclick={() => { pendingRemoteRemoval = ""; }}>{t("versions-abandon")}</button><button type="button" class="ui-button danger danger-button" disabled={remoteRemovalConfirmation !== pendingRemoteRemoval} onclick={removeRemoteConfirmed}>{t("versions-remove")}</button></div>
+              <label>{t("versions-type-value", { value: pendingRemoteRemoval })}<input bind:value={networkController.remoteRemovalConfirmation} autocomplete="off" /></label>
+              <div><button type="button" onclick={() => networkController.cancelRemoteRemoval()}>{t("versions-abandon")}</button><button type="button" class="ui-button danger danger-button" disabled={remoteRemovalConfirmation !== pendingRemoteRemoval} onclick={removeRemoteConfirmed}>{t("versions-remove")}</button></div>
             </div>
           {/if}
         </details>
@@ -1228,13 +454,13 @@
             </div>
             <div class="sync-selectors">
               <label>{t("versions-remote")}
-                <select bind:value={selectedRemote} onchange={() => { selectedRemoteBranch = snapshot?.remoteBranches.find((branch) => branch.remote === selectedRemote)?.name ?? ""; integrationPlan = null; integrationDiff = null; }}>
+                <select bind:value={networkController.selectedRemote} onchange={() => networkController.selectRemote()}>
                   <option value="">{t("versions-choose-remote")}</option>
                   {#each usableRemotes as remote}<option value={remote.name}>{remote.name}</option>{/each}
                 </select>
               </label>
               <label>{t("versions-remote-branch")}
-                <select bind:value={selectedRemoteBranch} onchange={() => { integrationPlan = null; integrationDiff = null; }}>
+                <select bind:value={networkController.selectedRemoteBranch} onchange={() => networkController.selectRemoteBranch()}>
                   <option value="">{t("versions-choose-branch")}</option>
                   {#each selectedRemoteBranches as branch}<option value={branch.name}>{branch.name}</option>{/each}
                 </select>
@@ -1292,7 +518,7 @@
                     {/if}
                   </details>
                 {/if}
-                <label>{t("versions-merge-message")}<textarea rows="2" bind:value={integrationMessage}></textarea></label>
+                <label>{t("versions-merge-message")}<textarea rows="2" bind:value={integrationController.message}></textarea></label>
                 <div class="button-grid">
                   <button type="button" class="ui-button primary primary-button" disabled={!integrationPlan.fastForwardAllowed || !!busyAction} onclick={() => applyIntegration("fast_forward")}>{t("versions-fast-forward")}</button>
                   <button type="button" class="ui-button primary primary-button" disabled={!integrationPlan.mergeAllowed || !!busyAction || !integrationMessage.trim()} onclick={() => applyIntegration("merge")}>{t("versions-explicit-merge")}</button>
@@ -1305,7 +531,7 @@
         <details class="branches-card">
           <summary><IconGitCommit size={15} stroke={1.8} /> {t("versions-local-branches")}</summary>
           <div class="branch-create">
-            <input bind:value={newBranchName} placeholder="feature/new-page" autocomplete="off" spellcheck="false" />
+            <input bind:value={integrationController.newBranchName} placeholder="feature/new-page" autocomplete="off" spellcheck="false" />
             <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.headOid || !newBranchName.trim()} onclick={createBranch}>{t("versions-create")}</button>
           </div>
           <div class="branch-list">
@@ -1314,7 +540,7 @@
                 <div><strong>{branch.name}</strong><small>{branch.current ? t("versions-active") : versionStateLabel(branch.syncState)}</small></div>
                 {#if !branch.current}
                   <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.clean || !branch.oid} onclick={() => switchBranch(branch.name, branch.oid)}>{t("versions-open")}</button>
-                  <button type="button" class="mini-button" title={t("versions-delete-integrated-title")} aria-label={t("versions-delete-branch-label", { branch: branch.name })} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => { pendingBranchRemoval = branch.name; branchRemovalConfirmation = ""; }}>
+                  <button type="button" class="mini-button" title={t("versions-delete-integrated-title")} aria-label={t("versions-delete-branch-label", { branch: branch.name })} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => integrationController.requestBranchRemoval(branch.name)}>
                     <IconX size={13} stroke={1.9} />
                   </button>
                 {/if}
@@ -1324,9 +550,9 @@
           {#if pendingBranchRemoval}
             <div class="destructive-confirmation">
               <p>{t("versions-delete-branch-description", { branch: pendingBranchRemoval })}</p>
-              <label>{t("versions-confirmation")}<input bind:value={branchRemovalConfirmation} autocomplete="off" spellcheck="false" /></label>
+              <label>{t("versions-confirmation")}<input bind:value={integrationController.branchRemovalConfirmation} autocomplete="off" spellcheck="false" /></label>
               <div>
-                <button type="button" onclick={() => { pendingBranchRemoval = ""; branchRemovalConfirmation = ""; }}>{t("versions-abandon")}</button>
+                <button type="button" onclick={() => integrationController.cancelBranchRemoval()}>{t("versions-abandon")}</button>
                 <button type="button" class="ui-button danger danger-button" disabled={!!busyAction || branchRemovalConfirmation !== pendingBranchRemoval} onclick={() => deleteBranch(pendingBranchRemoval)}>{t("versions-delete-branch")}</button>
               </div>
             </div>
@@ -1336,7 +562,7 @@
         <section class="changes-section">
           <div class="section-heading">
             <div><p class="section-label">{t("versions-staged")}</p><span>{t("versions-files-count", { count: stagedFiles.length })}</span></div>
-            <button type="button" disabled={!!busyAction || workspaceDirty || stagedFiles.length === 0} onclick={() => runFileMutation(t("versions-index-cleared"), () => unstageAllVersioning(mutationIdentity()))}>{t("versions-unstage-all")}</button>
+            <button type="button" disabled={!!busyAction || workspaceDirty || stagedFiles.length === 0} onclick={() => snapshotController.unstageAll()}>{t("versions-unstage-all")}</button>
           </div>
           {#if stagedFiles.length === 0}
             <p class="empty-row">{t("versions-no-staged")}</p>
@@ -1347,7 +573,7 @@
                   <button type="button" class="file-main" title={t("versions-show-staged-diff")} onclick={() => showFileDiff(file, "staged")}>
                     <b>{kindLabel(file)}</b><span>{file.path}</span>
                   </button>
-                  <button type="button" class="mini-button" title={t("versions-unstage-all")} aria-label={t("versions-remove-from-staged", { path: file.path })} disabled={!!busyAction || workspaceDirty} onclick={() => runFileMutation(t("versions-removed-from-staged", { path: file.path }), () => unstageVersioningPaths(mutationIdentity(), [file.path]))}>
+                  <button type="button" class="mini-button" title={t("versions-unstage-all")} aria-label={t("versions-remove-from-staged", { path: file.path })} disabled={!!busyAction || workspaceDirty} onclick={() => snapshotController.unstagePaths([file.path])}>
                     <IconMinus size={13} stroke={1.9} />
                   </button>
                 </article>
@@ -1358,7 +584,7 @@
 
         <section class="commit-card">
           <label for="version-message">{t("versions-version-message")}</label>
-          <textarea id="version-message" rows="3" bind:value={commitMessage} placeholder={t("versions-version-placeholder")}></textarea>
+          <textarea id="version-message" rows="3" bind:value={snapshotController.commitMessage} placeholder={t("versions-version-placeholder")}></textarea>
           <button type="button" class="ui-button primary primary-button" disabled={!!busyAction || workspaceDirty || stagedFiles.length === 0 || snapshot.conflictedCount > 0 || !snapshot.userName || !snapshot.userEmail || !commitMessage.trim()} onclick={commit}>
             <IconGitCommit size={16} stroke={1.9} /> {t("versions-create-version")}
           </button>
@@ -1367,7 +593,7 @@
         <section class="changes-section">
           <div class="section-heading">
             <div><p class="section-label">{t("versions-changes")}</p><span>{t("versions-files-count", { count: unstagedFiles.length })}</span></div>
-            <button type="button" disabled={!!busyAction || workspaceDirty || unstagedFiles.length === 0} onclick={() => runFileMutation(t("versions-all-staged"), () => stageAllVersioning(mutationIdentity()))}>{t("versions-stage-all")}</button>
+            <button type="button" disabled={!!busyAction || workspaceDirty || unstagedFiles.length === 0} onclick={() => snapshotController.stageAll()}>{t("versions-stage-all")}</button>
           </div>
           {#if unstagedFiles.length === 0}
             <p class="empty-row"><IconCheck size={14} /> {t("versions-no-working-changes")}</p>
@@ -1378,7 +604,7 @@
                   <button type="button" class="file-main" title={t("versions-show-diff")} onclick={() => showFileDiff(file, "unstaged")}>
                     <b>{kindLabel(file)}</b><span>{file.path}</span>
                   </button>
-                  <button type="button" class="mini-button" title={t("versions-staged")} disabled={!!busyAction || workspaceDirty} onclick={() => runFileMutation(t("versions-file-staged", { path: file.path }), () => stageVersioningPaths(mutationIdentity(), [file.path]))}><IconPlus size={13} /></button>
+                  <button type="button" class="mini-button" title={t("versions-staged")} disabled={!!busyAction || workspaceDirty} onclick={() => snapshotController.stagePaths([file.path])}><IconPlus size={13} /></button>
                 </article>
               {/each}
             </div>
@@ -1389,7 +615,7 @@
           <section class="diff-card">
             <div class="section-heading">
               <div><p class="section-label">{t("versions-diff-title", { kind: diff.kind })}</p><span>{diff.path ?? diff.commitOid?.slice(0, 8) ?? t("versions-version")}</span></div>
-              <button type="button" class="ui-icon-button ui-close-button mini-button" title={t("versions-close-diff")} onclick={() => { diff = null; }}><IconX size={13} /></button>
+              <button type="button" class="ui-icon-button ui-close-button mini-button" title={t("versions-close-diff")} onclick={() => snapshotController.clearDiff()}><IconX size={13} /></button>
             </div>
             {#if diff.binary}
               <p class="empty-row">{t("versions-binary-file")}</p>
@@ -1440,8 +666,8 @@
               <code>{restoreEntry.shortOid}</code>
             </div>
             <p>{t("versions-restore-description")}</p>
-            <label>{t("versions-commit-message")}<textarea rows="3" bind:value={restoreMessage}></textarea></label>
-            <label>{t("versions-type-to-confirm", { value: restoreEntry.shortOid })}<input bind:value={restoreConfirmation} autocomplete="off" spellcheck="false" /></label>
+            <label>{t("versions-commit-message")}<textarea rows="3" bind:value={recoveryController.restoreMessage}></textarea></label>
+            <label>{t("versions-type-to-confirm", { value: restoreEntry.shortOid })}<input bind:value={recoveryController.restoreConfirmation} autocomplete="off" spellcheck="false" /></label>
             <div class="restore-actions">
               <button type="button" disabled={!!busyAction} onclick={cancelRestore}>{t("versions-abandon")}</button>
               <button type="button" class="ui-button danger danger-button" disabled={!!busyAction || restoreConfirmation.trim() !== restoreEntry.shortOid || !restoreMessage.trim()} onclick={restoreCommit}><IconRestore size={15} /> {t("versions-restore-new-commit")}</button>

@@ -4,11 +4,15 @@
   "description": "Capability for the trusted main Pană Studio webview",
   "webviews": ["main"],
   "permissions": [
-    "core:default",
+    "core:app:allow-version",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:path:allow-resolve-directory",
     "core:window:allow-close",
     "core:window:allow-show",
-    "dialog:default",
-    "opener:default",
+    "dialog:allow-open",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
     "pty:default",
     "default"
   ]

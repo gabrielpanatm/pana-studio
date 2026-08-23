@@ -1,0 +1,1622 @@
+@import '../css-framework/variabile';
+
+@font-face {
+  font-family: 'Atkinson IZ';
+  src: url('/fonturi/atkinson-normal.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Atkinson IZ';
+  src: url('/fonturi/atkinson-italic.woff2') format('woff2');
+  font-style: italic;
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Oswald IZ';
+  src: url('/fonturi/oswald.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 200 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono IZ';
+  src: url('/fonturi/geist-mono.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --iz-portocaliu: #ff542d;
+  --iz-verde: #c7ff3d;
+  --iz-os: #f1eadb;
+  --iz-grafit: #11100f;
+  --iz-suprafata: #1e1c1a;
+  --iz-linie: #423f3b;
+}
+
+html {
+  background: $bg-body;
+  scroll-behavior: smooth;
+}
+
+body {
+  overflow-x: hidden;
+  color: $text-body;
+  background-color: $bg-body;
+  background-image: radial-gradient(circle at 75% 8%, rgba(255, 84, 45, 0.08), transparent 26rem);
+}
+
+body::before {
+  position: fixed;
+  z-index: 600;
+  inset: 0;
+  pointer-events: none;
+  content: '';
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
+}
+
+a {
+  color: inherit;
+}
+
+img {
+  background: $bg-muted;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+::selection {
+  color: $color-gray-900;
+  background: $color-accent;
+}
+
+.container-larg {
+  width: min(100% - 2 * $container-padding, 1440px);
+  margin-inline: auto;
+}
+
+.salt-continut {
+  position: fixed;
+  z-index: 700;
+  top: 0.5rem;
+  left: 0.5rem;
+  padding: 0.75rem 1rem;
+  color: $color-gray-900;
+  background: $color-accent;
+  transform: translateY(-150%);
+  transition: transform $transition-fast;
+}
+
+.salt-continut:focus {
+  transform: translateY(0);
+}
+
+.bara-fictiune {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem $container-padding;
+  color: $color-gray-900;
+  background: $color-accent;
+  font-family: $font-mono;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.antet-site {
+  position: relative;
+  z-index: 220;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  min-height: 6.5rem;
+  padding: 1rem $container-padding;
+  border-bottom: 1px solid $border-color;
+  background: rgba(17, 16, 15, 0.92);
+  backdrop-filter: blur(18px);
+}
+
+.marca {
+  display: inline-flex;
+  width: max-content;
+  align-items: baseline;
+  color: $text-heading;
+  font-family: $font-display;
+  font-size: clamp(1.8rem, 4vw, 3.25rem);
+  font-weight: 300;
+  line-height: 0.78;
+  letter-spacing: -0.07em;
+  text-decoration: none;
+}
+
+.marca strong {
+  color: $color-primary;
+  font-weight: 700;
+}
+
+.coordonate-antet {
+  margin: 0 2.5rem 0 0;
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.buton-meniu {
+  display: inline-flex;
+  min-width: 7rem;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 1rem;
+  border: 1px solid $border-strong;
+  color: $text-heading;
+  background: transparent;
+  cursor: pointer;
+  font-family: $font-mono;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.buton-meniu i,
+.buton-meniu i::before {
+  display: block;
+  width: 1.25rem;
+  height: 1px;
+  content: '';
+  background: currentColor;
+  transition: transform $transition-base;
+}
+
+.buton-meniu i::before {
+  transform: translateY(0.35rem);
+}
+
+.buton-meniu[aria-expanded='true'] i {
+  transform: rotate(45deg);
+}
+
+.buton-meniu[aria-expanded='true'] i::before {
+  transform: rotate(90deg);
+}
+
+.navigatie-principala {
+  position: absolute;
+  z-index: 210;
+  top: 100%;
+  right: $container-padding;
+  display: grid;
+  width: min(32rem, calc(100vw - 2rem));
+  border: 1px solid $border-color;
+  background: $bg-surface;
+  box-shadow: 0 2rem 5rem rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-0.75rem);
+  transition: opacity $transition-base, transform $transition-base;
+}
+
+.navigatie-principala[data-deschis='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.navigatie-principala a {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid $border-color;
+  color: $text-heading;
+  font-family: $font-display;
+  font-size: 1.45rem;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.navigatie-principala a:hover,
+.navigatie-principala a:focus-visible {
+  color: $color-gray-900;
+  background: $color-accent;
+}
+
+.eticheta-tehnica {
+  margin: 0 0 $space-xs;
+  color: $color-accent;
+  font-family: $font-mono;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.buton {
+  display: inline-flex;
+  min-height: 3.35rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem 1.2rem;
+  border: 1px solid transparent;
+  font-family: $font-mono;
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.buton-primar {
+  color: $color-gray-900;
+  background: $color-primary;
+}
+
+.buton-primar:hover,
+.buton-primar:focus-visible {
+  background: $color-accent;
+}
+
+.buton-secundar {
+  border-color: $border-strong;
+  color: $text-heading;
+  background: transparent;
+}
+
+.buton-secundar:hover,
+.buton-secundar:focus-visible {
+  border-color: $color-accent;
+  color: $color-accent;
+}
+
+.link-sageata {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: $text-heading;
+  font-family: $font-mono;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.link-sageata span {
+  color: $color-primary;
+  font-size: 1.2em;
+  transition: transform $transition-fast;
+}
+
+.link-sageata:hover span {
+  transform: translateX(0.25rem);
+}
+
+.hero {
+  position: relative;
+  display: grid;
+  min-height: min(49rem, calc(100vh - 8rem));
+  grid-template-columns: minmax(0, 1.35fr) minmax(22rem, 0.65fr);
+  border-bottom: 1px solid $border-color;
+}
+
+.hero-imagine {
+  position: relative;
+  min-height: 42rem;
+  overflow: hidden;
+}
+
+.hero-imagine::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background: linear-gradient(90deg, transparent 55%, rgba(17, 16, 15, 0.82)), linear-gradient(0deg, rgba(17, 16, 15, 0.5), transparent 38%);
+}
+
+.hero-imagine img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.78) contrast(1.12);
+}
+
+.hero-copie {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  justify-content: center;
+  padding: $space-xl $container-padding;
+  background: $bg-body;
+}
+
+.hero-copie h1 {
+  margin: 0;
+  font-family: $font-display;
+  font-size: clamp(6rem, 14vw, 13rem);
+  font-weight: 250;
+  line-height: 0.67;
+  letter-spacing: -0.085em;
+  text-transform: uppercase;
+  transform: translateX(clamp(-11rem, -9vw, -4rem));
+}
+
+.hero-copie h1 span,
+.hero-copie h1 strong {
+  display: block;
+}
+
+.hero-copie h1 strong {
+  color: $color-primary;
+  font-weight: 700;
+  transform: translateX(0.42em);
+}
+
+.hero-intro {
+  max-width: 28rem;
+  margin: $space-l 0;
+  color: $text-light;
+  font-size: $text-lg;
+}
+
+.hero-actiuni {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: $space-m;
+}
+
+.hero-date {
+  position: absolute;
+  z-index: 3;
+  bottom: 0;
+  left: $container-padding;
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  color: $text-heading;
+  font-family: $font-display;
+}
+
+.hero-date span {
+  font-size: clamp(3rem, 8vw, 8rem);
+  font-weight: 650;
+  line-height: 0.8;
+}
+
+.hero-date i {
+  color: $color-primary;
+  font-size: 2rem;
+  font-style: normal;
+}
+
+.hero-date small {
+  margin-left: 0.75rem;
+  color: $color-accent;
+  font-family: $font-mono;
+  font-size: 0.7rem;
+}
+
+.manifest {
+  display: grid;
+  grid-template-columns: 1fr 3fr;
+  gap: $space-l;
+  padding-block: $space-3xl;
+  border-bottom: 1px solid $border-color;
+}
+
+.manifest > div {
+  max-width: 68rem;
+}
+
+.manifest h2 {
+  max-width: 22ch;
+  margin: 0 0 $space-m;
+  font-family: $font-display;
+  font-size: clamp(2.6rem, 5.8vw, 6.5rem);
+  font-weight: 350;
+  line-height: 0.97;
+  text-transform: uppercase;
+}
+
+.manifest > div > p {
+  max-width: 42rem;
+  margin: 0;
+  color: $text-light;
+  font-size: $text-lg;
+}
+
+.sectiune-evenimente,
+.sectiune-jurnal {
+  padding-block: $space-2xl;
+}
+
+.antet-sectiune {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: $space-m;
+  margin-bottom: $space-l;
+}
+
+.antet-sectiune h2 {
+  margin: 0;
+  font-family: $font-display;
+  font-size: clamp(2.5rem, 5vw, 5.8rem);
+  font-weight: 400;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+
+.grila-carduri {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid $border-color;
+  border-left: 1px solid $border-color;
+}
+
+.card-eveniment {
+  min-width: 0;
+  padding: $space-m;
+  border-right: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+}
+
+.card-imagine {
+  position: relative;
+  display: block;
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+  color: $color-gray-900;
+  background: $color-primary;
+}
+
+.card-imagine img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.72);
+  transition: filter $transition-slow, transform $transition-slow;
+}
+
+.card-imagine:hover img {
+  filter: saturate(1);
+  transform: scale(1.025);
+}
+
+.card-imagine span {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  padding: 0.4rem 0.6rem;
+  background: $color-accent;
+  font-family: $font-mono;
+  font-size: 0.7rem;
+}
+
+.card-copie {
+  padding-top: $space-s;
+}
+
+.card-copie > p,
+.grila-artisti article > p,
+.grila-jurnal article > p {
+  margin: 0 0 $space-2xs;
+  color: $color-primary;
+  font-family: $font-mono;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.card-copie h3,
+.grila-jurnal h3,
+.grila-jurnal h2 {
+  margin: 0 0 $space-xs;
+  font-family: $font-display;
+  font-size: clamp(1.55rem, 2.2vw, 2.4rem);
+  font-weight: 430;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.card-copie h3 a,
+.grila-jurnal h3 a,
+.grila-jurnal h2 a {
+  text-decoration: none;
+}
+
+.card-copie > span,
+.grila-jurnal article > span {
+  display: block;
+  color: $text-light;
+  line-height: 1.4;
+}
+
+.numere {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid $border-color;
+  border-left: 1px solid $border-color;
+}
+
+.numere div {
+  display: grid;
+  min-height: 13rem;
+  align-content: space-between;
+  padding: $space-m;
+  border-right: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+}
+
+.numere strong {
+  color: $color-accent;
+  font-family: $font-display;
+  font-size: clamp(4rem, 9vw, 8.5rem);
+  font-weight: 300;
+  line-height: 0.75;
+}
+
+.numere span {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.sectiune-artisti {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(24rem, 1fr);
+  margin-block: $space-3xl;
+  border-block: 1px solid $border-color;
+}
+
+.portret-mare {
+  min-height: 52rem;
+}
+
+.portret-mare img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(0.2) contrast(1.1);
+}
+
+.lista-artisti {
+  padding: $space-xl;
+}
+
+.lista-artisti h2 {
+  margin: 0 0 $space-l;
+  font-family: $font-display;
+  font-size: clamp(3.4rem, 7vw, 7rem);
+  font-weight: 350;
+  line-height: 0.85;
+  text-transform: uppercase;
+}
+
+.lista-artisti ol {
+  margin: 0 0 $space-l;
+  padding: 0;
+  border-top: 1px solid $border-color;
+  list-style: none;
+}
+
+.lista-artisti li {
+  border-bottom: 1px solid $border-color;
+}
+
+.lista-artisti li a {
+  display: grid;
+  grid-template-columns: 3rem 1fr auto;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.8rem 0;
+  text-decoration: none;
+}
+
+.lista-artisti li a:hover strong {
+  color: $color-accent;
+  transform: translateX(0.3rem);
+}
+
+.lista-artisti li span,
+.lista-artisti li i {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.68rem;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.lista-artisti li strong {
+  font-family: $font-display;
+  font-size: 1.45rem;
+  font-weight: 430;
+  text-transform: uppercase;
+  transition: color $transition-fast, transform $transition-fast;
+}
+
+.grila-jurnal {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: $space-l;
+}
+
+.grila-jurnal article > a:first-child {
+  display: block;
+  aspect-ratio: 3 / 2;
+  margin-bottom: $space-s;
+  overflow: hidden;
+}
+
+.grila-jurnal img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.subsol-site {
+  margin-top: $space-3xl;
+  border-top: 1px solid $border-color;
+  background: $color-primary;
+  color: $color-gray-900;
+}
+
+.subsol-identitate {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: $space-l;
+  padding: $space-2xl $container-padding;
+  border-bottom: 1px solid rgba(17, 16, 15, 0.35);
+}
+
+.subsol-identitate .eticheta-tehnica {
+  color: $color-gray-900;
+}
+
+.subsol-identitate h2 {
+  margin: 0;
+  font-family: $font-display;
+  font-size: clamp(2.4rem, 5vw, 5rem);
+  font-weight: 450;
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+.subsol-identitate > p:last-child {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.subsol-linkuri {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: $space-l;
+  padding: $space-xl $container-padding;
+}
+
+.subsol-linkuri h3 {
+  margin: 0 0 $space-s;
+  font-family: $font-mono;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.subsol-linkuri a,
+.subsol-linkuri p {
+  display: block;
+  margin: 0 0 0.45rem;
+  color: $color-gray-900;
+}
+
+.subsol-final {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem $container-padding;
+  border-top: 1px solid rgba(17, 16, 15, 0.35);
+  font-family: $font-mono;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.subsol-final p {
+  margin: 0;
+}
+
+.anpc-link img {
+  width: 8.5rem;
+  height: auto;
+  background: transparent;
+}
+
+.pagina-arhiva,
+.pagina-program {
+  min-height: 70vh;
+}
+
+.titlu-arhiva {
+  display: grid;
+  min-height: 27rem;
+  grid-template-columns: 1fr 3fr;
+  align-content: end;
+  gap: $space-l;
+  padding-block: $space-2xl $space-xl;
+}
+
+.titlu-arhiva h1 {
+  grid-column: 2;
+  margin: 0;
+  font-family: $font-display;
+  font-size: clamp(5.5rem, 15vw, 15rem);
+  font-weight: 250;
+  line-height: 0.67;
+  letter-spacing: -0.07em;
+  text-transform: uppercase;
+}
+
+.titlu-arhiva > p:last-child {
+  grid-column: 2;
+  max-width: 42rem;
+  margin: $space-m 0 0;
+  color: $text-light;
+  font-size: $text-lg;
+}
+
+.filtre,
+.zile-program {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding-block: $space-m;
+  border-top: 1px solid $border-color;
+}
+
+.filtru {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid $border-color;
+  color: $text-light;
+  background: transparent;
+  cursor: pointer;
+  font-family: $font-mono;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.filtru:hover,
+.filtru:focus-visible,
+.filtru.activ {
+  border-color: $color-accent;
+  color: $color-gray-900;
+  background: $color-accent;
+}
+
+.lista-evenimente,
+.tabel-program {
+  border-top: 1px solid $border-color;
+}
+
+.lista-evenimente article,
+.tabel-program article {
+  display: grid;
+  grid-template-columns: 5rem 6rem minmax(16rem, 1.3fr) minmax(12rem, 0.7fr) 3rem;
+  align-items: center;
+  gap: $space-s;
+  padding: 0.9rem $container-padding;
+  border-bottom: 1px solid $border-color;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 7rem;
+}
+
+.lista-evenimente article:hover,
+.tabel-program article:hover {
+  background: $bg-surface;
+}
+
+.lista-evenimente article[hidden],
+.tabel-program article[hidden] {
+  display: none;
+}
+
+.numar-lista,
+.lista-evenimente time,
+.tabel-program article > span,
+.tabel-program time {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+
+.lista-evenimente time span {
+  display: block;
+  color: $color-accent;
+}
+
+.lista-evenimente article > div > p,
+.tabel-program article > div > p {
+  margin: 0;
+  color: $color-primary;
+  font-family: $font-mono;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.lista-evenimente h2,
+.tabel-program h2 {
+  margin: 0;
+  font-family: $font-display;
+  font-size: clamp(1.3rem, 2vw, 2rem);
+  font-weight: 430;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.lista-evenimente h2 a,
+.tabel-program h2 a {
+  text-decoration: none;
+}
+
+.lista-evenimente article > p,
+.tabel-program small {
+  margin: 0;
+  color: $text-light;
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.sageata-lista,
+.tabel-program article > a:last-child {
+  color: $color-primary;
+  font-size: 1.3rem;
+  text-align: right;
+  text-decoration: none;
+}
+
+.grila-artisti {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-top: 1px solid $border-color;
+  border-left: 1px solid $border-color;
+}
+
+.grila-artisti article {
+  min-width: 0;
+  padding: $space-s;
+  border-right: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28rem;
+}
+
+.grila-artisti .card-imagine {
+  aspect-ratio: 4 / 5;
+  margin-bottom: $space-s;
+}
+
+.grila-artisti h2 {
+  margin: 0;
+  font-family: $font-display;
+  font-size: 1.6rem;
+  font-weight: 430;
+  text-transform: uppercase;
+}
+
+.grila-artisti h2 a {
+  text-decoration: none;
+}
+
+.harta-locatii {
+  display: grid;
+  min-height: 38rem;
+  grid-template-columns: repeat(10, 1fr);
+  align-items: center;
+  gap: 1px;
+  padding: $space-xl $container-padding;
+  border-block: 1px solid $border-color;
+  background-image: linear-gradient($border-color 1px, transparent 1px), linear-gradient(90deg, $border-color 1px, transparent 1px);
+  background-size: 5rem 5rem;
+}
+
+.harta-locatii i {
+  display: grid;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid $color-accent;
+  border-radius: 50%;
+  color: $color-accent;
+  background: $bg-body;
+  font-family: $font-mono;
+  font-size: 0.65rem;
+  font-style: normal;
+  transform: translateY(calc((var(--deplasare, 0) - 2) * 1.2rem));
+}
+
+.harta-locatii i:nth-child(5n + 1) {
+  --deplasare: 0;
+}
+
+.harta-locatii i:nth-child(5n + 2) {
+  --deplasare: 1;
+}
+
+.harta-locatii i:nth-child(5n + 3) {
+  --deplasare: 2;
+}
+
+.harta-locatii i:nth-child(5n + 4) {
+  --deplasare: 3;
+}
+
+.harta-locatii i:nth-child(5n) {
+  --deplasare: 4;
+}
+
+.grila-locatii {
+  margin-top: $space-xl;
+  border-top: 1px solid $border-color;
+}
+
+.grila-locatii article {
+  display: grid;
+  grid-template-columns: 4rem 1fr 3rem;
+  align-items: center;
+  gap: $space-m;
+  padding: $space-s 0;
+  border-bottom: 1px solid $border-color;
+}
+
+.grila-locatii article > span,
+.grila-locatii article > div > p,
+.grila-locatii small {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.67rem;
+  text-transform: uppercase;
+}
+
+.grila-locatii article > div > p {
+  margin: 0;
+}
+
+.grila-locatii h2 {
+  margin: 0.15rem 0;
+  font-family: $font-display;
+  font-size: 2rem;
+  font-weight: 430;
+  text-transform: uppercase;
+}
+
+.grila-locatii h2 a,
+.grila-locatii article > a {
+  text-decoration: none;
+}
+
+.grila-locatii article > a {
+  color: $color-primary;
+  font-size: 1.3rem;
+}
+
+.grila-jurnal-arhiva {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.grila-jurnal-arhiva article {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 31rem;
+}
+
+.detaliu-hero {
+  display: grid;
+  min-height: 42rem;
+  grid-template-columns: minmax(0, 1.3fr) minmax(22rem, 0.7fr);
+  border-bottom: 1px solid $border-color;
+}
+
+.detaliu-imagine {
+  grid-row: 1 / 3;
+  min-height: 42rem;
+}
+
+.detaliu-imagine img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detaliu-titlu {
+  align-self: end;
+  padding: $space-xl;
+}
+
+.detaliu-titlu h1 {
+  margin: 0 0 $space-m;
+  font-family: $font-display;
+  font-size: clamp(4rem, 9vw, 9rem);
+  font-weight: 300;
+  line-height: 0.82;
+  text-transform: uppercase;
+}
+
+.detaliu-titlu > p:last-child {
+  max-width: 34rem;
+  color: $text-light;
+  font-size: $text-lg;
+}
+
+.detaliu-hero dl {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0;
+  border-top: 1px solid $border-color;
+}
+
+.detaliu-hero dl div {
+  padding: $space-s;
+  border-right: 1px solid $border-color;
+}
+
+.detaliu-hero dt {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.detaliu-hero dd {
+  margin: 0.3rem 0 0;
+  color: $color-accent;
+  font-family: $font-display;
+  font-size: 1.7rem;
+}
+
+.detaliu-corp {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
+  gap: $space-2xl;
+  padding-block: $space-2xl;
+}
+
+.detaliu-corp aside {
+  height: max-content;
+  padding: $space-m;
+  border: 1px solid $border-color;
+}
+
+.detaliu-corp aside > a:not(.buton) {
+  display: grid;
+  gap: 0.2rem;
+  padding: $space-s 0;
+  border-bottom: 1px solid $border-color;
+  text-decoration: none;
+}
+
+.detaliu-corp aside > a span {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.detaliu-corp aside > a strong {
+  font-family: $font-display;
+  font-size: 1.4rem;
+  text-transform: uppercase;
+}
+
+.detaliu-corp aside .buton {
+  width: 100%;
+  margin-top: $space-m;
+}
+
+.detaliu-artist .detaliu-imagine {
+  background: $color-accent;
+}
+
+.detaliu-artist .detaliu-imagine img {
+  object-position: center 30%;
+}
+
+.proza {
+  max-width: 47rem;
+  font-size: $text-lg;
+}
+
+.proza h2 {
+  margin-top: $space-xl;
+  font-family: $font-display;
+  font-size: clamp(2.4rem, 5vw, 4.5rem);
+  font-weight: 400;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.proza h3 {
+  margin-top: $space-l;
+  color: $color-accent;
+  font-family: $font-mono;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+.proza p,
+.proza li {
+  color: $text-body;
+  line-height: 1.65;
+}
+
+.proza blockquote {
+  margin: $space-l 0;
+  padding: $space-m;
+  border-left: 0.4rem solid $color-primary;
+  color: $text-heading;
+  background: $bg-surface;
+  font-family: $font-display;
+  font-size: $text-2xl;
+  text-transform: uppercase;
+}
+
+.proza blockquote p {
+  margin: 0;
+}
+
+.articol-editorial > header {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: $space-3xl $container-padding $space-xl;
+}
+
+.articol-editorial > header h1 {
+  margin: 0 0 $space-m;
+  font-family: $font-display;
+  font-size: clamp(4rem, 10vw, 10rem);
+  font-weight: 300;
+  line-height: 0.84;
+  text-transform: uppercase;
+}
+
+.articol-editorial > header > p:not(.eticheta-tehnica) {
+  max-width: 48rem;
+  color: $text-light;
+  font-size: $text-xl;
+}
+
+.articol-editorial > header > div {
+  display: flex;
+  gap: $space-m;
+  color: $color-accent;
+  font-family: $font-mono;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.articol-editorial > figure {
+  width: min(100% - 2 * $container-padding, 1440px);
+  aspect-ratio: 16 / 8;
+  margin: 0 auto $space-2xl;
+  overflow: hidden;
+}
+
+.articol-editorial > figure img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.articol-editorial > .proza {
+  margin-inline: auto;
+  padding-inline: $container-padding;
+}
+
+.pagina-text {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.8fr) minmax(0, 1.2fr);
+  gap: $space-2xl;
+  padding-block: $space-3xl;
+}
+
+.pagina-text > header {
+  position: sticky;
+  top: 2rem;
+  height: max-content;
+}
+
+.pagina-text > header h1 {
+  max-width: 10ch;
+  margin: 0 0 $space-m;
+  font-family: $font-display;
+  font-size: clamp(4rem, 8vw, 8rem);
+  font-weight: 300;
+  line-height: 0.85;
+  text-transform: uppercase;
+}
+
+.pagina-text > header > p:last-child {
+  max-width: 28rem;
+  color: $text-light;
+  font-size: $text-lg;
+}
+
+.formular-demo {
+  display: grid;
+  gap: $space-xs;
+  margin-top: $space-l;
+  padding: $space-m;
+  border: 1px solid $border-color;
+  background: $bg-surface;
+}
+
+.formular-demo label {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.formular-demo input,
+.formular-demo select,
+.formular-demo textarea {
+  min-height: 3.2rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid $border-strong;
+  color: $text-heading;
+  background: $bg-body;
+}
+
+.intrebari {
+  border-top: 1px solid $border-color;
+}
+
+.intrebari details {
+  border-bottom: 1px solid $border-color;
+}
+
+.intrebari summary {
+  padding: $space-s 2.5rem $space-s 0;
+  color: $text-heading;
+  cursor: pointer;
+  font-family: $font-display;
+  font-size: $text-xl;
+  text-transform: uppercase;
+}
+
+.intrebari details p {
+  padding: 0 0 $space-s;
+  color: $text-light;
+}
+
+.grila-galerie {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid $border-color;
+  border-left: 1px solid $border-color;
+}
+
+.grila-galerie figure {
+  margin: 0;
+  padding: $space-s;
+  border-right: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+}
+
+.grila-galerie figure:nth-child(4n + 1) {
+  grid-column: span 2;
+}
+
+.grila-galerie button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.grila-galerie img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+}
+
+.grila-galerie figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 0.65rem;
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: 0.63rem;
+}
+
+.grila-galerie figcaption span {
+  color: $color-primary;
+}
+
+.dialog-galerie {
+  width: min(92vw, 86rem);
+  max-width: none;
+  padding: $space-s;
+  border: 1px solid $border-strong;
+  color: $text-heading;
+  background: $bg-body;
+}
+
+.dialog-galerie::backdrop {
+  background: rgba(0, 0, 0, 0.86);
+  backdrop-filter: blur(0.4rem);
+}
+
+.dialog-galerie > button {
+  display: block;
+  margin: 0 0 0.65rem auto;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid $border-strong;
+  color: $text-heading;
+  background: transparent;
+  cursor: pointer;
+  font-family: $font-mono;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.dialog-galerie img {
+  width: 100%;
+  max-height: 78vh;
+  object-fit: contain;
+}
+
+.dialog-galerie p {
+  margin: 0.65rem 0 0;
+  font-family: $font-mono;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.formular-demo .bifa {
+  display: flex;
+  align-items: start;
+  gap: 0.65rem;
+  margin: $space-xs 0;
+  line-height: 1.45;
+}
+
+.formular-demo .bifa input {
+  min-height: auto;
+}
+
+.mesaj-formular {
+  min-height: 1.5rem;
+  margin: 0;
+  color: $color-accent;
+  font-family: $font-mono;
+  font-size: 0.72rem;
+}
+
+.grila-laboratoare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid $border-color;
+  border-left: 1px solid $border-color;
+}
+
+.grila-laboratoare article {
+  min-height: 24rem;
+  padding: $space-l;
+  border-right: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+}
+
+.grila-laboratoare article > span {
+  color: $color-primary;
+  font-family: $font-display;
+  font-size: 5rem;
+  font-weight: 250;
+}
+
+.grila-laboratoare article > p {
+  color: $text-light;
+}
+
+.grila-laboratoare article > p:nth-of-type(1) {
+  font-family: $font-mono;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.grila-laboratoare h2 {
+  margin: $space-m 0;
+  font-family: $font-display;
+  font-size: clamp(2.5rem, 5vw, 5rem);
+  font-weight: 350;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+
+.grila-laboratoare h2 a {
+  text-decoration: none;
+}
+
+@media (max-width: $bp-tableta) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-copie {
+    padding-top: $space-2xl;
+  }
+
+  .hero-copie h1 {
+    transform: none;
+  }
+
+  .hero-imagine {
+    min-height: 32rem;
+  }
+
+  .hero-date {
+    top: 28rem;
+    bottom: auto;
+  }
+
+  .grila-artisti {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .grila-jurnal-arhiva {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lista-evenimente article,
+  .tabel-program article {
+    grid-template-columns: 4rem 5rem 1fr 3rem;
+  }
+
+  .lista-evenimente article > p,
+  .tabel-program small {
+    display: none;
+  }
+}
+
+@media (max-width: $bp-mobil) {
+  .bara-fictiune span:last-child,
+  .coordonate-antet {
+    display: none;
+  }
+
+  .antet-site {
+    grid-template-columns: 1fr auto;
+    min-height: 5rem;
+  }
+
+  .hero-imagine {
+    min-height: 25rem;
+  }
+
+  .hero-copie {
+    padding-block: $space-xl;
+  }
+
+  .hero-copie h1 {
+    font-size: clamp(5rem, 27vw, 9rem);
+  }
+
+  .hero-date {
+    top: 21.5rem;
+  }
+
+  .manifest,
+  .subsol-identitate,
+  .pagina-text {
+    grid-template-columns: 1fr;
+  }
+
+  .manifest h2 {
+    font-size: clamp(2.8rem, 13vw, 5rem);
+  }
+
+  .grila-carduri,
+  .grila-jurnal,
+  .grila-jurnal-arhiva,
+  .grila-artisti,
+  .numere,
+  .grila-laboratoare,
+  .grila-galerie {
+    grid-template-columns: 1fr;
+  }
+
+  .grila-galerie figure:nth-child(4n + 1) {
+    grid-column: auto;
+  }
+
+  .numere div {
+    min-height: 8rem;
+  }
+
+  .sectiune-artisti,
+  .detaliu-hero,
+  .detaliu-corp {
+    grid-template-columns: 1fr;
+  }
+
+  .portret-mare,
+  .detaliu-imagine {
+    min-height: 30rem;
+  }
+
+  .detaliu-imagine {
+    grid-row: auto;
+  }
+
+  .subsol-linkuri {
+    grid-template-columns: 1fr;
+  }
+
+  .subsol-final,
+  .antet-sectiune {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .titlu-arhiva {
+    min-height: 22rem;
+    grid-template-columns: 1fr;
+  }
+
+  .titlu-arhiva h1,
+  .titlu-arhiva > p:last-child {
+    grid-column: 1;
+  }
+
+  .titlu-arhiva h1 {
+    font-size: clamp(4.8rem, 26vw, 8rem);
+  }
+
+  .lista-evenimente article,
+  .tabel-program article {
+    grid-template-columns: 3rem 4rem 1fr 2rem;
+    padding-inline: 0.75rem;
+  }
+
+  .harta-locatii {
+    min-height: 20rem;
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .lista-artisti {
+    padding: $space-l $container-padding;
+  }
+
+  .pagina-text > header {
+    position: static;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

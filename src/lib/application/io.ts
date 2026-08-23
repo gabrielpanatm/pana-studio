@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppHomeSnapshot,
   ApplicationSettingsPatch,
   ApplicationSettingsSnapshot,
-  AppHomeSnapshot,
-} from "$lib/types";
+} from "$lib/application/contracts";
 
 export function readApplicationSettings(): Promise<ApplicationSettingsSnapshot> {
   return invoke<ApplicationSettingsSnapshot>("read_application_settings");

@@ -8,9 +8,11 @@ import {
 import {
   readProjectWorkspaceState,
   saveProjectWorkspace,
-  type CanvasProjectionPlan,
-} from "$lib/project/io";
-import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-workspace-preview-coordinator";
+} from "$lib/project/io/workspace";
+import type {
+  ProjectWorkspacePreviewProjectionOptions,
+  ProjectWorkspacePreviewProjectionOutcome,
+} from "$lib/kernel/project-workspace-preview-coordinator";
 import {
   invalidateFileBufferDraftSyncCursor,
 } from "$lib/session/file-buffer-draft-sync";
@@ -18,16 +20,17 @@ import {
   flushWorkspaceMutationInputs,
   type WorkspaceDerivedReconciliationOutcome,
 } from "$lib/session/workspace-mutation-coordinator";
-import { markDiskMutation, type DiskState } from "$lib/session/disk-state";
+import type { DiskState } from "$lib/session/disk-state";
 import type {
   HtmlPendingArea,
   InspectorPendingArea,
-  ProjectScan,
+} from "$lib/canvas/contracts";
+import type {
   ProjectWorkspaceSaveReceipt,
   ProjectWorkspaceSnapshot,
-  ScssVariable,
-} from "$lib/types";
+} from "$lib/project/workspace-contract";
 import type { GlobalStatusKind } from "$lib/status/global-status";
+import type { HtmlDraftSessionController } from "$lib/state/html-draft-session.svelte";
 import { errorMessage, isRecoveryRequiredError } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
 
@@ -38,31 +41,29 @@ import { t } from "$lib/i18n/runtime.svelte";
  * revision captured after every editor flush is the sole Save authority.
  */
 export type SaveControllerHost = {
-  sessionProjectRoot: string;
-  kernelProjectSessionId: string;
-  editorMutationEpoch: number;
-  projectWorkspaceSnapshot: ProjectWorkspaceSnapshot | null;
-  saveRequest: number;
-  projectStatus: string;
-  scannedProject: ProjectScan | null;
-  diskState: DiskState;
-  activeScannedPath: string | null;
-  inspectorPending: Record<InspectorPendingArea, boolean>;
-  htmlPending: Record<HtmlPendingArea, boolean>;
-  pendingTag: string | null;
-  scssVariables: ScssVariable[];
-  refreshToken: number;
-  jsRefreshToken: number;
-  previewWorkspaceRevision: string | null;
-  pendingCanvasProjection: CanvasProjectionPlan | null;
+  context: () => Readonly<{
+    projectRoot: string;
+    runtimeSessionId: string;
+    editorMutationEpoch: number;
+    workspace: ProjectWorkspaceSnapshot | null;
+    diskState: DiskState;
+    activeScannedPath: string | null;
+  }>;
+  incrementSaveRequest: () => void;
+  acceptWorkspace: (workspace: ProjectWorkspaceSnapshot) => void;
+  markDiskSaved: (activeScannedPath: string | null) => void;
+  bumpRefreshTokens: () => void;
   setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
-  setInspectorPending: (area: InspectorPendingArea, pending: boolean) => void;
-  applyTagChange: () => Promise<EditorActionOutcome>;
-  applyClassesToHtml: () => Promise<EditorActionOutcome>;
-  applyAttributesToHtml: () => Promise<EditorActionOutcome>;
-  applyImageSourceToHtml: (src?: string) => Promise<EditorActionOutcome>;
-  applyTextContentToHtml: () => Promise<EditorActionOutcome>;
-  refreshSourceGraph?: (options?: { strict?: boolean }) => Promise<void>;
+  html: {
+    inspectorPending: Record<InspectorPendingArea, boolean>;
+    pending: Record<HtmlPendingArea, boolean>;
+    pendingTag: string | null;
+    setInspectorPending: (area: InspectorPendingArea, pending: boolean) => void;
+    applyTagChange: () => Promise<EditorActionOutcome>;
+    applyClasses: () => Promise<EditorActionOutcome>;
+    draft: Pick<HtmlDraftSessionController, "applyAttributes" | "applyText">;
+    applyImageSource: (src?: string) => Promise<EditorActionOutcome>;
+  };
   reconcileWorkspaceDerivedState: (options: {
     expectedProjectRoot: string;
     expectedSessionId: string;
@@ -72,7 +73,9 @@ export type SaveControllerHost = {
     refreshSourceGraph?: boolean;
     refreshScss?: boolean;
   }) => Promise<WorkspaceDerivedReconciliationOutcome>;
-  requestPreviewRefresh: (reason: "after-save") => Promise<boolean>;
+  projectLatestPreview: (
+    options: ProjectWorkspacePreviewProjectionOptions<"after-save">,
+  ) => Promise<ProjectWorkspacePreviewProjectionOutcome>;
   markPreviewSavedToDisk?: (message?: string) => void;
   scheduleZolaValidation?: (reason?: "save") => void;
   acceptProjectWorkspaceSaveBaseline: (
@@ -92,9 +95,10 @@ type SaveSettlementReceipt = Pick<
 >;
 
 function captureSaveSession(host: SaveControllerHost): SaveSessionIdentity {
+  const context = host.context();
   const identity = {
-    expectedProjectRoot: host.sessionProjectRoot.trim(),
-    expectedSessionId: host.kernelProjectSessionId.trim(),
+    expectedProjectRoot: context.projectRoot.trim(),
+    expectedSessionId: context.runtimeSessionId.trim(),
   };
   if (!identity.expectedProjectRoot || !identity.expectedSessionId) {
     throw new Error(t("save-controller-session-required"));
@@ -107,9 +111,10 @@ function requireCurrentSaveSession(
   identity: SaveSessionIdentity,
   operation: string,
 ) {
+  const context = host.context();
   if (
-    host.sessionProjectRoot !== identity.expectedProjectRoot
-    || host.kernelProjectSessionId !== identity.expectedSessionId
+    context.projectRoot !== identity.expectedProjectRoot
+    || context.runtimeSessionId !== identity.expectedSessionId
   ) {
     throw new Error(t("save-controller-session-changed", { operation }));
   }
@@ -194,7 +199,7 @@ export async function savePendingHtmlChanges(
     if (!pending) return null;
     const result = await action();
     if (!editorActionSucceeded(result)) return result;
-    if (host.htmlPending[area]) {
+    if (host.html.pending[area]) {
       return blockedAction(
         t("save-controller-html-pending", { area, status: result.status }),
       );
@@ -203,20 +208,20 @@ export async function savePendingHtmlChanges(
     return null;
   };
 
-  const tag = await apply("tag", Boolean(host.pendingTag || host.htmlPending.tag), () => host.applyTagChange());
+  const tag = await apply("tag", Boolean(host.html.pendingTag || host.html.pending.tag), () => host.html.applyTagChange());
   if (tag) return tag;
-  const classes = await apply("classes", host.htmlPending.classes, () => host.applyClassesToHtml());
+  const classes = await apply("classes", host.html.pending.classes, () => host.html.applyClasses());
   if (classes) return classes;
-  const attributes = await apply("attributes", host.htmlPending.attributes, () => host.applyAttributesToHtml());
+  const attributes = await apply("attributes", host.html.pending.attributes, () => host.html.draft.applyAttributes());
   if (attributes) return attributes;
-  const image = await apply("image", host.htmlPending.image, () => host.applyImageSourceToHtml());
+  const image = await apply("image", host.html.pending.image, () => host.html.applyImageSource());
   if (image) return image;
-  const text = await apply("text", host.htmlPending.text, () => host.applyTextContentToHtml());
+  const text = await apply("text", host.html.pending.text, () => host.html.draft.applyText());
   if (text) return text;
 
-  const remainingArea = (Object.keys(host.htmlPending) as HtmlPendingArea[])
-    .find((area) => host.htmlPending[area]);
-  if (remainingArea || host.pendingTag || host.inspectorPending.html) {
+  const remainingArea = (Object.keys(host.html.pending) as HtmlPendingArea[])
+    .find((area) => host.html.pending[area]);
+  if (remainingArea || host.html.pendingTag || host.html.inspectorPending.html) {
     return blockedAction(
       t("save-controller-html-still-pending", {
         area: remainingArea ? ` (${remainingArea})` : "",
@@ -236,16 +241,17 @@ async function settleFrontendProjection(
   topologyChanged: boolean,
 ): Promise<string[]> {
   const warnings: string[] = [];
+  const context = host.context();
   if (
-    host.sessionProjectRoot !== identity.expectedProjectRoot
-    || host.kernelProjectSessionId !== identity.expectedSessionId
+    context.projectRoot !== identity.expectedProjectRoot
+    || context.runtimeSessionId !== identity.expectedSessionId
   ) {
     return warnings;
   }
-  const noNewFrontendMutation = host.editorMutationEpoch === mutationEpoch;
+  const noNewFrontendMutation = context.editorMutationEpoch === mutationEpoch;
   if (noNewFrontendMutation) {
-    host.setInspectorPending("css", false);
-    host.setInspectorPending("js", false);
+    host.html.setInspectorPending("css", false);
+    host.html.setInspectorPending("js", false);
   }
   for (const path of [...receipt.writtenFiles, ...receipt.removedFiles]) {
     invalidateFileBufferDraftSyncCursor(path);
@@ -258,7 +264,7 @@ async function settleFrontendProjection(
         expectedSessionId: identity.expectedSessionId,
         expectedWorkspaceRevision: receipt.revisionAfter,
         topologyChanged,
-        preferredRelativePath: host.activeScannedPath,
+        preferredRelativePath: context.activeScannedPath,
         refreshSourceGraph: true,
         refreshScss: true,
       });
@@ -268,10 +274,9 @@ async function settleFrontendProjection(
         t("save-controller-derived-resync", { message: errorMessage(error) }),
       );
     }
-    host.refreshToken += 1;
-    host.jsRefreshToken += 1;
+    host.bumpRefreshTokens();
     try {
-      const preview = await projectLatestProjectWorkspacePreview(host, {
+      const preview = await host.projectLatestPreview({
         reason: "after-save",
         minimumWorkspaceRevision: receipt.revisionAfter,
         requestedPaths: [...new Set([...receipt.writtenFiles, ...receipt.removedFiles])].sort(),
@@ -285,14 +290,14 @@ async function settleFrontendProjection(
     }
     host.scheduleZolaValidation?.("save");
     host.markPreviewSavedToDisk?.(t("save-controller-preview-saved"));
-    host.diskState = markDiskMutation(host.diskState, "save", host.activeScannedPath);
+    host.markDiskSaved(context.activeScannedPath);
   }
   return [...new Set(warnings)];
 }
 
 async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
   const identity = captureSaveSession(host);
-  host.saveRequest += 1;
+  host.incrementSaveRequest();
   host.setGlobalStatus(t("save-controller-syncing-editors"), "saving");
 
   await flushAllEditorDrafts(host, identity);
@@ -306,7 +311,7 @@ async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
 
   const before = requireWorkspaceSnapshot(await readProjectWorkspaceState(), identity);
   requireCurrentSaveSession(host, identity, t("save-controller-operation-workspace-snapshot"));
-  const mutationEpoch = host.editorMutationEpoch;
+  const mutationEpoch = host.context().editorMutationEpoch;
 
   if (!before.dirty) {
     await settleFrontendProjection(host, identity, {
@@ -315,7 +320,7 @@ async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
       writtenFiles: [],
       removedFiles: [],
     }, mutationEpoch, false);
-    host.projectWorkspaceSnapshot = before;
+    host.acceptWorkspace(before);
     host.setGlobalStatus(t("save-controller-no-changes"), "saved");
     return false;
   }
@@ -335,7 +340,7 @@ async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
     receipt.acceptedManifest,
     receipt.diskGenerationAfter,
   );
-  host.projectWorkspaceSnapshot = receipt.workspace;
+  host.acceptWorkspace(receipt.workspace);
   const successMessage = t("save-controller-saved", {
     written: receipt.writtenFiles.length,
     removed: receipt.removedFiles.length,
@@ -353,8 +358,8 @@ async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
   );
   if (
     warnings.length > 0
-    && host.sessionProjectRoot === identity.expectedProjectRoot
-    && host.kernelProjectSessionId === identity.expectedSessionId
+    && host.context().projectRoot === identity.expectedProjectRoot
+    && host.context().runtimeSessionId === identity.expectedSessionId
   ) {
     host.setGlobalStatus(
       t("save-controller-saved-resync", {

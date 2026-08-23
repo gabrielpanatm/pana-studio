@@ -12,14 +12,17 @@ function styleSourceUrls(directory) {
 
 test("interfața folosește tokenul canonic --brand pentru accente", () => {
   const designSystemCss = readFileSync(new URL("../src/routes/design-system.css", import.meta.url), "utf8");
-  const appState = readFileSync(new URL("../src/lib/state/app.svelte.ts", import.meta.url), "utf8");
+  const preferences = readFileSync(
+    new URL("../src/lib/application/preferences.svelte.ts", import.meta.url),
+    "utf8",
+  );
   const settingsWorkspace = readFileSync(
     new URL("../src/lib/components/settings/SettingsWorkspace.svelte", import.meta.url),
     "utf8",
   );
   assert.match(designSystemCss, /--brand\s*:/);
-  assert.match(appState, /setProperty\("--brand", this\.uiAccent\)/);
-  assert.match(settingsWorkspace, /applicationSettings\?\.brandAccent/);
+  assert.match(preferences, /setProperty\("--brand", this\.accent\)/);
+  assert.match(settingsWorkspace, /applicationPreferences\.snapshot\?\.brandAccent/);
   assert.doesNotMatch(settingsWorkspace, /\.accent-swatch\.brand/);
 
   for (const token of [
@@ -102,7 +105,6 @@ test("profunzimea skeuomorphic este tokenizată și păstrează fallbackul high 
     projectPane: readFileSync(new URL("../src/lib/components/ProjectPane.svelte", import.meta.url), "utf8"),
     editorShell: readFileSync(new URL("../src/lib/components/EditorShell.svelte", import.meta.url), "utf8"),
     inspectorPane: readFileSync(new URL("../src/lib/components/InspectorPane.svelte", import.meta.url), "utf8"),
-    themes: readFileSync(new URL("../src/lib/components/themes/ThemesWorkspace.svelte", import.meta.url), "utf8"),
     terminal: readFileSync(new URL("../src/lib/components/TerminalPane.svelte", import.meta.url), "utf8"),
     status: readFileSync(new URL("../src/lib/components/StatusBar.svelte", import.meta.url), "utf8"),
   };
@@ -173,8 +175,6 @@ test("profunzimea skeuomorphic este tokenizată și păstrează fallbackul high 
   ]) {
     assert.match(source, /background:\s*var\(--material-panel\);[\s\S]*box-shadow:\s*var\(--shadow-panel\)/);
   }
-  assert.match(componentSources.themes, /class="theme-row ui-entity-selectable"/);
-  assert.match(componentSources.themes, /data-ui-selected=/);
   assert.match(designSystemCss, /--entity-selection-outline:\s*var\(--brand\)/);
   assert.match(componentSources.terminal, /\.terminal-body[\s\S]*background:\s*var\(--material-inset\);[\s\S]*box-shadow:\s*var\(--shadow-inset\)/);
   assert.match(componentSources.status, /\.status-bar[\s\S]*background:\s*var\(--material-panel\)/);
@@ -196,7 +196,6 @@ test("profunzimea skeuomorphic este tokenizată și păstrează fallbackul high 
     "../src/lib/components/publish/PublishWorkspace.svelte",
     "../src/lib/components/taxonomies/TaxonomiesWorkspace.svelte",
     "../src/lib/components/templates/TemplatesWorkspace.svelte",
-    "../src/lib/components/themes/ThemesWorkspace.svelte",
     "../src/lib/components/VersionsPanel.svelte",
   ];
   for (const relativeUrl of canonicalActivityWorkspaceUrls) {

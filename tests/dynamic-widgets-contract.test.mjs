@@ -6,6 +6,12 @@ function source(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
 }
 
+function editorNavigationSource() {
+  return ["contracts", "snapshot", "view"]
+    .map((module) => source(`../src-tauri/src/kernel/editor_navigation/${module}.rs`))
+    .join("\n");
+}
+
 test("registry-ul Rust definește DynamicValue v2, migrare și limite sursă versionate", () => {
   const registry = source("../src-tauri/src/kernel/dynamic_widgets.rs");
   assert.match(registry, /DYNAMIC_WIDGET_SCHEMA_VERSION:\s*u32\s*=\s*2/);
@@ -45,8 +51,10 @@ test("snapshotul inspectorului refuză workspace, model, preview și sursă stal
 test("BlockPropertiesPane este gazda comună pentru bloc nativ și widget dinamic", () => {
   const host = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
   const editor = source("../src/lib/components/inspector/DynamicWidgetPropertiesEditor.svelte");
-  const area = source("../src/lib/components/workspace/WorkspaceInspectorArea.svelte");
-  const app = source("../src/lib/state/app.svelte.ts");
+  const area = source("../src/lib/components/application/ApplicationWorkspace.svelte");
+  const selection = source("../src/lib/editor/selection-workspace.svelte.ts");
+  const navigation = source("../src/lib/editor/navigation-service.ts");
+  const mutations = source("../src/lib/editor/dynamic-widget-service.ts");
 
   assert.match(host, /dynamicSelectionContext/);
   assert.match(host, /readDynamicWidgetSnapshot/);
@@ -62,15 +70,15 @@ test("BlockPropertiesPane este gazda comună pentru bloc nativ și widget dinami
   assert.match(editor, /inspector-dynamic-advanced/);
   assert.match(editor, /inspector-dynamic-listing-item/);
   assert.match(editor, /inspector-dynamic-include-subsections/);
-  assert.match(area, /inspectorDynamicWidgetSelectionContext=\{app\.inspectorDynamicWidgetSelectionContext\}/);
-  assert.match(app, /dynamicWidgetSourceInstanceIds/);
-  assert.match(app, /selectDynamicWidgetSourceInstance/);
-  assert.match(app, /updateDynamicWidgetFromInspector/);
-  assert.match(app, /settleProjectWorkspaceMutation\(this, receipt/);
+  assert.match(area, /inspectorDynamicWidgetSelectionContext:\s*selectionWorkspace\.dynamicWidgetContext/);
+  assert.match(selection, /dynamicWidgetSourceInstanceIds/);
+  assert.match(navigation, /selectDynamicWidgetSourceInstance/);
+  assert.match(mutations, /async update\(/);
+  assert.match(mutations, /this\.dependencies\.settleMutation\(receipt/);
 });
 
 test("Straturi primește eticheta semantică a rădăcinii Dynamic Field din catalogul Rust", () => {
-  const navigation = source("../src-tauri/src/kernel/editor_navigation.rs");
+  const navigation = editorNavigationSource();
   assert.match(navigation, /dynamic_widget_navigation_label/);
   assert.match(navigation, /root_source_node_ids/);
   assert.match(navigation, /Câmp dinamic · \{label\}/);
@@ -106,7 +114,7 @@ test("Șabloane administrează Listing Item, iar Adaugă element inițiază widg
   assert.match(catalog, /DynamicWidget/);
   assert.match(catalog, /Câmp dinamic/);
   assert.match(catalog, /Listing/);
-  assert.match(catalog, /Câmpuri directe/);
+  assert.doesNotMatch(catalog, /Câmpuri directe|DirectField|direct_field_group/);
   assert.doesNotMatch(source("../src/lib/components/project/InsertCatalogPanel.svelte"), /id:\s*"directField"/);
   assert.match(adapter, /dynamicWidget/);
 });

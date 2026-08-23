@@ -5,20 +5,24 @@
     IconPlus,
     IconStack2,
   } from "@tabler/icons-svelte";
+  import type { ProjectPaneTab } from "$lib/application/contracts";
   import type {
-    EditorMovePlan,
-    EditorNavigationNode,
-    EditorNavigationSnapshot,
-    FileExplorerOperationPlan,
-    FileExplorerOperationRequest,
-    FileExplorerSnapshot,
-    ProjectMovePosition,
-    ProjectFile,
-    ProjectPaneTab,
     InsertCatalogContext,
     InsertCatalogItem,
     InsertCatalogSnapshot,
-  } from "$lib/types";
+  } from "$lib/blocks/contracts";
+  import type { EditorMovePlan } from "$lib/editor/contracts";
+  import type {
+    EditorNavigationNode,
+    EditorNavigationSnapshot,
+  } from "$lib/editor/contracts";
+  import type { ProjectMovePosition } from "$lib/preview/contracts";
+  import type {
+    FileExplorerOperationPlan,
+    FileExplorerOperationRequest,
+    FileExplorerSnapshot,
+  } from "$lib/project/file-explorer-contract";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
   import ProjectFilesTab from "$lib/components/project/ProjectFilesTab.svelte";
   import EditorNavigationTree from "$lib/components/project/EditorNavigationTree.svelte";
   import InsertCatalogPanel from "$lib/components/project/InsertCatalogPanel.svelte";
@@ -248,7 +252,12 @@
 
   <!-- ── LAYERS TAB ── -->
   {#if projectPaneTab === "layers"}
-    <div class="pane-tab-panel" id="project-pane-panel-layers" role="tabpanel" aria-labelledby="project-pane-tab-layers">
+    <div
+      class="pane-tab-panel"
+      id="project-pane-panel-layers"
+      role="tabpanel"
+      aria-labelledby="project-pane-tab-layers"
+    >
     <EditorNavigationTree
       snapshot={editorNavigationSnapshot}
       loading={editorNavigationLoading}
@@ -276,11 +285,17 @@
 
   <!-- ── FILES TAB ── -->
   {#if projectPaneTab === "files"}
-    <div class="pane-tab-panel" id="project-pane-panel-files" role="tabpanel" aria-labelledby="project-pane-tab-files">
+    <div
+      class="pane-tab-panel"
+      id="project-pane-panel-files"
+      role="tabpanel"
+      aria-labelledby="project-pane-tab-files"
+    >
     <ProjectFilesTab
       {scannedProject}
       {projectRoot}
       {runtimeSessionId}
+      activeDocumentPath={activeScannedPath}
       snapshot={fileExplorerSnapshot}
       loading={fileExplorerLoading}
       error={fileExplorerError}

@@ -13,23 +13,65 @@
     nativeBlockPaletteGroupsFromRegistry,
   } from "$lib/blocks/registry";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import { readNativeBlockRegistry, readUiBlockGraph } from "$lib/project/io";
-  import type { HtmlPaletteElement } from "$lib/project/html-palette";
-  import type { AppState } from "$lib/state/app.svelte";
+  import {
+  readNativeBlockRegistry,
+  readUiBlockGraph,
+} from "$lib/blocks/io";
+  import type { HtmlPaletteElement } from "$lib/html/palette";
+  import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { PreviewInsertDropRequest } from "$lib/state/preview-insert-controller";
   import type {
     BlockDefinition,
+    NativeBlockRegistrySnapshot,
+    UiBlockGraphSnapshot,
+  } from "$lib/blocks/contracts";
+  import type { CoordinatedElementSelection } from "$lib/canvas/contracts";
+  import type {
     ContentFieldDefinition,
     ContentModelDefinition,
-    FileBufferRequestIdentity,
-    NativeBlockRegistrySnapshot,
-    ProjectDynamicFieldBinding,
-    SourceGraphNode,
-    UiBlockGraphSnapshot,
-  } from "$lib/types";
-  import type { TeraPaletteItem } from "$lib/tera/model";
+  } from "$lib/content-models/contracts";
+  import type { ProjectDynamicFieldBinding } from "$lib/preview/contracts";
+  import type {
+    ProjectFile,
+    ProjectScan,
+  } from "$lib/project/lifecycle-contract";
+  import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
+  import type { SourceGraphNode } from "$lib/source-graph/contracts";
+  import type { TeraDropRequest, TeraPaletteItem } from "$lib/tera/model";
   import { errorMessage } from "$lib/util";
 
-  let { app }: { app: AppState } = $props();
+  let {
+    sourceGraph,
+    coordinatedElementSelection,
+    activeScannedPath,
+    activeCanvasPreviewRevision,
+    workspaceMutations,
+    scannedProject,
+    templateWorkbenchPreferredPagePath,
+    updateTemplateWorkbenchContext,
+    insertTeraPaletteItemAtTarget,
+    insertPaletteElementAtTarget,
+    openEditor,
+  }: {
+    sourceGraph: SourceGraph | null;
+    coordinatedElementSelection: CoordinatedElementSelection | null;
+    activeScannedPath: string | null;
+    activeCanvasPreviewRevision: string;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    scannedProject: ProjectScan | null;
+    templateWorkbenchPreferredPagePath: string | null;
+    updateTemplateWorkbenchContext: (
+      project: ProjectScan,
+      template: ProjectFile,
+      pageFile: string,
+      options: { preferredRoute: string; strict: true },
+    ) => Promise<unknown>;
+    insertTeraPaletteItemAtTarget: (request: TeraDropRequest) => Promise<EditorActionOutcome>;
+    insertPaletteElementAtTarget: (request: PreviewInsertDropRequest) => Promise<EditorActionOutcome>;
+    openEditor: () => void | Promise<void>;
+  } = $props();
 
   type BlockView = "all" | "element" | "section" | "composition" | "dynamic_fields";
   type DetailMode = "info" | "insert";
@@ -96,9 +138,9 @@
       )
       : [],
   );
-  const insertTarget = $derived(app.coordinatedElementSelection);
+  const insertTarget = $derived(coordinatedElementSelection);
   const insertSourceNode = $derived(
-    app.sourceGraph?.nodes.find((node) => node.id === insertTarget?.sourceNodeId) ?? null,
+    sourceGraph?.nodes.find((node) => node.id === insertTarget?.sourceNodeId) ?? null,
   );
   type DynamicFieldEntry = {
     id: string;
@@ -130,7 +172,7 @@
     });
   }
   const dynamicFields = $derived(
-    (app.sourceGraph?.contentModels.models ?? []).flatMap((model) => (
+    (sourceGraph?.contentModels.models ?? []).flatMap((model) => (
       flattenDynamicFields(model, model.fields)
     )),
   );
@@ -162,7 +204,7 @@
       ?? null,
   );
   function nodeHasForContext(node: SourceGraphNode | null): boolean {
-    const nodes = app.sourceGraph?.nodes ?? [];
+    const nodes = sourceGraph?.nodes ?? [];
     const visited = new Set<string>();
     let current = node;
     while (current && !visited.has(current.id)) {
@@ -178,13 +220,13 @@
     dynamicScope !== "item" || nodeHasForContext(insertSourceNode),
   );
   const activeTemplateName = $derived.by(() => {
-    const activePath = app.activeScannedPath ?? "";
+    const activePath = activeScannedPath ?? "";
     return activePath.startsWith("templates/")
       ? activePath.slice("templates/".length)
       : "";
   });
   const dynamicPreviewPages = $derived(
-    (app.sourceGraph?.pages ?? [])
+    (sourceGraph?.pages ?? [])
       .filter((page) => page.pageKind === "page" && page.resolvedTemplate === activeTemplateName)
       .sort((left, right) => left.title.localeCompare(right.title, l10n.locale)),
   );
@@ -201,10 +243,10 @@
   });
 
   $effect(() => {
-    const projectRoot = app.sessionProjectRoot;
-    const sessionId = app.kernelProjectSessionId;
-    const revision = app.projectWorkspaceSnapshot?.revision;
-    const previewRevision = app.activeCanvasIdentity?.previewRevision ?? "";
+    const projectRoot = workspaceMutations.identity?.expectedProjectRoot ?? "";
+    const sessionId = workspaceMutations.identity?.expectedSessionId ?? "";
+    const revision = workspaceMutations.snapshot?.revision;
+    const previewRevision = activeCanvasPreviewRevision;
     if (!projectRoot || !sessionId || revision === undefined) return;
     const key = `${projectRoot}\u0000${sessionId}\u0000${revision}\u0000${previewRevision}`;
     if (key === refreshKey) return;
@@ -226,8 +268,8 @@
 
   function identity(): FileBufferRequestIdentity {
     return {
-      expectedProjectRoot: app.sessionProjectRoot,
-      expectedSessionId: app.kernelProjectSessionId,
+      expectedProjectRoot: workspaceMutations.identity?.expectedProjectRoot ?? "",
+      expectedSessionId: workspaceMutations.identity?.expectedSessionId ?? "",
     };
   }
 
@@ -305,13 +347,13 @@
   }
 
   async function selectPreviewContent(pageFile: string) {
-    const project = app.scannedProject;
-    const template = project?.files.find((file) => file.relativePath === app.activeScannedPath);
+    const project = scannedProject;
+    const template = project?.files.find((file) => file.relativePath === activeScannedPath);
     const page = dynamicPreviewPages.find((candidate) => candidate.file === pageFile);
     if (!project || !template || !page) return;
     loadError = "";
     try {
-      await app.updateTemplateWorkbenchContext(project, template, page.file, {
+      await updateTemplateWorkbenchContext(project, template, page.file, {
         preferredRoute: page.url,
         strict: true,
       });
@@ -349,7 +391,7 @@
       dynamicBinding: dynamicBinding(dynamic),
     };
     try {
-      const outcome = await app.insertTeraPaletteItemAtTarget({
+      const outcome = await insertTeraPaletteItemAtTarget({
         targetSessionId: target.snapshot.runtimeSessionId,
         targetSourceId: target.sourceNodeId,
         targetTemplateSourceId: null,
@@ -363,7 +405,7 @@
         loadError = outcome.reason ?? "Câmpul dinamic nu a putut fi inserat.";
         return;
       }
-      await app.setWorkbenchActivity("editor");
+      await openEditor();
     } catch (cause) {
       loadError = errorMessage(cause);
     } finally {
@@ -385,7 +427,7 @@
     inserting = true;
     loadError = "";
     try {
-      const outcome = await app.insertPaletteElementAtTarget({
+      const outcome = await insertPaletteElementAtTarget({
         targetRenderInstanceId: target.renderInstanceId,
         targetSessionId: target.snapshot.runtimeSessionId,
         targetSourceId: target.sourceNodeId,
@@ -400,7 +442,7 @@
         return;
       }
       detailMode = "info";
-      await app.setWorkbenchActivity("editor");
+      await openEditor();
     } catch (cause) {
       loadError = errorMessage(cause);
     } finally {
@@ -520,7 +562,7 @@
         <h2>{selectedDynamicField.field.label}</h2>
         <p>{selectedDynamicField.field.help || `Câmp definit de modelul ${selectedDynamicField.model.label}.`}</p>
         {#if dynamicPreviewPages.length > 0}
-          <label class="preview-content-selector"><span>Conținut de previzualizare</span><select value={app.templateWorkbenchPreferredPagePath ?? dynamicPreviewPages[0]?.file ?? ""} onchange={(event) => { void selectPreviewContent(event.currentTarget.value); }}>{#each dynamicPreviewPages as page (page.file)}<option value={page.file}>{page.title} · {page.file}</option>{/each}</select><small>Randarea folosește pagina reală aleasă pentru acest template single.</small></label>
+          <label class="preview-content-selector"><span>Conținut de previzualizare</span><select value={templateWorkbenchPreferredPagePath ?? dynamicPreviewPages[0]?.file ?? ""} onchange={(event) => { void selectPreviewContent(event.currentTarget.value); }}>{#each dynamicPreviewPages as page (page.file)}<option value={page.file}>{page.title} · {page.file}</option>{/each}</select><small>Randarea folosește pagina reală aleasă pentru acest template single.</small></label>
         {/if}
         <dl class="block-contract">
           <div><dt>Model</dt><dd>{selectedDynamicField.model.id}</dd></div>
@@ -546,7 +588,7 @@
           {#if dynamicScope === "item" && !dynamicItemTargetAllowed}<p class="form-error" role="status"><IconAlertTriangle size={14} /> Selectează bucla Tera a repetorului sau un element din interiorul ei.</p>{/if}
         </section>
         <section class="detail-section"><h3>Tera standard generat de Rust</h3><pre><code>{dynamicSnippet(selectedDynamicField)}</code></pre></section>
-        <section class="detail-section"><h3>Legături detectate de Rust</h3><div class="semantic-row"><code>template-uri</code><span>{app.sourceGraph?.contentModels.templateUsages.filter((usage) => usage.fieldId === selectedDynamicField.field.id).length ?? 0}</span></div></section>
+        <section class="detail-section"><h3>Legături detectate de Rust</h3><div class="semantic-row"><code>template-uri</code><span>{sourceGraph?.contentModels.templateUsages.filter((usage) => usage.fieldId === selectedDynamicField.field.id).length ?? 0}</span></div></section>
         {#if loadError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {loadError}</p>{/if}
         <div class="target-card"><strong>{insertTarget ? `Inserare după <${insertTarget.observation.tag}>` : "Selectează un element din preview"}</strong><span>{insertTarget?.sourceLocation?.file ?? "Câmpul dinamic se inserează într-un template Tera editabil."}</span></div>
         <div class="detail-actions"><button class="ui-button primary primary-action" type="button" disabled={!insertTarget?.sourceNodeId || !dynamicItemTargetAllowed || inserting} onclick={() => { void insertDynamicField(); }}><IconPlus size={14} /> {inserting ? "Se inserează…" : "Inserează câmpul"}</button></div>

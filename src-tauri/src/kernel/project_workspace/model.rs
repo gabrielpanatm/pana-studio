@@ -1,4 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    ops::{Deref, DerefMut},
+    sync::{Arc, OnceLock},
+};
+
+#[cfg(test)]
+use std::cell::Cell;
 
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +14,7 @@ use crate::project::AcceptedProjectDiskManifest;
 use crate::{
     js::{PageJsDraftStageReceipt, PageJsDraftStoreSnapshot},
     kernel::file_buffer_store::{
-        FileBufferFileSnapshot, FileBufferStoreSnapshot, FileBufferTextSnapshot,
+        FileBufferFileSnapshot, FileBufferStore, FileBufferStoreSnapshot, FileBufferTextSnapshot,
     },
     kernel::write_authority::WriteReceipt,
     project::ProjectDiskManifest,
@@ -16,6 +23,26 @@ use crate::{
 pub const PROJECT_WORKSPACE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+
+#[cfg(test)]
+thread_local! {
+    static SOURCE_TEXT_DEEP_MATERIALIZATIONS: Cell<u64> = const { Cell::new(0) };
+    static RESOURCE_BYTE_DEEP_MATERIALIZATIONS: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_projection_deep_materializations() {
+    SOURCE_TEXT_DEEP_MATERIALIZATIONS.with(|counter| counter.set(0));
+    RESOURCE_BYTE_DEEP_MATERIALIZATIONS.with(|counter| counter.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn projection_deep_materializations() -> (u64, u64) {
+    (
+        SOURCE_TEXT_DEEP_MATERIALIZATIONS.with(Cell::get),
+        RESOURCE_BYTE_DEEP_MATERIALIZATIONS.with(Cell::get),
+    )
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -182,6 +209,9 @@ pub struct ProjectWorkspaceMutationReceipt {
     pub files: Vec<FileBufferFileSnapshot>,
     pub page_js: Option<PageJsDraftStageReceipt>,
     pub history: WorkspaceHistorySnapshot,
+    #[serde(skip)]
+    pub(crate) project_model_performance:
+        Option<crate::kernel::performance::ProjectModelPerformanceSample>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -251,7 +281,7 @@ pub struct WorkspaceHistoryEntrySnapshot {
     pub retained_bytes: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct WorkspaceProjectionSnapshot {
     pub project_root: String,
     pub runtime_session_id: String,
@@ -262,16 +292,402 @@ pub struct WorkspaceProjectionSnapshot {
     pub workspace_transaction_id: Option<String>,
     /// Complete materialized text namespace for this exact workspace revision.
     /// Consumers must not fill missing text from the live project disk.
-    pub source_texts: HashMap<String, String>,
+    pub source_texts: WorkspaceProjectionSourceTexts,
     /// Complete staged binary overlay for this exact workspace revision.
-    pub resource_bytes: HashMap<String, Vec<u8>>,
+    pub resource_bytes: WorkspaceProjectionResourceBytes,
     pub deleted_sources: HashSet<String>,
     /// Paths whose materialized value differs from the accepted disk baseline.
     pub changed_paths: HashSet<String>,
     /// Runtime-scoped disk baseline for non-text assets copied into derived
     /// projections. It is checked both before and after materialization.
-    pub accepted_disk: AcceptedProjectDiskManifest,
+    pub accepted_disk: Arc<AcceptedProjectDiskManifest>,
 }
+
+/// Copy-on-write text view over the exact materialized FileBufferStore.
+///
+/// A ProjectModel cache hit only needs projection identity and never pays to
+/// duplicate every source. Consumers that actually rebuild a model obtain the
+/// semantic-builder map lazily, once per shared projection.
+#[derive(Clone, Debug)]
+pub struct WorkspaceProjectionSourceTexts {
+    state: Arc<WorkspaceProjectionSourceState>,
+}
+
+#[derive(Clone, Debug)]
+enum WorkspaceProjectionSourceState {
+    Materialized {
+        documents: Arc<FileBufferStore>,
+        owned_view: Arc<OnceLock<Arc<HashMap<String, String>>>>,
+    },
+    Owned(HashMap<String, String>),
+}
+
+impl WorkspaceProjectionSourceTexts {
+    pub(crate) fn from_materialized(documents: FileBufferStore) -> Self {
+        Self {
+            state: Arc::new(WorkspaceProjectionSourceState::Materialized {
+                documents: Arc::new(documents),
+                owned_view: Arc::new(OnceLock::new()),
+            }),
+        }
+    }
+
+    pub(crate) fn contains_key(&self, path: &str) -> bool {
+        match self.state.as_ref() {
+            WorkspaceProjectionSourceState::Materialized { documents, .. } => {
+                documents.files.contains_key(path)
+            }
+            WorkspaceProjectionSourceState::Owned(source_texts) => source_texts.contains_key(path),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        match self.state.as_ref() {
+            WorkspaceProjectionSourceState::Materialized { documents, .. } => documents.files.len(),
+            WorkspaceProjectionSourceState::Owned(source_texts) => source_texts.len(),
+        }
+    }
+
+    pub(crate) fn keys(&self) -> WorkspaceProjectionSourceKeys<'_> {
+        match self.state.as_ref() {
+            WorkspaceProjectionSourceState::Materialized { documents, .. } => {
+                WorkspaceProjectionSourceKeys::Materialized(documents.files.keys())
+            }
+            WorkspaceProjectionSourceState::Owned(source_texts) => {
+                WorkspaceProjectionSourceKeys::Owned(source_texts.keys())
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_file_entries_with(
+        &self,
+        entries: &Arc<BTreeMap<String, Arc<crate::kernel::file_buffer_store::FileBufferEntry>>>,
+    ) -> bool {
+        match self.state.as_ref() {
+            WorkspaceProjectionSourceState::Materialized { documents, .. } => {
+                Arc::ptr_eq(&documents.files, entries)
+            }
+            WorkspaceProjectionSourceState::Owned(_) => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn owned_view_is_materialized(&self) -> bool {
+        match self.state.as_ref() {
+            WorkspaceProjectionSourceState::Materialized { owned_view, .. } => {
+                owned_view.get().is_some()
+            }
+            WorkspaceProjectionSourceState::Owned(_) => true,
+        }
+    }
+}
+
+pub(crate) enum WorkspaceProjectionSourceKeys<'a> {
+    Materialized(
+        std::collections::btree_map::Keys<
+            'a,
+            String,
+            Arc<crate::kernel::file_buffer_store::FileBufferEntry>,
+        >,
+    ),
+    Owned(std::collections::hash_map::Keys<'a, String, String>),
+}
+
+impl<'a> Iterator for WorkspaceProjectionSourceKeys<'a> {
+    type Item = &'a String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Materialized(keys) => keys.next(),
+            Self::Owned(keys) => keys.next(),
+        }
+    }
+}
+
+impl From<HashMap<String, String>> for WorkspaceProjectionSourceTexts {
+    fn from(value: HashMap<String, String>) -> Self {
+        Self {
+            state: Arc::new(WorkspaceProjectionSourceState::Owned(value)),
+        }
+    }
+}
+
+impl Deref for WorkspaceProjectionSourceTexts {
+    type Target = HashMap<String, String>;
+
+    fn deref(&self) -> &Self::Target {
+        match self.state.as_ref() {
+            WorkspaceProjectionSourceState::Materialized {
+                documents,
+                owned_view,
+            } => owned_view
+                .get_or_init(|| {
+                    #[cfg(test)]
+                    SOURCE_TEXT_DEEP_MATERIALIZATIONS
+                        .with(|counter| counter.set(counter.get().saturating_add(1)));
+                    Arc::new(
+                        documents
+                            .files
+                            .iter()
+                            .map(|(path, entry)| (path.clone(), entry.current_text().to_string()))
+                            .collect(),
+                    )
+                })
+                .as_ref(),
+            WorkspaceProjectionSourceState::Owned(source_texts) => source_texts,
+        }
+    }
+}
+
+impl DerefMut for WorkspaceProjectionSourceTexts {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        if matches!(
+            self.state.as_ref(),
+            WorkspaceProjectionSourceState::Materialized { .. }
+        ) {
+            let owned: HashMap<String, String> = Deref::deref(self).clone();
+            self.state = Arc::new(WorkspaceProjectionSourceState::Owned(owned));
+        }
+        match Arc::make_mut(&mut self.state) {
+            WorkspaceProjectionSourceState::Owned(source_texts) => source_texts,
+            WorkspaceProjectionSourceState::Materialized { .. } => {
+                unreachable!("starea materializată a fost detașată înainte de mutație")
+            }
+        }
+    }
+}
+
+impl PartialEq for WorkspaceProjectionSourceTexts {
+    fn eq(&self, other: &Self) -> bool {
+        self.deref() == other.deref()
+    }
+}
+
+impl Eq for WorkspaceProjectionSourceTexts {}
+
+impl<'a> IntoIterator for &'a WorkspaceProjectionSourceTexts {
+    type Item = (&'a String, &'a String);
+    type IntoIter = std::collections::hash_map::Iter<'a, String, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.deref().iter()
+    }
+}
+
+/// Copy-on-write byte view over the exact staged binary-resource map.
+#[derive(Clone, Debug)]
+pub struct WorkspaceProjectionResourceBytes {
+    state: Arc<WorkspaceProjectionResourceState>,
+}
+
+#[derive(Clone, Debug)]
+enum WorkspaceProjectionResourceState {
+    Materialized {
+        resources: Arc<BTreeMap<String, Arc<WorkspaceBinaryResource>>>,
+        owned_view: Arc<OnceLock<Arc<HashMap<String, Vec<u8>>>>>,
+    },
+    Owned(HashMap<String, Vec<u8>>),
+}
+
+impl WorkspaceProjectionResourceBytes {
+    pub(crate) fn from_materialized(
+        resources: Arc<BTreeMap<String, Arc<WorkspaceBinaryResource>>>,
+    ) -> Self {
+        Self {
+            state: Arc::new(WorkspaceProjectionResourceState::Materialized {
+                resources,
+                owned_view: Arc::new(OnceLock::new()),
+            }),
+        }
+    }
+
+    pub(crate) fn get(&self, path: &str) -> Option<&Vec<u8>> {
+        match self.state.as_ref() {
+            WorkspaceProjectionResourceState::Materialized { resources, .. } => {
+                resources.get(path).map(|resource| &resource.bytes)
+            }
+            WorkspaceProjectionResourceState::Owned(resource_bytes) => resource_bytes.get(path),
+        }
+    }
+
+    pub(crate) fn contains_key(&self, path: &str) -> bool {
+        match self.state.as_ref() {
+            WorkspaceProjectionResourceState::Materialized { resources, .. } => {
+                resources.contains_key(path)
+            }
+            WorkspaceProjectionResourceState::Owned(resource_bytes) => {
+                resource_bytes.contains_key(path)
+            }
+        }
+    }
+
+    pub(crate) fn keys(&self) -> WorkspaceProjectionResourceKeys<'_> {
+        match self.state.as_ref() {
+            WorkspaceProjectionResourceState::Materialized { resources, .. } => {
+                WorkspaceProjectionResourceKeys::Materialized(resources.keys())
+            }
+            WorkspaceProjectionResourceState::Owned(resource_bytes) => {
+                WorkspaceProjectionResourceKeys::Owned(resource_bytes.keys())
+            }
+        }
+    }
+
+    pub(crate) fn iter(&self) -> WorkspaceProjectionResourceIter<'_> {
+        match self.state.as_ref() {
+            WorkspaceProjectionResourceState::Materialized { resources, .. } => {
+                WorkspaceProjectionResourceIter::Materialized(resources.iter())
+            }
+            WorkspaceProjectionResourceState::Owned(resource_bytes) => {
+                WorkspaceProjectionResourceIter::Owned(resource_bytes.iter())
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_resources_with(
+        &self,
+        resources: &Arc<BTreeMap<String, Arc<WorkspaceBinaryResource>>>,
+    ) -> bool {
+        match self.state.as_ref() {
+            WorkspaceProjectionResourceState::Materialized {
+                resources: projected,
+                ..
+            } => Arc::ptr_eq(projected, resources),
+            WorkspaceProjectionResourceState::Owned(_) => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn owned_view_is_materialized(&self) -> bool {
+        match self.state.as_ref() {
+            WorkspaceProjectionResourceState::Materialized { owned_view, .. } => {
+                owned_view.get().is_some()
+            }
+            WorkspaceProjectionResourceState::Owned(_) => true,
+        }
+    }
+}
+
+pub(crate) enum WorkspaceProjectionResourceKeys<'a> {
+    Materialized(std::collections::btree_map::Keys<'a, String, Arc<WorkspaceBinaryResource>>),
+    Owned(std::collections::hash_map::Keys<'a, String, Vec<u8>>),
+}
+
+impl<'a> Iterator for WorkspaceProjectionResourceKeys<'a> {
+    type Item = &'a String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Materialized(keys) => keys.next(),
+            Self::Owned(keys) => keys.next(),
+        }
+    }
+}
+
+pub(crate) enum WorkspaceProjectionResourceIter<'a> {
+    Materialized(std::collections::btree_map::Iter<'a, String, Arc<WorkspaceBinaryResource>>),
+    Owned(std::collections::hash_map::Iter<'a, String, Vec<u8>>),
+}
+
+impl<'a> Iterator for WorkspaceProjectionResourceIter<'a> {
+    type Item = (&'a String, &'a Vec<u8>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Materialized(resources) => resources
+                .next()
+                .map(|(path, resource)| (path, &resource.bytes)),
+            Self::Owned(resources) => resources.next(),
+        }
+    }
+}
+
+impl From<HashMap<String, Vec<u8>>> for WorkspaceProjectionResourceBytes {
+    fn from(value: HashMap<String, Vec<u8>>) -> Self {
+        Self {
+            state: Arc::new(WorkspaceProjectionResourceState::Owned(value)),
+        }
+    }
+}
+
+impl Deref for WorkspaceProjectionResourceBytes {
+    type Target = HashMap<String, Vec<u8>>;
+
+    fn deref(&self) -> &Self::Target {
+        match self.state.as_ref() {
+            WorkspaceProjectionResourceState::Materialized {
+                resources,
+                owned_view,
+            } => owned_view
+                .get_or_init(|| {
+                    #[cfg(test)]
+                    RESOURCE_BYTE_DEEP_MATERIALIZATIONS
+                        .with(|counter| counter.set(counter.get().saturating_add(1)));
+                    Arc::new(
+                        resources
+                            .iter()
+                            .map(|(path, resource)| (path.clone(), resource.bytes.clone()))
+                            .collect(),
+                    )
+                })
+                .as_ref(),
+            WorkspaceProjectionResourceState::Owned(resource_bytes) => resource_bytes,
+        }
+    }
+}
+
+impl DerefMut for WorkspaceProjectionResourceBytes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        if matches!(
+            self.state.as_ref(),
+            WorkspaceProjectionResourceState::Materialized { .. }
+        ) {
+            let owned: HashMap<String, Vec<u8>> = Deref::deref(self).clone();
+            self.state = Arc::new(WorkspaceProjectionResourceState::Owned(owned));
+        }
+        match Arc::make_mut(&mut self.state) {
+            WorkspaceProjectionResourceState::Owned(resource_bytes) => resource_bytes,
+            WorkspaceProjectionResourceState::Materialized { .. } => {
+                unreachable!("starea binară materializată a fost detașată înainte de mutație")
+            }
+        }
+    }
+}
+
+impl PartialEq for WorkspaceProjectionResourceBytes {
+    fn eq(&self, other: &Self) -> bool {
+        self.deref() == other.deref()
+    }
+}
+
+impl Eq for WorkspaceProjectionResourceBytes {}
+
+impl<'a> IntoIterator for &'a WorkspaceProjectionResourceBytes {
+    type Item = (&'a String, &'a Vec<u8>);
+    type IntoIter = std::collections::hash_map::Iter<'a, String, Vec<u8>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.deref().iter()
+    }
+}
+
+impl PartialEq for WorkspaceProjectionSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.project_root == other.project_root
+            && self.runtime_session_id == other.runtime_session_id
+            && self.revision == other.revision
+            && self.workspace_transaction_id == other.workspace_transaction_id
+            && self.source_texts == other.source_texts
+            && self.resource_bytes == other.resource_bytes
+            && self.deleted_sources == other.deleted_sources
+            && self.changed_paths == other.changed_paths
+            && self.accepted_disk == other.accepted_disk
+    }
+}
+
+impl Eq for WorkspaceProjectionSnapshot {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

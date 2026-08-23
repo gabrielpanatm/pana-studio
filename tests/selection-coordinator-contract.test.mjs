@@ -8,9 +8,11 @@ function source(relativePath) {
 
 test("SelectionCoordinator is the sole semantic selection authority", () => {
   const rust = source("../src-tauri/src/kernel/selection_coordinator.rs");
-  const app = source("../src/lib/state/app.svelte.ts");
-  const canvas = source("../src/lib/state/canvas-interaction-controller.ts");
-  const inspector = source("../src/lib/components/InspectorPane.svelte");
+  const selectionWorkspace = source("../src/lib/editor/selection-workspace.svelte.ts");
+  const session = source("../src/lib/state/editor-selection-session.svelte.ts");
+  const canvas = `${source("../src/lib/state/canvas-interaction-gestures.ts")}\n${source("../src/lib/state/canvas-interaction-selection.ts")}`;
+  const inspector = source("../src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const inspectorState = source("../src/lib/inspector/css-inspector-state.svelte.ts");
 
   for (const contract of [
     "SelectionIntent",
@@ -23,32 +25,36 @@ test("SelectionCoordinator is the sole semantic selection authority", () => {
   ]) {
     assert.match(rust, new RegExp(`(?:struct|enum) ${contract}\\b`));
   }
-  assert.match(app, /selectionSnapshot = \$state<SelectionSnapshot \| null>/);
+  assert.match(session, /selectionSnapshot = \$state<SelectionSnapshot \| null>/);
+  assert.match(session, /readonly diagnostics = emptyDiagnostics\(\)/);
+  assert.doesNotMatch(session, /diagnostics = \$state/);
+  assert.match(selectionWorkspace, /this\.session = new EditorSelectionSessionController/);
+  assert.doesNotMatch(selectionWorkspace, /^\s*selectionSnapshot = \$state/m);
   assert.match(canvas, /message\.pointer\.modifiers\.shift[\s\S]*kind: "extendRangeToEditorNode"/);
   assert.match(canvas, /message\.pointer\.modifiers\.control \|\| message\.pointer\.modifiers\.meta[\s\S]*kind: "toggleEditorNode"/);
-  assert.match(canvas, /app\.applySelectionIntent\(intent\)/);
-  assert.match(canvas, /app\.applyHoverIntent\(/);
-  assert.match(inspector, /const selectedClass = \$derived\(coordinatedCssState/);
+  assert.match(canvas, /app\.selection\.editorSelection\.applySelectionIntent\(intent\)/);
+  assert.match(canvas, /app\.selection\.editorSelection\.applyHoverIntent\(/);
+  assert.match(inspectorState, /get selectedClass\(\)/);
+  assert.match(inspectorState, /this\.coordinatedSelector\?\.selectedClass/);
 
-  const combined = `${app}\n${canvas}\n${inspector}`;
+  const combined = `${selectionWorkspace}\n${session}\n${canvas}\n${inspector}\n${inspectorState}`;
   assert.doesNotMatch(
     combined,
     /\bselectedElement\b|\bselectedTemplateSourceId\b|\bselectedEditorNavigationNodeId\b|\bselectedReceipt\b|\bselectedKey\b/,
   );
 });
-
 test("DOM observation and source cursor remain subordinate to Rust identity", () => {
-  const canvas = source("../src/lib/state/canvas-interaction-controller.ts");
-  const sourceEditor = source("../src/lib/state/source-editor-controller.ts");
+  const canvas = source("../src/lib/state/canvas-interaction-selection.ts");
+  const sourceEditor = source("../src/lib/editor/source-workspace.svelte.ts");
   const bridge = source("../src-tauri/src/preview/bridge/03_canvas_agent.js");
   const rust = source("../src-tauri/src/kernel/selection_coordinator.rs");
 
   assert.match(canvas, /selectionRevision: pending\.selectionRevision/);
-  assert.match(canvas, /app\.acceptSelectionObservation/);
+  assert.match(canvas, /app\.selection\.editorSelection\.acceptObservation/);
   assert.match(canvas, /selection\.selectionRevision !== message\.selectionRevision/);
   assert.match(rust, /Observația DOM aparține unei revizii de selecție vechi/);
   assert.match(sourceEditor, /new TextEncoder\(\)\.encode/);
-  assert.match(sourceEditor, /selectSourcePositionFromCode/);
+  assert.match(sourceEditor, /selectSourcePosition/);
   assert.doesNotMatch(
     sourceEditor,
     /querySelector|findHtmlNodeAtPosition|codeSelectionRangeForSelection|cssSelectorAtPosition|codeSelectionRangeForCssSelector/,
@@ -80,7 +86,8 @@ test("selection-driven mutations carry a Rust-validated revision", () => {
   const pipeline = source("../src-tauri/src/commands/kernel_preview_pipeline.rs");
   const css = source("../src-tauri/src/commands/css.rs");
   const lane = source("../src/lib/kernel/preview-structural-lane.ts");
-  const inspector = source("../src/lib/components/InspectorPane.svelte");
+  const inspector = source("../src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const queue = source("../src/lib/inspector/css-inspector-mutation-queue.ts");
 
   assert.match(model, /PreviewStructuralSelectionIdentity/);
   assert.match(coordinator, /struct SelectionMutationIdentity/);
@@ -90,7 +97,7 @@ test("selection-driven mutations carry a Rust-validated revision", () => {
   assert.match(css, /with_stable_semantic_mutation_target/);
   assert.match(lane, /expectedSelection: lease\.selection/);
   assert.match(lane, /requireCapturedSelection/);
-  assert.match(inspector, /expectedSelection/);
-  assert.match(inspector, /sameCssSemanticSelection/);
-  assert.match(inspector, /cssSemanticSelectionKey\(expectedSelection\)/);
+  assert.match(queue, /expectedSelection/);
+  assert.match(queue, /sameCssSemanticSelection/);
+  assert.match(queue, /cssSemanticSelectionKey\(expectedSelection\)/);
 });

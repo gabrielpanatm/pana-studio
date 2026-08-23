@@ -4,7 +4,7 @@
     parseInteractivePreviewMessage,
     type InteractivePreviewDomNode,
   } from "$lib/preview/interactive";
-  import type { WorkbenchCanvasMode } from "$lib/types";
+  import type { WorkbenchCanvasMode } from "$lib/workbench/contracts";
   import {
     legacyTranslator,
     localeRevision,
@@ -15,7 +15,7 @@
     MotionPreviewMode,
     MotionPreviewRequest,
     MotionPreviewStatus,
-  } from "$lib/state/motion-workspace.svelte";
+  } from "$lib/motion/workspace.svelte";
 
   type FrameSlot = {
     id: number;

@@ -1,8 +1,7 @@
-import type { CssProperty, CssRuleContext } from "$lib/types";
+import type { CssRuleContext, CssViewport } from "$lib/css/contracts";
+import type { CssProperty } from "$lib/css/property-contract";
 import { backgroundFromProperties } from "$lib/inspector/background-model";
 import { gridFromProperties } from "$lib/inspector/grid-model";
-
-export type CssViewport = CssRuleContext["viewport"];
 
 type CssBlock = {
   selector: string;

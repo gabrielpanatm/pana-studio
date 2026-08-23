@@ -47,7 +47,7 @@ function snapshot() {
       },
       {
         id: "editor_boundary:empty",
-        kind: "teraBoundary",
+        kind: "boundary",
         renderInstanceId: null,
         origin: "project",
         capabilities: capabilities({
@@ -55,6 +55,8 @@ function snapshot() {
           requiresEditScopeId: "editor_boundary:empty",
         }),
         boundary: {
+          kind: "component",
+          componentKind: "partial",
           boundaryInstanceId: "boundary-empty-locked",
           sourceNodeId: "source-empty",
           empty: true,
@@ -62,11 +64,13 @@ function snapshot() {
       },
       {
         id: "editor_boundary:empty-active",
-        kind: "teraBoundary",
+        kind: "boundary",
         renderInstanceId: null,
         origin: "project",
         capabilities: capabilities(),
         boundary: {
+          kind: "template",
+          componentKind: null,
           boundaryInstanceId: "boundary-empty-active",
           sourceNodeId: "source-empty",
           // Preprocessarea poate proiecta un helper DOM drept rădăcină; Rust

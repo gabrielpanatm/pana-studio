@@ -414,13 +414,6 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
             880,
         ),
         (
-            WorkbenchActivity::Themes,
-            "Teme",
-            "Catalogul bundled de teme Zola instalabile și activabile",
-            "themes zola catalog install activate teme",
-            840,
-        ),
-        (
             WorkbenchActivity::Templates,
             "Șabloane",
             "Pagini, layout-uri, fragmente și macro-uri Tera",
@@ -690,11 +683,6 @@ const COMMAND_CENTER_COPY_CODES: &[(&str, &str, &str)] = &[
         "activity.editor",
         "command-center-activity-editor-title",
         "command-center-activity-editor-subtitle",
-    ),
-    (
-        "activity.themes",
-        "command-center-activity-themes-title",
-        "command-center-activity-themes-subtitle",
     ),
     (
         "activity.templates",
@@ -1186,7 +1174,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        project_model::model::{ProjectModelFile, TeraGraph},
+        project_model::model::ProjectModelFile,
         source_graph::model::{SourceGraph, SourceGraphTemplate, SourceOrigin},
     };
 
@@ -1256,11 +1244,6 @@ mod tests {
                 relations: Vec::new(),
                 asset_reference_coverage: Default::default(),
                 diagnostics: Vec::new(),
-            },
-            tera_graph: TeraGraph {
-                templates: Vec::new(),
-                nodes: Vec::new(),
-                relations: Vec::new(),
             },
             diagnostics: Vec::new(),
         }

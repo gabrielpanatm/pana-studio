@@ -89,6 +89,7 @@ pub enum KernelEventKind {
     RedoApplied,
     RedoFailed,
     ObservabilityLogRotated,
+    PerformanceSampled,
     PreviewProjectionIntentAccepted,
     PreviewProjectionIntentBlocked,
     PreviewProjectionPublished,
@@ -475,6 +476,7 @@ fn event_name(kind: KernelEventKind) -> &'static str {
         KernelEventKind::RedoApplied => "kernel.undo_redo.redo.applied",
         KernelEventKind::RedoFailed => "kernel.undo_redo.redo.failed",
         KernelEventKind::ObservabilityLogRotated => "kernel.observability_log.rotated",
+        KernelEventKind::PerformanceSampled => "kernel.performance.sampled",
         KernelEventKind::PreviewProjectionIntentAccepted => {
             "kernel.preview_projection.intent.accepted"
         }

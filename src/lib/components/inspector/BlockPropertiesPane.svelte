@@ -11,22 +11,29 @@
   import SliderBlockPropertiesEditor from "$lib/components/inspector/SliderBlockPropertiesEditor.svelte";
   import { resolveUiBlockSourceInstanceForSelection } from "$lib/blocks/registry";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import { readDynamicWidgetSnapshot, readUiBlockGraph } from "$lib/project/io";
+  import {
+  readDynamicWidgetSnapshot,
+} from "$lib/editor/dynamic-widget-io";
+import {
+  readUiBlockGraph,
+} from "$lib/blocks/io";
   import type {
-    BlockSelectionContext,
     BlockOptionDefinition,
     BlockOptionValue,
-    FileBufferRequestIdentity,
+    NativeBlockOptionState,
+    NativeBlockSlotMutationRequest,
+    NativeIconMutationIntent,
+    UiBlockGraphSnapshot,
+    UiBlockSourceInstance,
+  } from "$lib/blocks/contracts";
+  import type { BlockSelectionContext } from "$lib/canvas/contracts";
+  import type {
     DynamicWidgetProperties,
     DynamicWidgetSelectionContext,
     DynamicWidgetSnapshot,
-    NativeBlockOptionState,
-    NativeIconMutationIntent,
-    NativeBlockSlotMutationRequest,
-    SourceGraph,
-    UiBlockGraphSnapshot,
-    UiBlockSourceInstance,
-  } from "$lib/types";
+  } from "$lib/content-models/contracts";
+  import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
   import { errorMessage } from "$lib/util";
 
   type ApplyRequest = {

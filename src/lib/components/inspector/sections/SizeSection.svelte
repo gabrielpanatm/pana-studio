@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { ScssVariable } from "$lib/types";
+  import type { ScssVariable } from "$lib/css/contracts";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import { variablesForProperty } from "$lib/editor/controls";
   import { IconArrowsMaximize } from "@tabler/icons-svelte";

@@ -16,26 +16,40 @@
     IconTrash,
     IconX,
   } from "@tabler/icons-svelte";
-  import { applyDataMutation, readDataNodeEditor } from "$lib/project/io";
+  import {
+  applyDataMutation,
+  readDataNodeEditor,
+} from "$lib/data/io";
   import { t } from "$lib/i18n/runtime.svelte";
   import { sourceCapabilityReason } from "$lib/source-graph/capabilities";
-  import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
   import type {
     DataDraftKind,
     DataMutationInput,
     DataNodeEditorSnapshot,
-    FileBufferRequestIdentity,
+  } from "$lib/data/contracts";
+  import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
+  import type {
     SourceDataNode,
     SourceGraphDataFile,
-  } from "$lib/types";
+  } from "$lib/source-graph/contracts";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    globalStatus,
+    workspaceMutations,
+    sourceGraph,
+    uiLocale,
+    openEditor,
     openWorkspaceSource,
   }: {
-    app: AppState;
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    sourceGraph: SourceGraph | null;
+    uiLocale: string;
+    openEditor: () => void | Promise<void>;
     openWorkspaceSource: (path: string) => void | Promise<void>;
   } = $props();
 
@@ -75,8 +89,8 @@
   let insertValue = $state("");
   let deleteConfirmationOpen = $state(false);
 
-  const dataFiles = $derived(app.sourceGraph?.dataFiles ?? []);
-  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(app.uiLocale));
+  const dataFiles = $derived(sourceGraph?.dataFiles ?? []);
+  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(uiLocale));
   const filteredFiles = $derived(
     dataFiles
       .filter((file) => (
@@ -85,10 +99,10 @@
           || activeView === "other" && file.format !== "toml")
         && (!normalizedQuery
           || `${file.file} ${file.logicalPath} ${file.loadPaths.join(" ")} ${file.location} ${file.format}`
-            .toLocaleLowerCase(app.uiLocale)
+            .toLocaleLowerCase(uiLocale)
             .includes(normalizedQuery))
       ))
-      .sort((left, right) => left.logicalPath.localeCompare(right.logicalPath, app.uiLocale)),
+      .sort((left, right) => left.logicalPath.localeCompare(right.logicalPath, uiLocale)),
   );
   const selectedFile = $derived(
     dataFiles.find((file) => file.id === selectedFileId)
@@ -152,8 +166,8 @@
   $effect(() => {
     const file = selectedFile;
     const node = selectedNode;
-    const projectRoot = app.sessionProjectRoot;
-    const sessionId = app.kernelProjectSessionId;
+    const projectRoot = workspaceMutations.snapshot?.projectRoot ?? "";
+    const sessionId = workspaceMutations.snapshot?.runtimeSessionId ?? "";
     if (
       detailMode !== "edit"
       || !file
@@ -174,8 +188,8 @@
       .then((snapshot) => {
         if (
           requestId !== nodeLoadSequence
-          || app.sessionProjectRoot !== projectRoot
-          || app.kernelProjectSessionId !== sessionId
+          || (workspaceMutations.snapshot?.projectRoot ?? "") !== projectRoot
+          || (workspaceMutations.snapshot?.runtimeSessionId ?? "") !== sessionId
         ) return;
         nodeEditor = snapshot;
         draftKey = snapshot.key ?? "";
@@ -195,8 +209,8 @@
 
   function identity(): FileBufferRequestIdentity {
     return {
-      expectedProjectRoot: app.sessionProjectRoot,
-      expectedSessionId: app.kernelProjectSessionId,
+      expectedProjectRoot: workspaceMutations.snapshot?.projectRoot ?? "",
+      expectedSessionId: workspaceMutations.snapshot?.runtimeSessionId ?? "",
     };
   }
 
@@ -266,7 +280,7 @@
   }
 
   function relationCount(file: SourceGraphDataFile) {
-    return (app.sourceGraph?.relations ?? []).filter(
+    return (sourceGraph?.relations ?? []).filter(
       (relation) => relation.from === file.nodeId || relation.to === file.nodeId,
     ).length;
   }
@@ -406,14 +420,14 @@
     formError = "";
     try {
       const receipt = await applyDataMutation(input, identity());
-      const settlement = await settleProjectWorkspaceMutation(app, receipt.workspace, {
+      const settlement = await workspaceMutations.settle(receipt.workspace, {
         preferredRelativePath: receipt.workspace.relativePath,
         warningLabel: t("data-mutation-label"),
       });
-      const refreshed = app.sourceGraph?.dataFiles.find((file) => file.file === receipt.plan.file);
+      const refreshed = sourceGraph?.dataFiles.find((file) => file.file === receipt.plan.file);
       selectedFileId = refreshed?.id ?? "";
       selectedNodeId = refreshed?.nodes.find((node) => node.kind === "document")?.id ?? "";
-      app.setGlobalStatus(
+      globalStatus.set(
         settlement.warnings.length > 0
           ? t("data-mutation-needs-resync", { success: successMessage })
           : t("data-mutation-session-only", { success: successMessage }),
@@ -496,7 +510,7 @@
   async function openSource(file: SourceGraphDataFile) {
     if (!file.capabilities.canOpenInCode) return;
     await openWorkspaceSource(file.file);
-    await app.setWorkbenchActivity("editor");
+    await openEditor();
   }
 
   function handleViewKeydown(event: KeyboardEvent, index: number) {
@@ -697,7 +711,7 @@
                         </label>
                       {:else}
                         <label>
-                          <span>{t("data-value-with-kind", { kind: draftKindLabel(draftKind).toLocaleLowerCase(app.uiLocale) })}</span>
+                          <span>{t("data-value-with-kind", { kind: draftKindLabel(draftKind).toLocaleLowerCase(uiLocale) })}</span>
                           <input bind:value={draftValue} disabled={mutating} />
                         </label>
                       {/if}

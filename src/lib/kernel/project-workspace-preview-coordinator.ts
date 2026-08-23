@@ -1,12 +1,16 @@
 import type { PreviewRefreshReason } from "$lib/preview/controlled";
 import {
   projectProjectWorkspacePreview,
-  readProjectWorkspaceState,
   requireProjectPreviewMutationReceipt,
-  type CanvasProjectionPlan,
   type ProjectWorkspacePreviewRequest,
-} from "$lib/project/io";
-import type { ProjectWorkspaceSnapshot } from "$lib/types";
+} from "$lib/preview/io";
+import {
+  readProjectWorkspaceState,
+} from "$lib/project/io/workspace";
+import type {
+  CanvasProjectionPlan,
+} from "$lib/contracts/canvas-projection";
+import type { ProjectWorkspaceSnapshot } from "$lib/project/workspace-contract";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import { errorMessage } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";

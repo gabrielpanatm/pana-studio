@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import {
     IconCode,
     IconEye,
@@ -13,15 +13,18 @@
   } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import type {
+    WorkbenchDocumentActivationSnapshot,
     WorkbenchDocumentSnapshot,
     WorkbenchGroupId,
     WorkbenchSnapshot,
     WorkbenchSplit,
     WorkbenchSurface,
-  } from "$lib/types";
+  } from "$lib/workbench/contracts";
+  import { presentedWorkbenchDocumentId } from "$lib/workbench/document-tab-projection";
 
   let {
     snapshot = null,
+    documentActivation = null,
     dirtyPaths = [],
     activateDocument = () => {},
     closeDocument = () => {},
@@ -31,6 +34,7 @@
     active = true,
   }: {
     snapshot?: WorkbenchSnapshot | null;
+    documentActivation?: WorkbenchDocumentActivationSnapshot | null;
     dirtyPaths?: string[];
     activateDocument?: (
       groupId: WorkbenchGroupId,
@@ -51,8 +55,19 @@
       ?? snapshot?.groups[0]
       ?? null,
   );
+  let locallyRequestedDocument = $state<{
+    requestSerial: number;
+    documentId: string;
+    afterActivationSerial: number;
+  } | null>(null);
+  let localDocumentRequestSerial = 0;
+  const presentedActiveDocumentId = $derived(presentedWorkbenchDocumentId(
+    activeGroup?.activeDocumentId,
+    documentActivation,
+    locallyRequestedDocument?.documentId ?? null,
+  ));
   const activeDocument = $derived(
-    activeGroup?.documents.find((document) => document.documentId === activeGroup.activeDocumentId)
+    activeGroup?.documents.find((document) => document.documentId === presentedActiveDocumentId)
       ?? null,
   );
   const dirtySet = $derived(new Set(dirtyPaths));
@@ -60,8 +75,52 @@
   let documentTabsElement: HTMLDivElement;
   let lastRevealedDocumentKey = "";
   let lastMeasuredDocumentLayoutKey = "";
+  let pendingRevealDocumentId = "";
+  let documentLayoutScheduled = false;
+  let documentLayoutFrame = 0;
   let canScrollDocumentsLeft = $state(false);
   let canScrollDocumentsRight = $state(false);
+
+  function requestDocumentActivation(
+    groupId: WorkbenchGroupId,
+    document: WorkbenchDocumentSnapshot,
+  ) {
+    const request = {
+      requestSerial: ++localDocumentRequestSerial,
+      documentId: document.documentId,
+      afterActivationSerial: documentActivation?.serial ?? -1,
+    };
+    locallyRequestedDocument = request;
+    try {
+      void Promise.resolve(activateDocument(groupId, document)).catch(() => {
+        if (locallyRequestedDocument?.requestSerial === request.requestSerial) {
+          locallyRequestedDocument = null;
+        }
+      });
+    } catch {
+      if (locallyRequestedDocument?.requestSerial === request.requestSerial) {
+        locallyRequestedDocument = null;
+      }
+    }
+  }
+
+  $effect(() => {
+    const request = locallyRequestedDocument;
+    if (!request) return;
+    const documentStillOpen = activeGroup?.documents.some(
+      (document) => document.documentId === request.documentId,
+    ) ?? false;
+    const authoritativelyActive = activeGroup?.activeDocumentId === request.documentId;
+    const exactActivationSettled = Boolean(
+      documentActivation
+      && documentActivation.serial > request.afterActivationSerial
+      && documentActivation.documentId === request.documentId
+      && (documentActivation.phase === "ready" || documentActivation.phase === "failed"),
+    );
+    if (!documentStillOpen || authoritativelyActive || exactActivationSettled) {
+      locallyRequestedDocument = null;
+    }
+  });
 
   function updateDocumentScrollCues() {
     if (!documentTabsElement) return;
@@ -107,12 +166,29 @@
     }
   }
 
+  function scheduleDocumentLayout(documentId = "") {
+    if (documentId) pendingRevealDocumentId = documentId;
+    if (documentLayoutScheduled || typeof requestAnimationFrame === "undefined") return;
+    documentLayoutScheduled = true;
+    void tick().then(() => {
+      if (!documentLayoutScheduled) return;
+      documentLayoutFrame = requestAnimationFrame(() => {
+        documentLayoutFrame = 0;
+        documentLayoutScheduled = false;
+        const revealDocumentId = pendingRevealDocumentId;
+        pendingRevealDocumentId = "";
+        if (active && revealDocumentId) revealActiveDocumentTab(revealDocumentId);
+        if (active) updateDocumentScrollCues();
+      });
+    });
+  }
+
   $effect(() => {
-    const documentId = activeGroup?.activeDocumentId ?? "";
+    const documentId = presentedActiveDocumentId ?? "";
     const documentKey = `${activeGroup?.groupId ?? ""}\u0000${documentId}`;
     if (!active || !documentId || documentKey === lastRevealedDocumentKey) return;
     lastRevealedDocumentKey = documentKey;
-    void tick().then(() => revealActiveDocumentTab(documentId));
+    scheduleDocumentLayout(documentId);
   });
 
   $effect(() => {
@@ -123,15 +199,20 @@
     ].join("\u0000");
     if (!active || layoutKey === lastMeasuredDocumentLayoutKey) return;
     lastMeasuredDocumentLayoutKey = layoutKey;
-    void tick().then(updateDocumentScrollCues);
+    scheduleDocumentLayout();
   });
 
   $effect(() => {
     if (!active || !documentTabsElement || typeof ResizeObserver === "undefined") return;
-    const resizeObserver = new ResizeObserver(updateDocumentScrollCues);
+    const resizeObserver = new ResizeObserver(() => scheduleDocumentLayout());
     resizeObserver.observe(documentTabsElement);
-    updateDocumentScrollCues();
+    scheduleDocumentLayout();
     return () => resizeObserver.disconnect();
+  });
+
+  onDestroy(() => {
+    documentLayoutScheduled = false;
+    if (documentLayoutFrame) cancelAnimationFrame(documentLayoutFrame);
   });
 </script>
 
@@ -146,12 +227,12 @@
       class="ui-document-tabs document-tabs"
       role="tablist"
       aria-label={t("workbench-workspace-documents")}
-      onscroll={updateDocumentScrollCues}
+      onscroll={() => scheduleDocumentLayout()}
     >
       {#if activeGroup && activeGroup.documents.length > 0}
         {#each activeGroup.documents as document (document.documentId)}
           <div
-            class:active={document.documentId === activeGroup.activeDocumentId}
+            class:active={document.documentId === presentedActiveDocumentId}
             class="ui-document-tab document-tab"
             data-document-id={document.documentId}
           >
@@ -159,10 +240,10 @@
               type="button"
               class="document-select"
               role="tab"
-              aria-selected={document.documentId === activeGroup.activeDocumentId ? "true" : "false"}
-              tabindex={document.documentId === activeGroup.activeDocumentId ? 0 : -1}
+              aria-selected={document.documentId === presentedActiveDocumentId ? "true" : "false"}
+              tabindex={document.documentId === presentedActiveDocumentId ? 0 : -1}
               title={document.relativePath}
-              onclick={() => { void activateDocument(activeGroup.groupId, document); }}
+              onclick={() => requestDocumentActivation(activeGroup.groupId, document)}
             >
               <span class="document-icon" aria-hidden="true">
                 {#if iconKind(document.relativePath) === "markdown"}

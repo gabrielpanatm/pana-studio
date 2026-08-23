@@ -3,6 +3,7 @@ use std::{
     fs,
     io::Read,
     path::Path,
+    sync::Arc,
     time::Instant,
 };
 
@@ -64,10 +65,15 @@ pub enum ProjectWorkspacePreviewProjection {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProjectWorkspaceCommitTimings {
     pub candidate_clone_ms: u64,
+    pub candidate_clone_us: u64,
     pub mutation_ms: u64,
+    pub mutation_us: u64,
     pub recovery_persist_ms: u64,
+    pub recovery_persist_us: u64,
     pub authority_publish_ms: u64,
+    pub authority_publish_us: u64,
     pub total_ms: u64,
+    pub total_us: u64,
 }
 
 /// Commits a session-only ProjectWorkspace mutation as one recovery-backed
@@ -114,28 +120,42 @@ pub fn commit_project_workspace_session_mutation_with_projection_measured<R: Run
             .ai_coordination
             .require_user_source_mutation()
             .map_err(|error| error.to_string())?;
+        state
+            .versioning_network_operation
+            .require_source_mutation_allowed(
+                "Mutația ProjectWorkspace",
+                &live_workspace.session.project_root,
+                &live_workspace.runtime_session_id(),
+            )?;
     }
     let clone_started = Instant::now();
-    let mut candidate = live_workspace.clone();
-    let candidate_clone_ms = elapsed_ms(clone_started);
+    let mut candidate = live_workspace.fork_candidate();
+    let candidate_clone_us = elapsed_us(clone_started);
     let mutation_started = Instant::now();
     let result = mutate(&mut candidate)?;
-    let mutation_ms = elapsed_ms(mutation_started);
+    let mutation_us = elapsed_us(mutation_started);
     let recovery_started = Instant::now();
     persist_project_workspace_recovery_transaction(app, live_workspace, &candidate)?;
-    let recovery_persist_ms = elapsed_ms(recovery_started);
+    let recovery_persist_us = elapsed_us(recovery_started);
     let publish_started = Instant::now();
+    candidate.prepare_candidate_for_publish();
     *live_workspace = candidate;
     emit_project_workspace_mutated(app, live_workspace, preview_projection);
-    let authority_publish_ms = elapsed_ms(publish_started);
+    let authority_publish_us = elapsed_us(publish_started);
+    let total_us = elapsed_us(total_started);
     Ok((
         result,
         ProjectWorkspaceCommitTimings {
-            candidate_clone_ms,
-            mutation_ms,
-            recovery_persist_ms,
-            authority_publish_ms,
-            total_ms: elapsed_ms(total_started),
+            candidate_clone_ms: candidate_clone_us / 1_000,
+            candidate_clone_us,
+            mutation_ms: mutation_us / 1_000,
+            mutation_us,
+            recovery_persist_ms: recovery_persist_us / 1_000,
+            recovery_persist_us,
+            authority_publish_ms: authority_publish_us / 1_000,
+            authority_publish_us,
+            total_ms: total_us / 1_000,
+            total_us,
         },
     ))
 }
@@ -148,12 +168,21 @@ pub fn publish_prepared_project_workspace_candidate<R: Runtime>(
     app: &AppHandle<R>,
     live_workspace: &mut ProjectWorkspace,
     expected_base_revision: u64,
-    candidate: ProjectWorkspace,
+    mut candidate: ProjectWorkspace,
     preview_projection: ProjectWorkspacePreviewProjection,
     candidate_clone_ms: u64,
     mutation_ms: u64,
     total_started: Instant,
 ) -> Result<ProjectWorkspaceCommitTimings, String> {
+    if let Some(state) = app.try_state::<AppState>() {
+        state
+            .versioning_network_operation
+            .require_source_mutation_allowed(
+                "Publicarea ProjectWorkspace",
+                &live_workspace.session.project_root,
+                &live_workspace.runtime_session_id(),
+            )?;
+    }
     if live_workspace.revision != expected_base_revision {
         return Err(format!(
             "ProjectWorkspace CAS a refuzat candidatul stale: baza {}, revizia activă {}.",
@@ -171,22 +200,29 @@ pub fn publish_prepared_project_workspace_candidate<R: Runtime>(
     }
     let recovery_started = Instant::now();
     persist_project_workspace_recovery_transaction(app, live_workspace, &candidate)?;
-    let recovery_persist_ms = elapsed_ms(recovery_started);
+    let recovery_persist_us = elapsed_us(recovery_started);
     let publish_started = Instant::now();
+    candidate.prepare_candidate_for_publish();
     *live_workspace = candidate;
     emit_project_workspace_mutated(app, live_workspace, preview_projection);
-    let authority_publish_ms = elapsed_ms(publish_started);
+    let authority_publish_us = elapsed_us(publish_started);
+    let total_us = elapsed_us(total_started);
     Ok(ProjectWorkspaceCommitTimings {
         candidate_clone_ms,
+        candidate_clone_us: candidate_clone_ms.saturating_mul(1_000),
         mutation_ms,
-        recovery_persist_ms,
-        authority_publish_ms,
-        total_ms: elapsed_ms(total_started),
+        mutation_us: mutation_ms.saturating_mul(1_000),
+        recovery_persist_ms: recovery_persist_us / 1_000,
+        recovery_persist_us,
+        authority_publish_ms: authority_publish_us / 1_000,
+        authority_publish_us,
+        total_ms: total_us / 1_000,
+        total_us,
     })
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
-    started.elapsed().as_millis().min(u64::MAX as u128) as u64
+fn elapsed_us(started: Instant) -> u64 {
+    started.elapsed().as_micros().min(u64::MAX as u128) as u64
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -288,15 +324,45 @@ struct ProjectWorkspaceRecoveryPayload {
     accepted_manifest: ProjectDiskManifest,
     revision: u64,
     persisted_at_ms: u128,
-    documents: BTreeMap<String, FileBufferEntry>,
-    accepted_binary_resource_hashes: BTreeMap<String, String>,
-    binary_resources: BTreeMap<String, WorkspaceBinaryResource>,
-    deleted_binary_resources: BTreeSet<String>,
-    accepted_page_js: BTreeMap<String, PageJsConfig>,
+    documents: Arc<BTreeMap<String, Arc<FileBufferEntry>>>,
+    accepted_binary_resource_hashes: Arc<BTreeMap<String, String>>,
+    binary_resources: Arc<BTreeMap<String, Arc<WorkspaceBinaryResource>>>,
+    deleted_binary_resources: Arc<BTreeSet<String>>,
+    accepted_page_js: Arc<BTreeMap<String, PageJsConfig>>,
     page_js_drafts: Vec<ProjectWorkspacePageJsRecoveryDraft>,
     history: WorkspaceHistory,
     #[serde(default)]
     last_projection_transaction_id: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWorkspaceRecoveryPayloadRef<'a> {
+    schema_version: u32,
+    project_root: &'a str,
+    accepted_manifest: &'a ProjectDiskManifest,
+    revision: u64,
+    persisted_at_ms: u128,
+    documents: &'a BTreeMap<String, Arc<FileBufferEntry>>,
+    accepted_binary_resource_hashes: &'a BTreeMap<String, String>,
+    binary_resources: &'a BTreeMap<String, Arc<WorkspaceBinaryResource>>,
+    deleted_binary_resources: &'a BTreeSet<String>,
+    accepted_page_js: &'a BTreeMap<String, PageJsConfig>,
+    page_js_drafts: Vec<ProjectWorkspacePageJsRecoveryDraftRef<'a>>,
+    history: &'a WorkspaceHistory,
+    last_projection_transaction_id: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWorkspacePageJsRecoveryDraftRef<'a> {
+    template_path: &'a str,
+    base: &'a PageJsConfig,
+    current: &'a PageJsConfig,
+    cachebust_assets: bool,
+    source: &'a str,
+    coalesce_key: Option<&'a str>,
+    transaction_id: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -328,10 +394,10 @@ struct ProjectWorkspaceRecoveryJournalPayload {
     revision: u64,
     persisted_at_ms: u128,
     accepted_manifest: Option<ProjectDiskManifest>,
-    document_changes: BTreeMap<String, Option<FileBufferEntry>>,
+    document_changes: BTreeMap<String, Option<Arc<FileBufferEntry>>>,
     accepted_binary_resource_hash_changes: BTreeMap<String, Option<String>>,
-    binary_resource_changes: BTreeMap<String, Option<WorkspaceBinaryResource>>,
-    deleted_binary_resources: Option<BTreeSet<String>>,
+    binary_resource_changes: BTreeMap<String, Option<Arc<WorkspaceBinaryResource>>>,
+    deleted_binary_resources: Option<Arc<BTreeSet<String>>>,
     accepted_page_js_changes: BTreeMap<String, Option<PageJsConfig>>,
     page_js_draft_changes: BTreeMap<String, Option<ProjectWorkspacePageJsRecoveryDraft>>,
     history: WorkspaceHistoryRecoveryPatch,
@@ -380,8 +446,7 @@ fn persist_project_workspace_recovery_snapshot<R: Runtime>(
     app: &AppHandle<R>,
     workspace: &ProjectWorkspace,
 ) -> Result<(), String> {
-    let payload = recovery_payload_from_workspace(workspace)?;
-    let source = serialize_recovery_envelope(&payload)?;
+    let source = serialize_recovery_envelope_from_workspace(workspace)?;
     if source.len() as u64 > PROJECT_WORKSPACE_RECOVERY_MAX_BYTES {
         return Err(format!(
             "ProjectWorkspace recovery depășește limita de {} bytes.",
@@ -477,48 +542,44 @@ fn persist_project_workspace_recovery_transaction<R: Runtime>(
     Ok(())
 }
 
-fn recovery_payload_from_workspace(
+fn serialize_recovery_envelope_from_workspace(
     workspace: &ProjectWorkspace,
-) -> Result<ProjectWorkspaceRecoveryPayload, String> {
+) -> Result<String, String> {
     workspace.accepted_disk.require_identity(
         &workspace.runtime_session_id(),
         &workspace.session.project_root,
     )?;
     workspace.accepted_disk.require_complete()?;
     validate_workspace_recovery_paths(workspace)?;
-    Ok(ProjectWorkspaceRecoveryPayload {
+    let page_js_drafts = workspace
+        .page_js
+        .drafts
+        .values()
+        .map(|draft| ProjectWorkspacePageJsRecoveryDraftRef {
+            template_path: &draft.template_path,
+            base: &draft.base,
+            current: &draft.current,
+            cachebust_assets: draft.cachebust_assets,
+            source: &draft.source,
+            coalesce_key: draft.coalesce_key.as_deref(),
+            transaction_id: draft.transaction_id.as_deref(),
+        })
+        .collect();
+    let payload = ProjectWorkspaceRecoveryPayloadRef {
         schema_version: PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION,
-        project_root: workspace.session.project_root.clone(),
-        accepted_manifest: workspace.accepted_disk.manifest.clone(),
+        project_root: &workspace.session.project_root,
+        accepted_manifest: &workspace.accepted_disk.manifest,
         revision: workspace.revision,
         persisted_at_ms: now_ms(),
-        documents: workspace.documents.files.clone(),
-        accepted_binary_resource_hashes: workspace.accepted_binary_resource_hashes.clone(),
-        binary_resources: workspace.binary_resources.clone(),
-        deleted_binary_resources: workspace.deleted_binary_resources.clone(),
-        accepted_page_js: workspace.accepted_page_js.clone(),
-        page_js_drafts: workspace
-            .page_js
-            .drafts
-            .values()
-            .map(|draft| ProjectWorkspacePageJsRecoveryDraft {
-                template_path: draft.template_path.clone(),
-                base: draft.base.clone(),
-                current: draft.current.clone(),
-                cachebust_assets: draft.cachebust_assets,
-                source: draft.source.clone(),
-                coalesce_key: draft.coalesce_key.clone(),
-                transaction_id: draft.transaction_id.clone(),
-            })
-            .collect(),
-        history: workspace.history.clone(),
-        last_projection_transaction_id: workspace.last_projection_transaction_id.clone(),
-    })
-}
-
-fn serialize_recovery_envelope(
-    payload: &ProjectWorkspaceRecoveryPayload,
-) -> Result<String, String> {
+        documents: workspace.documents.files.as_ref(),
+        accepted_binary_resource_hashes: workspace.accepted_binary_resource_hashes.as_ref(),
+        binary_resources: workspace.binary_resources.as_ref(),
+        deleted_binary_resources: workspace.deleted_binary_resources.as_ref(),
+        accepted_page_js: workspace.accepted_page_js.as_ref(),
+        page_js_drafts,
+        history: &workspace.history,
+        last_projection_transaction_id: workspace.last_projection_transaction_id.as_deref(),
+    };
     let payload_source = serde_json::to_string(&payload).map_err(|error| {
         format!("ProjectWorkspace recovery nu poate serializa payloadul: {error}")
     })?;
@@ -546,21 +607,24 @@ fn serialize_recovery_journal_transaction(
         persisted_at_ms: now_ms(),
         accepted_manifest: (base.accepted_disk.manifest != current.accepted_disk.manifest)
             .then(|| current.accepted_disk.manifest.clone()),
-        document_changes: recovery_map_changes(&base.documents.files, &current.documents.files),
+        document_changes: recovery_map_changes(
+            base.documents.files.as_ref(),
+            current.documents.files.as_ref(),
+        ),
         accepted_binary_resource_hash_changes: recovery_map_changes(
-            &base.accepted_binary_resource_hashes,
-            &current.accepted_binary_resource_hashes,
+            base.accepted_binary_resource_hashes.as_ref(),
+            current.accepted_binary_resource_hashes.as_ref(),
         ),
         binary_resource_changes: recovery_map_changes(
-            &base.binary_resources,
-            &current.binary_resources,
+            base.binary_resources.as_ref(),
+            current.binary_resources.as_ref(),
         ),
         deleted_binary_resources: (base.deleted_binary_resources
             != current.deleted_binary_resources)
             .then(|| current.deleted_binary_resources.clone()),
         accepted_page_js_changes: recovery_map_changes(
-            &base.accepted_page_js,
-            &current.accepted_page_js,
+            base.accepted_page_js.as_ref(),
+            current.accepted_page_js.as_ref(),
         ),
         page_js_draft_changes: recovery_page_js_draft_changes(base, current),
         history: current.history.recovery_patch_from(&base.history),
@@ -1023,7 +1087,7 @@ pub fn restore_project_workspace_recovery<R: Runtime>(
                 }
             }
             (Some(_), None) => {
-                documents.files.remove(&relative_path);
+                documents.files_mut().remove(&relative_path);
             }
             (None, Some(recovered)) => {
                 documents.stage_new_text_file(
@@ -1070,7 +1134,7 @@ pub fn restore_project_workspace_recovery<R: Runtime>(
         .iter()
         .map(|entry| entry.relative_path.as_str())
         .collect::<BTreeSet<_>>();
-    for (path, hash) in &payload.accepted_binary_resource_hashes {
+    for (path, hash) in payload.accepted_binary_resource_hashes.iter() {
         if !accepted_disk_paths.contains(path.as_str())
             || hash.len() != 16
             || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1270,20 +1334,23 @@ fn apply_project_workspace_recovery_journal_payload(
     if let Some(accepted_manifest) = journal.accepted_manifest {
         checkpoint.accepted_manifest = accepted_manifest;
     }
-    apply_recovery_map_changes(&mut checkpoint.documents, journal.document_changes);
     apply_recovery_map_changes(
-        &mut checkpoint.accepted_binary_resource_hashes,
+        Arc::make_mut(&mut checkpoint.documents),
+        journal.document_changes,
+    );
+    apply_recovery_map_changes(
+        Arc::make_mut(&mut checkpoint.accepted_binary_resource_hashes),
         journal.accepted_binary_resource_hash_changes,
     );
     apply_recovery_map_changes(
-        &mut checkpoint.binary_resources,
+        Arc::make_mut(&mut checkpoint.binary_resources),
         journal.binary_resource_changes,
     );
     if let Some(deleted_binary_resources) = journal.deleted_binary_resources {
         checkpoint.deleted_binary_resources = deleted_binary_resources;
     }
     apply_recovery_map_changes(
-        &mut checkpoint.accepted_page_js,
+        Arc::make_mut(&mut checkpoint.accepted_page_js),
         journal.accepted_page_js_changes,
     );
     let mut page_js_drafts = checkpoint
@@ -1517,23 +1584,25 @@ fn validate_workspace_recovery_paths(workspace: &ProjectWorkspace) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use std::{env, path::PathBuf};
+    use std::{cell::Cell, env, path::PathBuf, sync::atomic::AtomicBool};
 
     use crate::{
         app_home::{ensure_app_home, TEST_APP_ENV_LOCK},
         js::{MotionCustomCode, MotionDocument, PageJsDraftStore},
         kernel::{
             file_buffer_store::{
-                hash_bytes, hash_text, FileBufferBaseline, FileBufferEntry, FileBufferStore,
-                FileBufferStoreLimits, TextBufferLanguage, TextBufferRole,
+                hash_bytes, hash_text, FileBufferBaseline, FileBufferChangeCoordinateSpace,
+                FileBufferChangeSetInput, FileBufferEntry, FileBufferMutationExpectation,
+                FileBufferStore, FileBufferStoreLimits, FileBufferTextChange, TextBufferLanguage,
+                TextBufferRole,
             },
             project_session::{
                 fingerprint_project_root, persist_project_session_open, ProjectRootFingerprint,
                 ProjectSessionScanSummary, ProjectSessionSnapshot,
             },
             project_workspace::{
-                ProjectWorkspaceIdentity, WorkspaceMutationMetadata,
-                PROJECT_WORKSPACE_SCHEMA_VERSION,
+                ProjectWorkspaceIdentity, WorkspaceDocumentMutation, WorkspaceMutationMetadata,
+                WorkspaceResourceMutation, PROJECT_WORKSPACE_SCHEMA_VERSION,
             },
             taxonomy_mutation::{
                 plan_taxonomy_mutation, stage_taxonomy_mutation, TaxonomyDefinitionInput,
@@ -1541,7 +1610,10 @@ mod tests {
             },
         },
         project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
+        project_model::test_support::ProjectModelTestFixture,
         source_graph::{build_source_graph_from_workspace_projection, build_taxonomy_catalog},
+        state::AppState,
+        versioning::{VersionNetworkOperationKind, VersionNetworkOperationLease},
     };
 
     use super::*;
@@ -1553,6 +1625,73 @@ mod tests {
             let error = validate_recovery_path(root, path).unwrap_err();
             assert!(error.contains("credentialele nu sunt recuperabile"));
         }
+    }
+
+    #[test]
+    fn active_remote_operation_rejects_workspace_mutation_and_save_without_state_change() {
+        let root = std::env::temp_dir().join(format!(
+            "pana-version-network-workspace-gate-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(root.join("templates/index.html"), "<main>baseline</main>\n").unwrap();
+        let root = root.canonicalize().unwrap();
+        let session = test_session(&root, &root.join(".test-session"));
+        let mut workspace = workspace(&root, &session);
+        let before_revision = workspace.revision;
+        let before_generation = workspace.accepted_disk.generation;
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        app.handle().manage(AppState::default());
+        let state = app.state::<AppState>();
+        let operation_id = "fetch-workspace-gate-12345678";
+        state
+            .versioning_network_operation
+            .begin(
+                VersionNetworkOperationLease {
+                    operation_id: operation_id.to_string(),
+                    project_root: workspace.session.project_root.clone(),
+                    session_id: workspace.runtime_session_id(),
+                    kind: VersionNetworkOperationKind::Fetch,
+                    workspace_revision: workspace.revision,
+                    disk_generation: workspace.accepted_disk.generation,
+                    accepted_disk: workspace.accepted_disk.clone(),
+                    expected_status_token: "status-before".to_string(),
+                    expected_head_oid: None,
+                },
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap();
+
+        let mutation_ran = Cell::new(false);
+        let mutation_error =
+            commit_project_workspace_session_mutation(app.handle(), &mut workspace, |_candidate| {
+                mutation_ran.set(true);
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(mutation_error.contains(operation_id), "{mutation_error}");
+        assert!(!mutation_ran.get());
+
+        let save_identity = identity(&workspace);
+        let save_error = crate::kernel::project_workspace::save_project_workspace(
+            app.handle(),
+            &root,
+            &mut workspace,
+            &save_identity,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(save_error.contains(operation_id), "{save_error}");
+        assert_eq!(workspace.revision, before_revision);
+        assert_eq!(workspace.accepted_disk.generation, before_generation);
+        assert!(!workspace.is_dirty());
+
+        state.versioning_network_operation.abandon(operation_id);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -1858,7 +1997,7 @@ mod tests {
                     size: source.len() as u64,
                     readonly: false,
                 },
-                baseline_text: source.to_string(),
+                baseline_text: source.to_string().into(),
                 draft: None,
                 revision: 1,
             });
@@ -2033,7 +2172,7 @@ mod tests {
         let session = test_session(&project, &session_dir);
         let mut live = workspace(&project, &session);
         let base_revision = live.revision;
-        let mut candidate = live.clone();
+        let mut candidate = live.fork_candidate();
         candidate
             .stage_resource_texts(
                 &identity(&candidate),
@@ -2313,6 +2452,310 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    #[ignore = "performance baseline; run explicitly with --ignored --nocapture"]
+    fn project_workspace_runtime_cost_baseline() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "pana-project-workspace-runtime-cost-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        ensure_app_home(app.handle()).unwrap();
+
+        let small = workspace_runtime_measurement(app.handle(), &root, "small", 8, 4 * 1024);
+        let large = workspace_runtime_measurement(app.handle(), &root, "large", 96, 32 * 1024);
+        eprintln!(
+            "[Pană Studio][perf] project_workspace_runtime \
+small_documents_baseline_bytes={} small_accepted_baseline_bytes={} small_workspace_snapshot_bytes={} small_file_buffer_snapshot_bytes={} small_duplicate_bootstrap_bytes={} small_candidate_clone_us={} small_snapshot_us={} small_project_model_clone_us={} small_file_buffer_mutation_us={} small_set_transaction_us={} small_apply_transaction_us={} small_clear_transaction_us={} small_composite_transaction_us={} small_undo_transaction_us={} small_redo_transaction_us={} \
+large_documents_baseline_bytes={} large_accepted_baseline_bytes={} large_workspace_snapshot_bytes={} large_file_buffer_snapshot_bytes={} large_duplicate_bootstrap_bytes={} large_candidate_clone_us={} large_snapshot_us={} large_project_model_clone_us={} large_file_buffer_mutation_us={} large_set_transaction_us={} large_apply_transaction_us={} large_clear_transaction_us={} large_composite_transaction_us={} large_undo_transaction_us={} large_redo_transaction_us={}",
+            small.documents_baseline_bytes,
+            small.accepted_baseline_bytes,
+            small.workspace_snapshot_bytes,
+            small.file_buffer_snapshot_bytes,
+            small.duplicate_bootstrap_bytes,
+            small.workspace_clone_us,
+            small.snapshot_us,
+            small.project_model_clone_us,
+            small.file_buffer_mutation_us,
+            small.set_transaction_us,
+            small.apply_transaction_us,
+            small.clear_transaction_us,
+            small.composite_transaction_us,
+            small.undo_transaction_us,
+            small.redo_transaction_us,
+            large.documents_baseline_bytes,
+            large.accepted_baseline_bytes,
+            large.workspace_snapshot_bytes,
+            large.file_buffer_snapshot_bytes,
+            large.duplicate_bootstrap_bytes,
+            large.workspace_clone_us,
+            large.snapshot_us,
+            large.project_model_clone_us,
+            large.file_buffer_mutation_us,
+            large.set_transaction_us,
+            large.apply_transaction_us,
+            large.clear_transaction_us,
+            large.composite_transaction_us,
+            large.undo_transaction_us,
+            large.redo_transaction_us,
+        );
+        assert_eq!(
+            small.documents_baseline_bytes,
+            small.accepted_baseline_bytes
+        );
+        assert_eq!(
+            large.documents_baseline_bytes,
+            large.accepted_baseline_bytes
+        );
+        assert!(small.duplicate_bootstrap_bytes > small.workspace_snapshot_bytes);
+        assert!(large.duplicate_bootstrap_bytes > large.workspace_snapshot_bytes);
+        assert!(large.workspace_snapshot_bytes > small.workspace_snapshot_bytes);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    struct WorkspaceRuntimeMeasurement {
+        documents_baseline_bytes: usize,
+        accepted_baseline_bytes: usize,
+        workspace_snapshot_bytes: usize,
+        file_buffer_snapshot_bytes: usize,
+        duplicate_bootstrap_bytes: usize,
+        workspace_clone_us: u128,
+        snapshot_us: u128,
+        project_model_clone_us: u128,
+        file_buffer_mutation_us: u128,
+        set_transaction_us: u128,
+        apply_transaction_us: u128,
+        clear_transaction_us: u128,
+        composite_transaction_us: u128,
+        undo_transaction_us: u128,
+        redo_transaction_us: u128,
+    }
+
+    fn workspace_runtime_measurement<R: Runtime>(
+        app: &AppHandle<R>,
+        root: &Path,
+        label: &str,
+        file_count: usize,
+        bytes_per_file: usize,
+    ) -> WorkspaceRuntimeMeasurement {
+        let project = root.join(label);
+        fs::create_dir_all(project.join("templates")).unwrap();
+        fs::write(
+            project.join("zola.toml"),
+            "base_url = 'http://example.test'\n",
+        )
+        .unwrap();
+        let project = project.canonicalize().unwrap();
+        let session = test_session(&project, &root.join(format!("{label}-runtime-session")));
+        let mut workspace = workspace(&project, &session);
+        let mut model_fixture = ProjectModelTestFixture::new(&project).unwrap();
+        model_fixture.source("zola.toml", "base_url = 'http://example.test'\n");
+
+        for index in 0..file_count {
+            let relative_path = format!("templates/page-{index:03}.html");
+            let prefix = format!("<main data-index=\"{index}\">");
+            let source = format!(
+                "{prefix}{}</main>\n",
+                "x".repeat(bytes_per_file.saturating_sub(prefix.len() + 9))
+            );
+            workspace.documents.insert_loaded_file(FileBufferEntry {
+                relative_path: relative_path.clone(),
+                absolute_path: project.join(&relative_path).to_string_lossy().into_owned(),
+                language: TextBufferLanguage::Html,
+                role: TextBufferRole::Template,
+                baseline: FileBufferBaseline {
+                    hash: hash_text(&source),
+                    modified_ms: 1,
+                    size: source.len() as u64,
+                    readonly: false,
+                },
+                baseline_text: source.clone().into(),
+                draft: None,
+                revision: 1,
+            });
+            model_fixture.source(relative_path, source);
+        }
+        workspace.accepted_documents = workspace.documents.files.clone();
+        workspace.project_model = Some(model_fixture.build_model().unwrap().into());
+        workspace.project_model_source_revision = Some(workspace.revision);
+        let documents_baseline_bytes = workspace
+            .documents
+            .files
+            .values()
+            .map(|entry| entry.baseline_text.len())
+            .sum();
+        let accepted_baseline_bytes = workspace
+            .accepted_documents
+            .values()
+            .map(|entry| entry.baseline_text.len())
+            .sum();
+
+        let mut workspace_clone_us = u128::MAX;
+        let mut snapshot_us = u128::MAX;
+        let mut project_model_clone_us = u128::MAX;
+        let mut file_buffer_mutation_us = u128::MAX;
+        let mut workspace_snapshot_bytes = 0;
+        let mut file_buffer_snapshot_bytes = 0;
+        let mutation_path = "templates/page-000.html";
+        let mutation_snapshot = workspace.documents.text_snapshot(mutation_path).unwrap();
+        let mutation_expectation = FileBufferMutationExpectation {
+            expected_revision: mutation_snapshot.revision,
+            expected_hash: mutation_snapshot.hash,
+        };
+        let mutation_contents = format!("{}!", mutation_snapshot.text);
+        for _ in 0..5 {
+            let clone_started = Instant::now();
+            std::hint::black_box(workspace.fork_candidate());
+            workspace_clone_us = workspace_clone_us.min(clone_started.elapsed().as_micros());
+
+            let model_clone_started = Instant::now();
+            std::hint::black_box(workspace.project_model.as_ref().unwrap().clone());
+            project_model_clone_us =
+                project_model_clone_us.min(model_clone_started.elapsed().as_micros());
+
+            let snapshot_started = Instant::now();
+            let workspace_snapshot = workspace.snapshot();
+            workspace_snapshot_bytes = serde_json::to_vec(&workspace_snapshot).unwrap().len();
+            snapshot_us = snapshot_us.min(snapshot_started.elapsed().as_micros());
+            file_buffer_snapshot_bytes = serde_json::to_vec(&workspace.documents.snapshot())
+                .unwrap()
+                .len();
+
+            let mut mutation_candidate = workspace.fork_candidate();
+            let contents = mutation_contents.clone();
+            let mutation_started = Instant::now();
+            mutation_candidate
+                .documents
+                .set_draft_if_current(mutation_path, contents, &mutation_expectation, 2)
+                .unwrap();
+            file_buffer_mutation_us =
+                file_buffer_mutation_us.min(mutation_started.elapsed().as_micros());
+        }
+
+        persist_project_workspace_recovery(app, &workspace).unwrap();
+        let transaction_metadata = |source: &str| WorkspaceMutationMetadata {
+            label: "Runtime baseline".to_string(),
+            source: source.to_string(),
+            coalesce_key: None,
+            transaction_id: None,
+        };
+
+        let set_started = Instant::now();
+        commit_project_workspace_session_mutation(app, &mut workspace, |candidate| {
+            candidate.stage_document_texts(
+                &identity(candidate),
+                transaction_metadata("perf.set"),
+                vec![WorkspaceDocumentMutation {
+                    relative_path: mutation_path.to_string(),
+                    contents: mutation_contents.clone(),
+                }],
+                3,
+            )
+        })
+        .unwrap();
+        let set_transaction_us = set_started.elapsed().as_micros();
+
+        let apply_snapshot = workspace.documents.text_snapshot(mutation_path).unwrap();
+        let apply_started = Instant::now();
+        commit_project_workspace_session_mutation(app, &mut workspace, |candidate| {
+            candidate.apply_document_changeset(
+                &identity(candidate),
+                transaction_metadata("perf.apply"),
+                FileBufferChangeSetInput {
+                    relative_path: mutation_path.to_string(),
+                    base_revision: Some(apply_snapshot.revision),
+                    base_hash: Some(apply_snapshot.hash.clone()),
+                    coordinate_space: FileBufferChangeCoordinateSpace::Utf16,
+                    source: Some("perf.apply".to_string()),
+                    changes: vec![FileBufferTextChange {
+                        from: 0,
+                        to: 0,
+                        insert: "!".to_string(),
+                    }],
+                },
+                4,
+            )
+        })
+        .unwrap();
+        let apply_transaction_us = apply_started.elapsed().as_micros();
+
+        let clear_started = Instant::now();
+        commit_project_workspace_session_mutation(app, &mut workspace, |candidate| {
+            let baseline = candidate
+                .documents
+                .baseline_text_for(mutation_path)
+                .unwrap();
+            candidate.stage_document_texts(
+                &identity(candidate),
+                transaction_metadata("perf.clear"),
+                vec![WorkspaceDocumentMutation {
+                    relative_path: mutation_path.to_string(),
+                    contents: baseline,
+                }],
+                5,
+            )
+        })
+        .unwrap();
+        let clear_transaction_us = clear_started.elapsed().as_micros();
+
+        let composite_started = Instant::now();
+        commit_project_workspace_session_mutation(app, &mut workspace, |candidate| {
+            candidate.stage_composite_changes(
+                &identity(candidate),
+                transaction_metadata("perf.composite"),
+                vec![WorkspaceResourceMutation {
+                    relative_path: "templates/perf-composite.html".to_string(),
+                    contents: "<main>composite</main>\n".to_string(),
+                    create_only: true,
+                }],
+                Vec::new(),
+                None,
+                6,
+            )
+        })
+        .unwrap();
+        let composite_transaction_us = composite_started.elapsed().as_micros();
+
+        let undo_started = Instant::now();
+        commit_project_workspace_session_mutation(app, &mut workspace, |candidate| {
+            candidate.undo(&identity(candidate), 7)
+        })
+        .unwrap();
+        let undo_transaction_us = undo_started.elapsed().as_micros();
+
+        let redo_started = Instant::now();
+        commit_project_workspace_session_mutation(app, &mut workspace, |candidate| {
+            candidate.redo(&identity(candidate), 8)
+        })
+        .unwrap();
+        let redo_transaction_us = redo_started.elapsed().as_micros();
+
+        WorkspaceRuntimeMeasurement {
+            documents_baseline_bytes,
+            accepted_baseline_bytes,
+            workspace_snapshot_bytes,
+            file_buffer_snapshot_bytes,
+            duplicate_bootstrap_bytes: workspace_snapshot_bytes + file_buffer_snapshot_bytes,
+            workspace_clone_us,
+            snapshot_us,
+            project_model_clone_us,
+            file_buffer_mutation_us,
+            set_transaction_us,
+            apply_transaction_us,
+            clear_transaction_us,
+            composite_transaction_us,
+            undo_transaction_us,
+            redo_transaction_us,
+        }
+    }
+
     fn recovery_serialization_measurement(
         root: &Path,
         label: &str,
@@ -2348,13 +2791,13 @@ mod tests {
                     size: source.len() as u64,
                     readonly: false,
                 },
-                baseline_text: source.clone(),
+                baseline_text: source.clone().into(),
                 draft: None,
                 revision: 1,
             });
         }
         base.accepted_documents = base.documents.files.clone();
-        let mut current = base.clone();
+        let mut current = base.fork_candidate();
         let changed_path = &sources[file_count / 2].0;
         let snapshot = current.documents.text_snapshot(changed_path).unwrap();
         let changed = snapshot
@@ -2380,9 +2823,7 @@ mod tests {
         let mut journal_us = u128::MAX;
         for _ in 0..5 {
             let checkpoint_started = Instant::now();
-            let checkpoint =
-                serialize_recovery_envelope(&recovery_payload_from_workspace(&current).unwrap())
-                    .unwrap();
+            let checkpoint = serialize_recovery_envelope_from_workspace(&current).unwrap();
             checkpoint_us = checkpoint_us.min(checkpoint_started.elapsed().as_micros());
             checkpoint_bytes = checkpoint.len();
 

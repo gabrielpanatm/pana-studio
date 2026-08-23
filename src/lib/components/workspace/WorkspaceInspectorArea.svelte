@@ -1,24 +1,54 @@
 <script lang="ts">
+  import type { ComponentProps } from "svelte";
   import InspectorPane from "$lib/components/InspectorPane.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
-  import { getFontManager } from "$lib/project/io";
-  import type { AppState } from "$lib/state/app.svelte";
-  import type { GlobalStatusKind } from "$lib/status/global-status";
-  import type { InstalledFontVariationAxis } from "$lib/types";
+  import {
+  getFontManager,
+} from "$lib/fonts/io";
+  import type { ApplicationPreferencesState } from "$lib/application/preferences.svelte";
+  import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { WorkspaceLayoutState } from "$lib/ui/workspace-layout.svelte";
+  import type { InstalledFontVariationAxis } from "$lib/fonts/contracts";
 
-  let { app }: { app: AppState } = $props();
+  type ForwardedInspectorPaneProps = Omit<
+    ComponentProps<typeof InspectorPane>,
+    | "motionWorkspace"
+    | "fontFamilies"
+    | "installedFontAxes"
+    | "blockPropertiesHeight"
+    | "blockPropertiesCollapsed"
+    | "persistBlockPropertiesLayout"
+  >;
 
-  const editorSidebarActive = $derived(
-    app.applicationSurface === "workbench"
-      && (app.workbenchSnapshot?.activeActivity ?? "editor") === "editor",
-  );
+  let {
+    visible,
+    sessionId,
+    interactionLocked,
+    paneProps,
+    applicationPreferences,
+    motionWorkspace,
+    workspaceMutations,
+    workspaceLayout,
+  }: {
+    visible: boolean;
+    sessionId: string;
+    interactionLocked: boolean;
+    paneProps: ForwardedInspectorPaneProps;
+    applicationPreferences: ApplicationPreferencesState;
+    motionWorkspace: MotionWorkspaceState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    workspaceLayout: WorkspaceLayoutState;
+  } = $props();
+
+  const editorSidebarActive = $derived(visible);
   let installedFontFamilies = $state<string[]>([]);
   let installedFontAxes = $state<InstalledFontVariationAxis[]>([]);
   let fontLoadSequence = 0;
 
   $effect(() => {
-    const snapshot = app.projectWorkspaceSnapshot;
+    const snapshot = workspaceMutations.snapshot;
     if (!snapshot) {
       installedFontFamilies = [];
       installedFontAxes = [];
@@ -33,7 +63,7 @@
     }).then((manager) => {
       if (
         requestId !== fontLoadSequence
-        || app.projectWorkspaceSnapshot?.revision !== expectedRevision
+        || workspaceMutations.snapshot?.revision !== expectedRevision
       ) return;
       installedFontFamilies = manager.graph.families
         .filter((family) => family.registration.registered && family.delivery !== "missing")
@@ -59,123 +89,38 @@
   });
 </script>
 
-{#if !app.rightPaneCollapsed && editorSidebarActive}
+{#if !workspaceLayout.rightPaneCollapsed && editorSidebarActive}
   <WorkspaceResizeHandle
     kind="right"
-    active={app.activeResizeKind === "right"}
+    active={workspaceLayout.activeResizeKind === "right"}
     ariaLabel={t("workbench-resize-right-panel")}
-    onDrag={(event) => app.startResizeDrag("right", event)}
-    onReset={() => app.resetResize("right")}
+    onDrag={(event) => workspaceLayout.startResizeDrag("right", event)}
+    onReset={() => workspaceLayout.resetResize("right")}
   />
 {/if}
 
-{#if app.scannedProject && app.kernelProjectSessionId}
-  {#key app.kernelProjectSessionId}
+{#if workspaceMutations.snapshot && sessionId}
+  {#key sessionId}
     <div
       class="inspector-pane-shell"
-      hidden={app.rightPaneCollapsed}
+      hidden={workspaceLayout.rightPaneCollapsed}
       inert={!editorSidebarActive
-        || app.rightPaneCollapsed
-        || app.aiEditLeaseFrontendLockActive
-        || app.kernelUndoRedoFrontendQuiesceActive
-        || app.kernelUndoRedoFrontendLeaseActive
+        || workspaceLayout.rightPaneCollapsed
+        || interactionLocked
         ? true
         : undefined}
-      aria-hidden={!editorSidebarActive || app.rightPaneCollapsed}
-      aria-busy={app.aiEditLeaseFrontendLockActive
-        || app.kernelUndoRedoFrontendQuiesceActive
-        || app.kernelUndoRedoFrontendLeaseActive}
+      aria-hidden={!editorSidebarActive || workspaceLayout.rightPaneCollapsed}
+      aria-busy={interactionLocked}
     >
       <InspectorPane
-      inspectorSelectionSummary={app.inspectorSelectionSummary}
-      inspectorHtmlPhysicalFacts={app.inspectorHtmlPhysicalFacts}
-      inspectorBlockSelectionContext={app.inspectorBlockSelectionContext}
-      inspectorDynamicWidgetSelectionContext={app.inspectorDynamicWidgetSelectionContext}
-      sourceGraph={app.sourceGraph}
-      projectRoot={app.sessionProjectRoot}
-      runtimeSessionId={app.kernelProjectSessionId}
-      selectedTemplateSourceNode={app.selectedTemplateSourceNode}
-      selectedEditorNavigationNode={app.selectedEditorNavigationNode}
-      targetCssFile={app.targetCssFile}
-      selectionSnapshot={app.selectionSnapshot}
-      cssSourceRevision={app.cssSourceRevision}
-      activeRenderedTemplatePath={app.activeRenderedTemplatePath}
-      previewDevice={app.previewDevice}
-      refreshToken={app.refreshToken}
-      historyProjectionQuiesced={app.kernelUndoRedoFrontendQuiesceActive
-        || app.kernelUndoRedoFrontendLeaseActive}
-      jsRefreshToken={app.jsRefreshToken}
-      motionWorkspace={app.motionWorkspace}
-      workspaceRevision={app.projectWorkspaceSnapshot?.revision ?? 0}
-      previewRevision={app.activeCanvasIdentity?.previewRevision ?? ""}
-      blockPropertiesHeight={app.applicationSettings?.blockPropertiesHeight ?? 220}
-      blockPropertiesCollapsed={app.applicationSettings?.blockPropertiesCollapsed ?? false}
-      projectFiles={app.scannedProject?.files ?? []}
-      scssVariables={app.scssVariables}
+      {...paneProps}
+      {motionWorkspace}
+      blockPropertiesHeight={applicationPreferences.snapshot?.blockPropertiesHeight ?? 220}
+      blockPropertiesCollapsed={applicationPreferences.snapshot?.blockPropertiesCollapsed ?? false}
       fontFamilies={installedFontFamilies}
       {installedFontAxes}
-      attributeValues={app.attributeValues}
-      attributeStatus={app.attributeStatus}
-      attributePending={app.htmlPending.attributes}
-      textContentValue={app.textContentValue}
-      textStatus={app.textStatus}
-      classEditorValue={app.classEditorValue}
-      classPending={app.htmlPending.classes}
-      classStatus={app.classStatus}
-      imageSourceValue={app.imageSourceValue}
-      imageStatus={app.imageStatus}
-      scannedAssets={app.scannedAssets}
-      updateAttributeValue={(prop, val) => app.updateAttributeValue(prop, val)}
-      removeAttribute={(name) => app.removeAttribute(name)}
-      isActivePreviewHtmlSource={app.isActivePreviewHtmlSource}
-      canEditHtml={app.canEditHtml}
-      applyAttributesToHtml={(attributes) => app.applyAttributesToHtml(attributes)}
-      updateTextContentValue={(val, composing) => app.updateTextContentValue(val, composing)}
-      applyTextContentToHtml={() => app.applyTextContentToHtml()}
-      setClassEditorValue={(value) => (app.classEditorValue = value)}
-      applyClassesToHtml={() => app.applyClassesToHtml()}
-      generateClassForSelectedHtml={() => app.generateClassForSelectedHtml()}
-      generateDataAnimForSelectedHtml={() => app.generateDataAnimForSelectedHtml()}
-      setImageSourceValue={(value) => (app.imageSourceValue = value)}
-      applyZolaImageProcessingToHtml={(intent) => app.applyZolaImageProcessingToHtml(intent)}
-      cancelHtmlAttributeDraft={(expectedContextKey) => app.cancelHtmlAttributeDraft(expectedContextKey)}
-      enterTeraBoundary={async (scopeId) => {
-        await app.enterEditorNavigationScope(scopeId);
-      }}
-      deleteSelectedTeraNode={async () => {
-        await app.deleteSelectedTeraNode();
-      }}
-      openSelectedTeraSource={() => app.openSelectedTeraSource()}
-      openSelectedMarkdownContent={() => app.openSelectedMarkdownContent()}
-      pendingTag={app.pendingTag}
-      tagStatus={app.tagStatus}
-      changeElementTag={(tag) => app.changeElementTag(tag)}
-      onLivePropertiesChange={(sel, properties, viewport) => app.applyInspectorLiveProperties(sel, properties, viewport)}
-      onCssWorkspaceMutationCommitted={(authority, liveEpoch) =>
-        app.projectCommittedInspectorCssMutation(authority, liveEpoch)}
-      onInspectorLivePropertiesRejected={(liveEpoch) => app.clearInspectorLiveProperties(liveEpoch)}
-      gridOverlayEnabled={app.gridOverlayEnabled}
-      onGridOverlayChange={(enabled) => app.setGridOverlayEnabled(enabled)}
-      injectPreviewCss={(css) => app.injectRawCss("pana-animation-preview", css)}
-      onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as GlobalStatusKind)}
-      onPendingChange={(area, pending) => app.setInspectorPending(area, pending, "inspector-pane")}
-      beforeInspectorTabChange={async (from, to) => {
-        if (from === "js" && to !== "js") {
-          await app.flushInteractiveEditorDrafts("template-switch");
-        }
-      }}
-      onInspectorTabChange={(tab) => app.selectInspectorTab(tab)}
-      onCssCodeTargetChange={(target) => app.selectCssFocusFromInspector(target)}
-      getOpenCssRuleContext={(file, selector, viewport) =>
-        app.cssRuleContextFromOpenSource(file, selector, viewport)}
-      applyNativeBlockOption={(request) => app.applyNativeBlockOption(request)}
-      applyNativeIcon={(request) => app.applyNativeIcon(request)}
-      applyNativeBlockSlotMutation={(request) => app.applyNativeBlockSlotMutation(request)}
-      updateDynamicWidget={(snapshot, properties) =>
-        app.updateDynamicWidgetFromInspector(snapshot, properties)}
-      deleteDynamicWidget={(snapshot) => app.deleteDynamicWidgetFromInspector(snapshot)}
       persistBlockPropertiesLayout={(height, collapsed) => {
-        void app.persistBlockPropertiesLayout(height, collapsed);
+        void applicationPreferences.persistBlockPropertiesLayout(height, collapsed);
       }}
       />
     </div>

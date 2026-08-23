@@ -1,5 +1,8 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createSourceLayerChunkMap } from "./scripts/source-layer-chunks.mjs";
 import { svelteCssFirstGuard } from "./scripts/vite-svelte-css-first.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
@@ -7,28 +10,24 @@ const host = process.env.TAURI_DEV_HOST;
 const sourceChunkRules = [
   ["/src/lib/i18n/generated/catalog.en-US.ts", "pana-locale-en-US"],
   ["/src/lib/i18n/generated/catalog.ro.ts", "pana-locale-ro"],
-  ["/src/lib/i18n/", "pana-i18n-runtime"],
-  ["/src/lib/state/", "pana-state"],
-  ["/src/lib/components/inspector/", "pana-inspector"],
-  ["/src/lib/inspector/", "pana-inspector"],
-  ["/src/lib/css/", "pana-inspector"],
-  ["/src/lib/editor-runtime/", "pana-editor"],
-  ["/src/lib/editor/", "pana-editor"],
-  ["/src/lib/html/", "pana-editor"],
-  ["/src/lib/tera/", "pana-editor"],
-  ["/src/lib/preview/", "pana-editor"],
-  ["/src/lib/project/", "pana-project-bridge"],
-  ["/src/lib/kernel/", "pana-project-bridge"],
-  ["/src/lib/session/", "pana-project-bridge"],
-  ["/src/lib/source-graph/", "pana-project-bridge"],
-  ["/src/lib/workbench/", "pana-project-bridge"],
 ];
 
-const acceptedCircularChunks = new Set([
-  "Circular chunk: pana-editor -> pana-project-bridge -> pana-editor. Please adjust the manual chunk logic for these chunks.",
-  "Circular chunk: pana-editor -> pana-state -> pana-editor. Please adjust the manual chunk logic for these chunks.",
-  "Circular chunk: pana-editor -> pana-state -> pana-inspector -> pana-editor. Please adjust the manual chunk logic for these chunks.",
-]);
+const projectRoot = dirname(fileURLToPath(import.meta.url));
+const sourceLayerChunks = createSourceLayerChunkMap({
+  projectRoot,
+  entry: "src/routes/+page.svelte",
+  chunkNames: [
+    "pana-core-foundation",
+    "pana-core-domain",
+    "pana-core-runtime",
+    "pana-core-orchestration",
+    "pana-application-shell",
+  ],
+  excludedFragments: [
+    "/src/lib/i18n/generated/catalog.en-US.ts",
+    "/src/lib/i18n/generated/catalog.ro.ts",
+  ],
+});
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -38,34 +37,24 @@ export default defineConfig(async () => ({
   ],
   build: {
     rollupOptions: {
-      /**
-       * @param {import("rollup").LogLevel} level
-       * @param {import("rollup").RollupLog} warning
-       * @param {import("rollup").LogOrStringHandler} defaultHandler
-       */
-      onLog(level, warning, defaultHandler) {
-        // These cycles already exist between UI adapters (callbacks, projections and editor
-        // controllers). The named chunks only expose that graph; no module is eagerly executed
-        // for authority decisions, which remain Rust-owned. Keep every other warning visible.
-        if (
-          warning.code === "CIRCULAR_CHUNK"
-          && acceptedCircularChunks.has(warning.message)
-        ) {
-          return;
-        }
-        defaultHandler(level, warning);
-      },
       output: {
         /** @param {string} id */
         manualChunks(id) {
           const normalizedId = id.replaceAll("\\", "/");
+          if (normalizedId.includes("/node_modules/svelte/")) {
+            return "pana-svelte-runtime";
+          }
           if (normalizedId.includes("/node_modules/@tabler/icons-svelte/")) {
-            return "icons";
+            return "pana-icons";
+          }
+          if (normalizedId.includes("/node_modules/@tauri-apps/")) {
+            return "pana-tauri-runtime";
           }
           const sourceRule = sourceChunkRules.find(([fragment]) =>
             normalizedId.includes(fragment),
           );
-          return sourceRule?.[1];
+          if (sourceRule) return sourceRule[1];
+          return sourceLayerChunks.get(resolve(normalizedId.split("?", 1)[0]).replaceAll("\\", "/"));
         },
       },
     },

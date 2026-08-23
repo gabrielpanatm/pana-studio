@@ -8,23 +8,23 @@ use serde::{Deserialize, Serialize};
 use crate::{
     kernel::canvas_interaction::CanvasInteractionIdentity,
     kernel::editor_navigation::{
-        EditorNavigationCapabilities, EditorNavigationNode, EditorNavigationNodeKind,
-        EditorNavigationOrigin, EditorNavigationSnapshot, EditorSourceProvenance,
-        EditorSourceReference, EditorSourceResolution,
+        EditorNavigationBoundaryKind, EditorNavigationCapabilities, EditorNavigationComponentKind,
+        EditorNavigationNode, EditorNavigationNodeKind, EditorNavigationOrigin,
+        EditorNavigationSnapshot, EditorSourceProvenance, EditorSourceReference,
+        EditorSourceResolution,
     },
     preview::CanvasProjectionIdentity,
     source_graph::model::{SourceGraph, SourceNode, SourceNodeKind, SourceOrigin, SourceRange},
 };
 
-pub const SELECTION_COORDINATOR_SCHEMA_VERSION: u32 = 2;
+pub const SELECTION_COORDINATOR_SCHEMA_VERSION: u32 = 3;
 pub const MAX_SELECTION_MEMBERS: usize = 256;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SelectionSubjectKind {
     HtmlElement,
-    TeraBoundary,
-    MarkdownBoundary,
+    Boundary,
     RuntimeElement,
     CssRule,
 }
@@ -33,6 +33,8 @@ pub enum SelectionSubjectKind {
 #[serde(rename_all = "camelCase")]
 pub struct SelectionSubject {
     pub kind: SelectionSubjectKind,
+    pub boundary_kind: Option<EditorNavigationBoundaryKind>,
+    pub component_kind: Option<EditorNavigationComponentKind>,
     pub tag: Option<String>,
     pub label: String,
 }
@@ -165,6 +167,8 @@ pub struct HoverSnapshot {
     pub document_epoch: u64,
     pub editor_node_id: String,
     pub subject_kind: SelectionSubjectKind,
+    pub boundary_kind: Option<EditorNavigationBoundaryKind>,
+    pub component_kind: Option<EditorNavigationComponentKind>,
     pub primary_render_instance_id: Option<String>,
     pub render_instance_ids: Vec<String>,
     pub boundary_instance_id: Option<String>,
@@ -298,6 +302,8 @@ pub struct InspectorSelectionSummarySnapshot {
     pub render_instance_id: Option<String>,
     pub state: InspectorSelectionSummaryState,
     pub subject_kind: Option<SelectionSubjectKind>,
+    pub boundary_kind: Option<EditorNavigationBoundaryKind>,
+    pub component_kind: Option<EditorNavigationComponentKind>,
     pub tag: Option<String>,
     pub label: Option<String>,
     pub selector: Option<String>,
@@ -1661,6 +1667,11 @@ fn set_hover(
         document_epoch,
         editor_node_id: node.id.clone(),
         subject_kind: subject_kind(node.kind),
+        boundary_kind: node.boundary.as_ref().map(|boundary| boundary.kind),
+        component_kind: node
+            .boundary
+            .as_ref()
+            .and_then(|boundary| boundary.component_kind),
         primary_render_instance_id: primary,
         render_instance_ids: render_ids,
         boundary_instance_id: boundary_id,
@@ -1801,6 +1812,11 @@ fn selection_entry_from_node(
 ) -> SelectionEntry {
     let subject = SelectionSubject {
         kind: subject_kind(node.kind),
+        boundary_kind: node.boundary.as_ref().map(|boundary| boundary.kind),
+        component_kind: node
+            .boundary
+            .as_ref()
+            .and_then(|boundary| boundary.component_kind),
         tag: node.tag.clone(),
         label: node.label.clone(),
     };
@@ -1867,6 +1883,8 @@ fn selection_entry_from_source_node(
 ) -> SelectionEntry {
     let subject = SelectionSubject {
         kind: source_subject_kind(&source.kind),
+        boundary_kind: None,
+        component_kind: None,
         tag: None,
         label: source.label.clone(),
     };
@@ -1965,6 +1983,8 @@ fn selection_entry_from_css_focus(
     );
     entry.subject = SelectionSubject {
         kind: SelectionSubjectKind::CssRule,
+        boundary_kind: None,
+        component_kind: None,
         tag: None,
         label: selector.to_string(),
     };
@@ -2147,7 +2167,7 @@ fn conservative_filtered_capabilities(
     let all_structural = members.iter().all(|member| {
         matches!(
             member.subject.kind,
-            SelectionSubjectKind::HtmlElement | SelectionSubjectKind::TeraBoundary
+            SelectionSubjectKind::HtmlElement | SelectionSubjectKind::Boundary
         )
     });
     let base_batch = all_resolved
@@ -2368,7 +2388,7 @@ fn aggregate_selection_capabilities(
     let all_structural = members.iter().all(|member| {
         matches!(
             member.subject.kind,
-            SelectionSubjectKind::HtmlElement | SelectionSubjectKind::TeraBoundary
+            SelectionSubjectKind::HtmlElement | SelectionSubjectKind::Boundary
         )
     });
     let base_batch = all_resolved
@@ -2457,8 +2477,7 @@ fn validate_focus(focus: &SelectionFocus) -> Result<(), String> {
 fn subject_kind(kind: EditorNavigationNodeKind) -> SelectionSubjectKind {
     match kind {
         EditorNavigationNodeKind::HtmlElement => SelectionSubjectKind::HtmlElement,
-        EditorNavigationNodeKind::TeraBoundary => SelectionSubjectKind::TeraBoundary,
-        EditorNavigationNodeKind::MarkdownBoundary => SelectionSubjectKind::MarkdownBoundary,
+        EditorNavigationNodeKind::Boundary => SelectionSubjectKind::Boundary,
         EditorNavigationNodeKind::RuntimeElement => SelectionSubjectKind::RuntimeElement,
     }
 }
@@ -2467,7 +2486,7 @@ fn source_subject_kind(kind: &SourceNodeKind) -> SelectionSubjectKind {
     match kind {
         SourceNodeKind::Html => SelectionSubjectKind::HtmlElement,
         SourceNodeKind::Script => SelectionSubjectKind::RuntimeElement,
-        _ => SelectionSubjectKind::TeraBoundary,
+        _ => SelectionSubjectKind::Boundary,
     }
 }
 
@@ -2678,12 +2697,7 @@ fn inspector_summary(
             reason = Some(InspectorSelectionSummaryReason::InspectionDisabled);
         }
         SelectionResolution::Resolved
-            if subject.is_some_and(|subject| {
-                matches!(
-                    subject.kind,
-                    SelectionSubjectKind::TeraBoundary | SelectionSubjectKind::MarkdownBoundary
-                )
-            }) =>
+            if subject.is_some_and(|subject| subject.kind == SelectionSubjectKind::Boundary) =>
         {
             state_value = InspectorSelectionSummaryState::Resolved;
             reason = None;
@@ -2745,6 +2759,8 @@ fn inspector_summary(
         render_instance_id: primary.and_then(|entry| entry.anchor.render_instance_id.clone()),
         state: state_value,
         subject_kind: subject.map(|subject| subject.kind),
+        boundary_kind: subject.and_then(|subject| subject.boundary_kind),
+        component_kind: subject.and_then(|subject| subject.component_kind),
         tag: subject.and_then(|subject| subject.tag.clone()),
         label: subject.map(|subject| subject.label.clone()),
         selector,
@@ -3553,7 +3569,7 @@ mod tests {
             None,
             range(10, 30),
         );
-        tera_node.kind = EditorNavigationNodeKind::TeraBoundary;
+        tera_node.kind = EditorNavigationNodeKind::Boundary;
         tera_node.label = "content".to_string();
         tera_node.tag = None;
         let tera_snapshot = snapshot("tx-tera", vec![tera_node]);
@@ -3573,7 +3589,7 @@ mod tests {
         );
         assert_eq!(
             tera.inspector_summary.subject_kind,
-            Some(SelectionSubjectKind::TeraBoundary)
+            Some(SelectionSubjectKind::Boundary)
         );
         assert_eq!(tera.inspector_summary.selector.as_deref(), Some("content"));
 
@@ -4305,7 +4321,10 @@ mod tests {
             )
             .unwrap()
             .selection;
-        assert_eq!(selected.schema_version, 2);
+        assert_eq!(
+            selected.schema_version,
+            SELECTION_COORDINATOR_SCHEMA_VERSION
+        );
         assert_eq!(
             selected
                 .members

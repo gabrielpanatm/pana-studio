@@ -1,4 +1,4 @@
-import type { ProjectDiskManifest } from "$lib/types";
+import type { ProjectDiskManifest } from "$lib/project/external-disk-contract";
 
 export type ManifestDiff = {
   changedFiles: string[];

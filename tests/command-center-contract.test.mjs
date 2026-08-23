@@ -55,12 +55,18 @@ function deleteEvent(key = "Delete") {
 function selectionSnapshot(kind, focus = { kind: "element" }, resolution = "resolved") {
   const memberId = "editor:test";
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     primaryMemberId: kind ? memberId : null,
     members: kind ? [{
       memberId,
       resolution,
-      subject: { kind, tag: kind === "htmlElement" ? "h1" : null, label: kind },
+      subject: {
+        kind,
+        boundaryKind: kind === "boundary" ? "template" : null,
+        componentKind: null,
+        tag: kind === "htmlElement" ? "h1" : null,
+        label: kind,
+      },
       anchor: {
         editorNodeId: memberId,
         sourceNodeId: "source:test",
@@ -95,7 +101,7 @@ test("Delete este rutat exclusiv de selecția semantică Rust", () => {
     "focusul CSS păstrează elementul HTML drept țintă principală",
   );
   assert.equal(
-    deleteShortcutIntent(deleteEvent(), deleteState(selectionSnapshot("teraBoundary"))),
+    deleteShortcutIntent(deleteEvent(), deleteState(selectionSnapshot("boundary"))),
     "deleteSelectedTera",
   );
   assert.equal(
@@ -133,6 +139,10 @@ test("rezultatele Command Center folosesc contractul vizual al entităților sel
     new URL("../src/lib/components/workbench/CommandCenter.svelte", import.meta.url),
     "utf8",
   );
+  const commandCenterService = readFileSync(
+    new URL("../src/lib/application/command-center-service.svelte.ts", import.meta.url),
+    "utf8",
+  );
 
   assert.match(commandCenter, /class="ui-entity-selectable"/);
   assert.match(commandCenter, /data-ui-selected=\{selectedIndex === index && hoveredIndex === null/);
@@ -140,6 +150,13 @@ test("rezultatele Command Center folosesc contractul vizual al entităților sel
   assert.match(commandCenter, /onmouseenter=\{\(\) => \{ hoveredIndex = index; selectedIndex = index; \}\}/);
   assert.match(commandCenter, /onmouseleave=\{\(\) => \{ if \(hoveredIndex === index\) hoveredIndex = null; \}\}/);
   assert.doesNotMatch(commandCenter, /\.results button\.selected/);
+  assert.match(commandCenter, /await execute\(item\.action\);\s*close\(\);/);
+  assert.match(commandCenter, /catch \(error\) \{\s*errorMessage = applicationErrorMessage\(error\);/);
+  assert.doesNotMatch(
+    commandCenterService,
+    /async execute\(action: CommandCenterAction\) \{\s*this\.close\(\);/,
+    "componenta păstrează dialogul deschis până când acțiunea se încheie sau raportează eroarea",
+  );
 });
 
 test("panoul History nu mai este expus, dar Undo și Redo rămân disponibile", () => {
@@ -159,7 +176,7 @@ test("panoul History nu mai este expus, dar Undo și Redo rămân disponibile", 
     "utf8",
   );
   const commandTypes = readFileSync(
-    new URL("../src/lib/types.ts", import.meta.url),
+    new URL("../src/lib/workbench/contracts.ts", import.meta.url),
     "utf8",
   );
   const rustModel = readFileSync(

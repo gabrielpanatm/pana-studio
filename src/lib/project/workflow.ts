@@ -1,4 +1,5 @@
-import type { ProjectFile, SourceLanguage } from "$lib/types";
+import type { SourceLanguage } from "$lib/application/contracts";
+import type { ProjectFile } from "$lib/project/lifecycle-contract";
 import { zolaRelativePath } from "$lib/project/files";
 
 export function isRenderedPreviewPageFile(file: ProjectFile) {

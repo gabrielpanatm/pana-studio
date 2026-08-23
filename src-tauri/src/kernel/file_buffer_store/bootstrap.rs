@@ -7,20 +7,17 @@ use crate::{
         observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
         project_session::ProjectSessionSnapshot,
     },
-    project::model::ProjectScan,
+    project::{model::ProjectScan, PROJECT_CAPACITY},
 };
 
 use super::{
+    classify::classify_project_file,
     model::{
         FileBufferDiagnostic, FileBufferStore, FileBufferStoreLimits,
         FILE_BUFFER_STORE_SCHEMA_VERSION,
     },
     reader::{load_text_file, LoadTextFileOutcome},
 };
-
-const MAX_BUFFER_FILES: usize = 500;
-const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_TOTAL_BYTES: u64 = 24 * 1024 * 1024;
 
 pub fn bootstrap_file_buffer_store<R: Runtime>(
     app: &AppHandle<R>,
@@ -29,9 +26,9 @@ pub fn bootstrap_file_buffer_store<R: Runtime>(
     scan: &ProjectScan,
 ) -> Result<FileBufferStore, String> {
     let limits = FileBufferStoreLimits {
-        max_files: MAX_BUFFER_FILES,
-        max_file_bytes: MAX_FILE_BYTES,
-        max_total_bytes: MAX_TOTAL_BYTES,
+        max_files: PROJECT_CAPACITY.max_resident_text_documents,
+        max_file_bytes: PROJECT_CAPACITY.max_text_document_bytes,
+        max_total_bytes: PROJECT_CAPACITY.max_resident_text_bytes,
     };
     let mut store = FileBufferStore::for_project_session(session, now_ms(), limits.clone());
 
@@ -43,31 +40,19 @@ pub fn bootstrap_file_buffer_store<R: Runtime>(
     let mut total_loaded_bytes = 0u64;
 
     for file in &scan.files {
-        if loaded_files >= limits.max_files {
-            store.add_diagnostic(FileBufferDiagnostic::warning(
-                "max_files_reached",
-                None,
-                format!(
-                    "FileBufferStore a încărcat limita de {} fișiere.",
-                    limits.max_files
-                ),
-            ));
-            break;
-        }
-        if total_loaded_bytes >= limits.max_total_bytes {
-            store.add_diagnostic(FileBufferDiagnostic::warning(
-                "max_total_bytes_reached",
-                None,
-                format!(
-                    "FileBufferStore a încărcat limita totală de {} bytes.",
-                    limits.max_total_bytes
-                ),
-            ));
-            break;
-        }
-
         match load_text_file(project_root, file, &limits) {
             LoadTextFileOutcome::Loaded(entry) => {
+                if loaded_files >= limits.max_files {
+                    store.add_diagnostic(FileBufferDiagnostic::warning(
+                        "max_files_reached",
+                        Some(entry.relative_path),
+                        format!(
+                            "Fișierul ar depăși limita FileBufferStore de {} documente text rezidente.",
+                            limits.max_files
+                        ),
+                    ));
+                    break;
+                }
                 let next_total =
                     total_loaded_bytes.saturating_add(entry.baseline_text.len() as u64);
                 if next_total > limits.max_total_bytes {
@@ -112,6 +97,24 @@ pub fn bootstrap_file_buffer_store<R: Runtime>(
             None,
         ),
     )?;
+
+    let mut missing_text_documents = scan
+        .files
+        .iter()
+        .filter(|file| classify_project_file(file).is_some())
+        .filter(|file| !store.files.contains_key(&file.relative_path))
+        .map(|file| file.relative_path.as_str());
+    if let Some(first_missing) = missing_text_documents.next() {
+        let missing_count = 1usize.saturating_add(missing_text_documents.count());
+        let diagnostic = store
+            .diagnostics
+            .first()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .unwrap_or("nu a fost publicat niciun diagnostic");
+        return Err(format!(
+            "FileBufferStore a refuzat un namespace text incomplet: lipsesc {missing_count} document(e), primul este {first_missing}. Diagnostic: {diagnostic}."
+        ));
+    }
 
     Ok(store)
 }

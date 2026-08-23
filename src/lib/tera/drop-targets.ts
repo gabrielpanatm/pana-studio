@@ -4,7 +4,11 @@ import {
   projectRelativeZolaPath,
   templateNameForPath,
 } from "$lib/project/files";
-import type { SourceGraph, SourceGraphNode, SourceGraphTemplate } from "$lib/types";
+import type { SourceGraph } from "$lib/source-graph/graph-contract";
+import type {
+  SourceGraphNode,
+  SourceGraphTemplate,
+} from "$lib/source-graph/contracts";
 import type { TeraDropRequest, TeraDropResolution } from "$lib/tera/model";
 import { t } from "$lib/i18n/runtime.svelte";
 

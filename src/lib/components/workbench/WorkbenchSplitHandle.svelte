@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { WorkbenchSplit } from "$lib/types";
+  import type { WorkbenchSplit } from "$lib/workbench/contracts";
 
   let {
     orientation,

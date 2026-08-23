@@ -8,18 +8,20 @@ function source(relativePath) {
 
 test("EditorShell rămâne un owner unic și stabil pentru ProjectSession", () => {
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
+  const workspace = source("../src/lib/components/application/ApplicationWorkspace.svelte");
   const shell = source("../src/lib/components/EditorShell.svelte");
-  const effects = source("../src/lib/state/app-effects.svelte.ts");
+  const documentBar = source("../src/lib/components/workbench/DocumentBar.svelte");
+  const effects = source("../src/lib/editor/lifecycle.svelte.ts");
   const workspaceCss = source("../src/routes/workspace-shell.css");
 
   assert.equal(center.match(/<EditorShell\b/g)?.length, 1);
   assert.match(
     center,
-    /editorSurfaceActive\s*=\s*\$derived\([\s\S]*app\.applicationSurface === "workbench"[\s\S]*activeWorkbenchActivity === "editor"[\s\S]*app\.centerView !== "kernel"/,
+    /editorSurfaceActive\s*=\s*\$derived\([\s\S]*session\.applicationSurface === "workbench"[\s\S]*activeWorkbenchActivity === "editor"[\s\S]*session\.centerView !== "kernel"/,
   );
   assert.match(
     center,
-    /\{#if app\.scannedProject && app\.kernelProjectSessionId\}[\s\S]*\{#key app\.kernelProjectSessionId\}[\s\S]*class="stable-editor-surface"[\s\S]*class:surface-inactive=\{!editorSurfaceActive\}[\s\S]*inert=\{!editorSurfaceActive \? true : undefined\}[\s\S]*aria-hidden=\{!editorSurfaceActive\}[\s\S]*surfaceActive=\{editorSurfaceActive\}/,
+    /\{#if session\.project && session\.sessionId\}[\s\S]*\{#key session\.sessionId\}[\s\S]*class="stable-editor-surface"[\s\S]*class:surface-inactive=\{!editorSurfaceActive\}[\s\S]*inert=\{!editorSurfaceActive \? true : undefined\}[\s\S]*aria-hidden=\{!editorSurfaceActive\}[\s\S]*surfaceActive=\{editorSurfaceActive\}/,
   );
   assert.ok(
     center.indexOf("<EditorShell") < center.indexOf("{#if retainedAuxiliarySurface}"),
@@ -30,11 +32,15 @@ test("EditorShell rămâne un owner unic și stabil pentru ProjectSession", () =
     shell,
     /function registerPreviewSurface[\s\S]*mountPreviewSurface\(frame\)[\s\S]*destroy\(\)[\s\S]*unmountPreviewSurface\(frame\)/,
   );
-  assert.match(shell, /<DocumentBar[\s\S]*active=\{surfaceActive\}/);
+  assert.match(shell, /<DocumentBar[\s\S]*active=\{surfaceActive\}[\s\S]*\{documentActivation\}/);
+  assert.match(documentBar, /requestDocumentActivation/);
+  assert.match(workspace, /documentActivation=\{workbench\.documentActivation\}/);
+  assert.doesNotMatch(workspace, /get documentActivation\(\)/);
+  assert.match(center, /<EditorShell[\s\S]*\{documentActivation\}/);
   assert.match(shell, /sourceIsLoading[\s\S]*class="code-loading-stage"/);
   assert.match(
     effects,
-    /app\.source === SOURCE_LOADING_SENTINEL[\s\S]*app\.codeEditorController\.setDoc\(app\.source\)/,
+    /source\.source === SOURCE_LOADING_SENTINEL[\s\S]*source\.controller\.setDoc\(source\.source\)/,
   );
   assert.match(
     workspaceCss,
@@ -65,14 +71,13 @@ test("ultimul workspace auxiliar rămâne montat numai cât Editorul este activ"
     center,
     /<\/section>\s*\{#if retainedAuxiliarySurface\}[\s\S]*class="workspace-auxiliary-overlay"[\s\S]*class:surface-inactive=\{editorSurfaceActive\}[\s\S]*inert=\{editorSurfaceActive \? true : undefined\}[\s\S]*aria-hidden=\{editorSurfaceActive\}/,
   );
-  assert.equal(center.match(/<ThemesWorkspace\b/g)?.length, 1);
+  assert.doesNotMatch(center, /ThemesWorkspace|components\/themes/);
 });
 
 test("workspace-urile non-Editor sunt chunk-uri lazy încărcate la prima activare", () => {
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
   const lazyWorkspaces = [
     ["settings", "$lib/components/settings/SettingsWorkspace.svelte"],
-    ["themes", "$lib/components/themes/ThemesWorkspace.svelte"],
     ["templates", "$lib/components/templates/TemplatesWorkspace.svelte"],
     ["components", "$lib/components/creation/ComponentsWorkspace.svelte"],
     ["blocks", "$lib/components/creation/BlocksWorkspace.svelte"],
@@ -114,7 +119,7 @@ test("Sistemul de design încarcă numai catalogul cerut de subvederea activă",
   assert.match(design, /let activeView = \$state<DesignView>\("global-styles"\)/);
   assert.match(
     design,
-    /const view = activeView;[\s\S]*view === "global-styles"[\s\S]*reloadThemeStyleCatalog\(\)[\s\S]*view === "tokens"[\s\S]*reloadDesignTokenCatalog\(\)[\s\S]*view === "classes"[\s\S]*refreshDesignClassInventory\(\)[\s\S]*view === "fonts"[\s\S]*reloadFontManager\(\)/,
+    /const view = activeView;[\s\S]*view === "global-styles"[\s\S]*themeStyleCatalog\.refresh\(\)[\s\S]*view === "tokens"[\s\S]*tokenCatalog\.refresh\(\)[\s\S]*view === "classes"[\s\S]*commands\.refreshClassInventory\(\)[\s\S]*view === "fonts"[\s\S]*fontManager\.refresh\(\)/,
   );
   assert.equal(
     design.match(/const view = activeView;/g)?.length,
@@ -122,32 +127,32 @@ test("Sistemul de design încarcă numai catalogul cerut de subvederea activă",
   );
   assert.doesNotMatch(
     design,
-    /\$effect\(\(\) => \{\s*void (?:reloadThemeStyleCatalog|reloadDesignTokenCatalog|reloadFontManager)\(\)/,
+    /\$effect\(\(\) => \{\s*void (?:themeStyleCatalog|tokenCatalog|fontManager)\.refresh\(\)/,
   );
 });
 
 test("suprafața ascunsă suspendă observerul și canalul Canvas fără a distruge iframe-ul", () => {
   const documentBar = source("../src/lib/components/workbench/DocumentBar.svelte");
-  const effects = source("../src/lib/state/app-effects.svelte.ts");
+  const effects = `${source("../src/lib/canvas/interaction-lifecycle.svelte.ts")}\n${source("../src/lib/editor/lifecycle.svelte.ts")}`;
   const codeEditor = source("../src/lib/editor/controller.ts");
-  const interaction = source("../src/lib/state/canvas-interaction-controller.ts");
+  const interaction = `${source("../src/lib/state/canvas-interaction-session.ts")}\n${source("../src/lib/state/canvas-interaction-runtime.ts")}`;
   const rustCommand = source("../src-tauri/src/commands/editor_navigation.rs");
 
   assert.match(
     documentBar,
-    /\$effect\(\(\) => \{[\s\S]*if \(!active \|\| !documentTabsElement[\s\S]*new ResizeObserver\(updateDocumentScrollCues\)[\s\S]*resizeObserver\.disconnect\(\)/,
+    /\$effect\(\(\) => \{[\s\S]*if \(!active \|\| !documentTabsElement[\s\S]*new ResizeObserver\(\(\) => scheduleDocumentLayout\(\)\)[\s\S]*resizeObserver\.disconnect\(\)/,
   );
   assert.match(
     effects,
-    /app\.applicationSurface;[\s\S]*app\.workbenchSnapshot\?\.activeActivity;[\s\S]*app\.centerView;[\s\S]*synchronizeCanvasInteractionBinding\(app\)/,
+    /app\.session\.applicationSurface;[\s\S]*app\.session\.workbenchSnapshot\?\.activeActivity;[\s\S]*app\.session\.centerView;[\s\S]*synchronizeCanvasInteractionBinding\(app\)/,
   );
   assert.match(
     effects,
-    /app\.activeScannedPath;[\s\S]*app\.editorNavigationSnapshot\?\.focusedView\?\.activeDocumentPath;[\s\S]*synchronizeCanvasInteractionBinding\(app\)/,
+    /app\.session\.activeScannedPath;[\s\S]*app\.selection\.editorSelection\.navigationSnapshot\?\.focusedView\?\.activeDocumentPath;[\s\S]*synchronizeCanvasInteractionBinding\(app\)/,
   );
   assert.match(
     effects,
-    /!app\.codeEditorController\.ownsHost\(codeEditorHost\)[\s\S]*codeEditorController\?\.destroy\(\)[\s\S]*activeActivity !== "editor"[\s\S]*return;[\s\S]*codeEditorController\.requestMeasure\(\)/,
+    /!source\.controller\.ownsHost\(codeEditorHost\)[\s\S]*source\.controller\.destroy\(\)[\s\S]*activeActivity !== "editor"[\s\S]*return;[\s\S]*source\.controller\.requestMeasure\(\)/,
   );
   assert.match(
     codeEditor,
@@ -155,7 +160,7 @@ test("suprafața ascunsă suspendă observerul și canalul Canvas fără a distr
   );
   assert.match(
     interaction,
-    /function canvasInteractionSurfaceActive\(app: AppState\)[\s\S]*app\.applicationSurface === "workbench"[\s\S]*activeActivity \?\? "editor"\) === "editor"[\s\S]*app\.centerView !== "kernel"/,
+    /function canvasInteractionSurfaceActive\(app: CanvasInteractionControllerHost\)[\s\S]*app\.session\.applicationSurface === "workbench"[\s\S]*activeActivity \?\? "editor"\) === "editor"[\s\S]*app\.session\.centerView !== "kernel"/,
   );
   assert.match(
     interaction,
@@ -170,22 +175,33 @@ test("suprafața ascunsă suspendă observerul și canalul Canvas fără a distr
     /function reactivateRetainedCanvasAgent[\s\S]*activate-canvas-interaction-agent[\s\S]*lastAcceptedSequence/,
   );
   assert.match(
-    interaction,
-    /interactionGeneration \+= 1[\s\S]*generation !== runtime\.interactionGeneration/,
-  );
-  assert.match(
     rustCommand,
     /pub async fn bind_canvas_interaction_agent[\s\S]*spawn_blocking[\s\S]*resolve_editor_navigation_context/,
   );
 });
 
-test("activitatea Workbench primește receipt Rust înaintea proiecției persistente", () => {
+test("navigarea Workbench primește receipt Rust înaintea proiecției persistente", () => {
   const command = source("../src-tauri/src/commands/workbench.rs");
+  const persistence = source(
+    "../src-tauri/src/kernel/workbench/projection_persistence.rs",
+  );
   const storage = source("../src-tauri/src/kernel/workbench/storage.rs");
 
   assert.match(
     command,
-    /matches!\(&intent, WorkbenchIntent::SetActivity[\s\S]*workbench\.apply\(&session, &identity, intent\)[\s\S]*spawn_blocking[\s\S]*persist_latest_workbench/,
+    /intent_uses_projection_write_behind\(&intent\)[\s\S]*workbench\s*\.\s*apply\(&session, &identity, intent\)[\s\S]*workbench_projection_persistence\s*\.\s*schedule/,
+  );
+  assert.match(
+    command,
+    /fn intent_uses_projection_write_behind[\s\S]*WorkbenchIntent::SetActivity[\s\S]*WorkbenchIntent::ActivateDocument/,
+  );
+  assert.match(
+    persistence,
+    /PROJECTION_PERSISTENCE_QUIET_PERIOD[\s\S]*Duration::from_millis\(250\)/,
+  );
+  assert.match(
+    persistence,
+    /DebouncedLatest[\s\S]*pending = Some\(value\)[\s\S]*worker_running[\s\S]*spawn_projection_persistence_worker/,
   );
   assert.match(
     storage,
@@ -193,7 +209,7 @@ test("activitatea Workbench primește receipt Rust înaintea proiecției persist
   );
   assert.match(
     storage,
-    /persist_latest_workbench[\s\S]*persisted\.revision > snapshot\.revision[\s\S]*persist_workbench_unlocked/,
+    /persist_latest_workbench[\s\S]*persisted\.revision >= snapshot\.revision[\s\S]*persist_workbench_unlocked/,
   );
 });
 
@@ -205,20 +221,20 @@ test("sidebarele Editor păstrează un owner stabil pe durata ProjectSession", (
   for (const area of [projectArea, inspectorArea]) {
     assert.match(
       area,
-      /editorSidebarActive\s*=\s*\$derived\([\s\S]*applicationSurface === "workbench"[\s\S]*activeActivity \?\? "editor"\) === "editor"/,
+      /editorSidebarActive\s*=\s*\$derived\(visible\)/,
     );
     assert.match(
       area,
-      /\{#if app\.scannedProject && app\.kernelProjectSessionId\}[\s\S]*\{#key app\.kernelProjectSessionId\}/,
+      /\{#if (?:pane\.projectRoot|workspaceMutations\.snapshot) && sessionId\}[\s\S]*\{#key sessionId\}/,
     );
   }
   assert.match(
     projectArea,
-    /class="project-pane-shell"[\s\S]*hidden=\{app\.leftPaneCollapsed\}[\s\S]*inert=\{!editorSidebarActive[\s\S]*app\.leftPaneCollapsed[\s\S]*app\.kernelUndoRedoFrontendQuiesceActive[\s\S]*app\.kernelUndoRedoFrontendLeaseActive[\s\S]*<ProjectPane/,
+    /class="project-pane-shell"[\s\S]*hidden=\{workspaceLayout\.leftPaneCollapsed\}[\s\S]*inert=\{!editorSidebarActive[\s\S]*workspaceLayout\.leftPaneCollapsed[\s\S]*interactionLocked[\s\S]*<ProjectPane/,
   );
   assert.match(
     inspectorArea,
-    /class="inspector-pane-shell"[\s\S]*hidden=\{app\.rightPaneCollapsed\}[\s\S]*inert=\{!editorSidebarActive[\s\S]*app\.rightPaneCollapsed[\s\S]*app\.kernelUndoRedoFrontendQuiesceActive[\s\S]*app\.kernelUndoRedoFrontendLeaseActive[\s\S]*<InspectorPane/,
+    /class="inspector-pane-shell"[\s\S]*hidden=\{workspaceLayout\.rightPaneCollapsed\}[\s\S]*inert=\{!editorSidebarActive[\s\S]*workspaceLayout\.rightPaneCollapsed[\s\S]*interactionLocked[\s\S]*<InspectorPane/,
   );
   assert.match(
     workspaceCss,

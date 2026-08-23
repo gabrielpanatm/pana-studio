@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-15T15:01:24.885Z",
+  "scope": {
+    "kind": "earliest-instrumented-refactor-milestone",
+    "appEffects": 20,
+    "note": "Baseline-ul structural original nu avea instrumentare runtime. Acesta este primul milestone măsurabil, după extragerea Motion, Global Status, Notifications și Workspace Layout, dar înainte de extragerea primului efect din AppEffects."
+  },
+  "environment": {
+    "application": "Tauri dev",
+    "webview": "WebKitGTK remote inspector",
+    "url": "http://localhost:1430/",
+    "clockResolutionMs": 1,
+    "reloadsIgnoreCache": true
+  },
+  "coldLoad": {
+    "constructionMs": 25,
+    "effectSettleFromConstructionStartMs": 583,
+    "effectSettleFromConstructionEndMs": 558,
+    "appStateModuleResource": {
+      "durationMs": 333,
+      "transferSizeBytes": 483735,
+      "decodedBodySizeBytes": 483435
+    }
+  },
+  "warmReloads": [
+    {
+      "constructionMs": 21,
+      "effectSettleFromConstructionStartMs": 84,
+      "effectSettleFromConstructionEndMs": 63,
+      "appStateModuleDurationMs": 5
+    },
+    {
+      "constructionMs": 19,
+      "effectSettleFromConstructionStartMs": 116,
+      "effectSettleFromConstructionEndMs": 97,
+      "appStateModuleDurationMs": 5
+    },
+    {
+      "constructionMs": 25,
+      "effectSettleFromConstructionStartMs": 75,
+      "effectSettleFromConstructionEndMs": 50,
+      "appStateModuleDurationMs": 9
+    },
+    {
+      "constructionMs": 17,
+      "effectSettleFromConstructionStartMs": 125,
+      "effectSettleFromConstructionEndMs": 108,
+      "appStateModuleDurationMs": 15
+    },
+    {
+      "constructionMs": 14,
+      "effectSettleFromConstructionStartMs": 108,
+      "effectSettleFromConstructionEndMs": 94,
+      "appStateModuleDurationMs": 6
+    }
+  ],
+  "warmSummary": {
+    "sampleCount": 5,
+    "constructionMs": { "p50": 19, "p95": 25, "max": 25 },
+    "effectSettleFromConstructionStartMs": { "p50": 108, "p95": 125, "max": 125 },
+    "effectSettleFromConstructionEndMs": { "p50": 94, "p95": 108, "max": 108 },
+    "appStateModuleDurationMs": { "p50": 6, "p95": 15, "max": 15 }
+  },
+  "reactiveWorkspaceLayout": {
+    "warmBatchCount": 5,
+    "samplesPerBatch": 100,
+    "p50MsPerBatch": [0, 0, 0, 0, 0],
+    "p95MsPerBatch": [0, 0, 0, 0, 0],
+    "maxMsPerBatch": [1, 1, 1, 1, 1],
+    "firstUnwarmedBatch": { "sampleCount": 100, "p50Ms": 0, "p95Ms": 1, "maxMs": 84 }
+  }
+}

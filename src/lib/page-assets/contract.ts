@@ -11,8 +11,10 @@ import {
   projectRelativeZolaPath,
   zolaRelativePath,
 } from "$lib/project/files";
-import { applyPageAssetContract } from "$lib/project/io";
-import type { SourceEditLocation } from "$lib/types";
+import {
+  applyPageAssetContract,
+} from "$lib/page-assets/io";
+import type { SourceEditLocation } from "$lib/source-graph/contracts";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import { pageScssRelativePath } from "$lib/page-assets/paths";
 import { t } from "$lib/i18n/runtime.svelte";

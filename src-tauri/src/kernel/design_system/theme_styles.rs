@@ -1027,7 +1027,7 @@ pub fn resolve_theme_style_source(
 
 pub fn collect_theme_style_variables(store: &FileBufferStore) -> BTreeMap<String, String> {
     let mut variables = BTreeMap::new();
-    for (path, entry) in &store.files {
+    for (path, entry) in store.files.iter() {
         if !path.ends_with(".scss") {
             continue;
         }
@@ -1487,7 +1487,7 @@ input:focus, textarea:focus, select:focus { border-color: $color-primary; box-sh
     #[test]
     fn bundled_framework_has_every_exact_semantic_anchor() {
         let source = include_str!(
-            "../../../resources/theme-packs/pana-studio/theme/sass/css-framework/_baza.scss"
+            "../../../resources/project-starters/pana-studio/project/sass/css-framework/_baza.scss"
         );
         let catalog = build_theme_style_catalog(
             "/project",

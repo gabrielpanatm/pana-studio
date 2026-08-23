@@ -9,195 +9,53 @@
   import { tick, untrack } from "svelte";
   import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
   import HtmlPane from "$lib/components/inspector/HtmlPane.svelte";
-  import JsPane  from "$lib/components/inspector/JsPane.svelte";
-  import BlockPropertiesPane from "$lib/components/inspector/BlockPropertiesPane.svelte";
-  import CssPane from "$lib/components/inspector/panes/CssPane.svelte";
+  import HtmlInspectorCoordinator from "$lib/components/inspector/HtmlInspectorCoordinator.svelte";
+  import type JsPane from "$lib/components/inspector/JsPane.svelte";
+  import type BlockPropertiesPane from "$lib/components/inspector/BlockPropertiesPane.svelte";
+  import type CssInspectorCoordinator from "$lib/components/inspector/CssInspectorCoordinator.svelte";
   import SelectionSummaryCard from "$lib/components/inspector/SelectionSummaryCard.svelte";
   import TeraSourceCard from "$lib/components/inspector/TeraSourceCard.svelte";
   import MarkdownSourceCard from "$lib/components/inspector/MarkdownSourceCard.svelte";
   import type {
-    CssMutationAuthorityReceipt,
-    CssInspectorContextResolution,
-    CssProperty,
     CssRuleContext,
+    CssViewport,
+    ScssVariable,
+  } from "$lib/css/contracts";
+  import type { CssMutationAuthorityReceipt } from "$lib/css/mutation-contract";
+  import type { InspectorTab } from "$lib/application/contracts";
+  import type {
     BlockSelectionContext,
+    EditableAttributes,
+    InspectorHtmlPhysicalFacts,
+    InspectorPendingArea,
+  } from "$lib/canvas/contracts";
+  import type {
     DynamicWidgetProperties,
     DynamicWidgetSelectionContext,
     DynamicWidgetSnapshot,
-    EditableAttributes,
-    EditorNavigationNode,
-    InspectorHtmlPhysicalFacts,
-    InspectorTab,
-    InspectorPendingArea,
-    InspectorSelectionSummarySnapshot,
-    PageCssTarget,
-    ProjectFile,
-    ProjectZolaImageIntent,
-    ScssVariable,
-    SelectionMutationIdentity,
-    SelectionSnapshot,
-    SourceGraphNode,
-    InstalledFontVariationAxis,
-  } from "$lib/types";
-  import {
-    createCssRequestIdentity,
-    cssRequestIdentityMatches,
-    resolveCssInspectorContext,
-    setCssRuleAtViewport,
-    setPageCssRuleAtViewport,
-    setReusableCssRuleAtViewport,
-    type CssRequestIdentity,
-    type CssViewport,
-  } from "$lib/project/io";
-  import { registerEditFlushHandler } from "$lib/session/edit-flush-registry";
-  import { flushFileBufferDraftSync } from "$lib/session/file-buffer-draft-sync";
+  } from "$lib/content-models/contracts";
+  import type { EditorNavigationNode } from "$lib/editor/contracts";
   import type {
-    CssContinuousEditHandlers,
-    CssPendingValueBaseline,
-    CssPropertyEditController,
-  } from "$lib/inspector/css-property-edit";
-  import {
-    captureCssPendingValueBaseline,
-    restoreCssPendingValueBaseline,
-  } from "$lib/inspector/css-property-edit";
+    InspectorSelectionSummarySnapshot,
+    SelectionSnapshot,
+  } from "$lib/editor/contracts";
+  import type { InstalledFontVariationAxis } from "$lib/fonts/contracts";
+  import type { ProjectZolaImageIntent } from "$lib/preview/contracts";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
+  import type { SourceGraphNode } from "$lib/source-graph/contracts";
   import type {
     ApplyNativeBlockOptionRequest,
     ApplyNativeIconRequest,
-  } from "$lib/state/html-actions-controller";
-  import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
+  } from "$lib/editor/html-actions/media";
+  import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
   import {
-    advanceStableHtmlInspectorProjection,
     projectHtmlInspectorClassSummary,
     type StableHtmlInspectorProjection,
   } from "$lib/inspector/html-projection-stability";
-  import {
-    cssInspectorReadIsCurrent,
-    cssInspectorSubjectKey,
-    cssSemanticSelectionKey,
-    sameCssSemanticSelection,
-  } from "$lib/inspector/css-selection-stability";
-
-  function captureCssIdentity(): CssRequestIdentity {
-    return createCssRequestIdentity(projectRoot, runtimeSessionId);
-  }
-
-  function isCurrentCssIdentity(identity: CssRequestIdentity): boolean {
-    return cssRequestIdentityMatches(identity, projectRoot, runtimeSessionId);
-  }
-
-  let queuedCssRuleMutationCount = 0;
-
-  function enqueueCssWorkspaceMutation(
-    identity: CssRequestIdentity,
-    label: string,
-    liveEpoch: number | null,
-    mutation: () => Promise<{ authority: CssMutationAuthorityReceipt }>,
-  ) {
-    queuedCssRuleMutationCount += 1;
-    updatePendingIndicators();
-    const task = cssWorkspaceMutationTail.then(async () => {
-      if (!isCurrentCssIdentity(identity)) return;
-      await flushFileBufferDraftSync({ throwOnFailure: true });
-      if (!isCurrentCssIdentity(identity)) return;
-      const receipt = await mutation();
-      if (!isCurrentCssIdentity(identity)) return;
-      cssWorkspaceMutationFailure = "";
-      onStatusUpdate?.(t("inspector-css-session-saved", { label }), "unsaved");
-      if (!onCssWorkspaceMutationCommitted) return;
-      try {
-        await onCssWorkspaceMutationCommitted(receipt.authority, liveEpoch);
-      } catch (error) {
-        if (!isCurrentCssIdentity(identity)) return;
-        const message = error instanceof Error ? error.message : String(error);
-        onStatusUpdate?.(
-          t("inspector-css-live-failed", { label, error: message }),
-          "error",
-        );
-      }
-    });
-    cssWorkspaceMutationTail = task
-      .catch((error) => {
-        if (!isCurrentCssIdentity(identity)) return;
-        if (liveEpoch !== null) onInspectorLivePropertiesRejected?.(liveEpoch);
-        cssWorkspaceMutationFailure = error instanceof Error ? error.message : String(error);
-        onStatusUpdate?.(t("inspector-css-mutation-failed", { label, error: cssWorkspaceMutationFailure }), "error");
-      })
-      .finally(() => {
-        queuedCssRuleMutationCount = Math.max(0, queuedCssRuleMutationCount - 1);
-        updatePendingIndicators();
-      });
-  }
-
-  type StagedCssRuleMutation = {
-    key: string;
-    identity: CssRequestIdentity;
-    label: string;
-    liveEpoch: number | null;
-    properties: Record<string, string>;
-    baselines: Record<string, CssPendingValueBaseline>;
-    run: (properties: Record<string, string>) => Promise<{ authority: CssMutationAuthorityReceipt }>;
-  };
-
-  const stagedCssRuleMutations = new Map<string, StagedCssRuleMutation>();
-  let stagedCssFlushPromise: Promise<void> | null = null;
-  let stagedCssFlushScheduled = false;
-
-  function updatePendingIndicators() {
-    onPendingChange?.("css", stagedCssRuleMutations.size > 0 || queuedCssRuleMutationCount > 0);
-  }
-
-  function stageCssRuleMutation(
-    mutation: Omit<StagedCssRuleMutation, "properties" | "baselines">,
-    property: string,
-    value: string,
-    baseline: CssPendingValueBaseline,
-  ) {
-    const current = stagedCssRuleMutations.get(mutation.key);
-    stagedCssRuleMutations.set(mutation.key, {
-      ...mutation,
-      label: current?.label ?? mutation.label,
-      properties: { ...(current?.properties ?? {}), [property]: value },
-      baselines: {
-        ...(current?.baselines ?? {}),
-        [property]: current?.baselines[property] ?? baseline,
-      },
-    });
-    updatePendingIndicators();
-  }
-
-  async function flushStagedCssPanelMutations() {
-    if (stagedCssFlushPromise) return stagedCssFlushPromise;
-    stagedCssFlushPromise = (async () => {
-      while (stagedCssRuleMutations.size > 0) {
-        const cssMutations = Array.from(stagedCssRuleMutations.values());
-        stagedCssRuleMutations.clear();
-        updatePendingIndicators();
-
-        for (const entry of cssMutations) {
-          enqueueCssWorkspaceMutation(entry.identity, entry.label, entry.liveEpoch, () =>
-            entry.run(entry.properties));
-        }
-        await cssWorkspaceMutationTail;
-      }
-    })().finally(() => {
-      stagedCssFlushPromise = null;
-      updatePendingIndicators();
-    });
-    return stagedCssFlushPromise;
-  }
-
-  function scheduleStagedCssPanelFlush() {
-    if (stagedCssFlushScheduled || stagedCssFlushPromise) return;
-    if (stagedCssRuleMutations.size === 0) return;
-    stagedCssFlushScheduled = true;
-    queueMicrotask(() => {
-      stagedCssFlushScheduled = false;
-      void flushStagedCssPanelMutations();
-    });
-  }
 
   let {
     inspectorSelectionSummary = null,
+    selectionInitializing = false,
     inspectorHtmlPhysicalFacts = null,
     inspectorBlockSelectionContext = null,
     inspectorDynamicWidgetSelectionContext = null,
@@ -213,13 +71,11 @@
     previewDevice = "desktop" as CssViewport,
     refreshToken = 0,
     historyProjectionQuiesced = false,
-    jsRefreshToken = 0,
     motionWorkspace,
     workspaceRevision = 0,
     previewRevision = "",
     blockPropertiesHeight = 220,
     blockPropertiesCollapsed = false,
-    projectFiles = [],
     scssVariables = [],
     fontFamilies = [],
     installedFontAxes = [],
@@ -248,18 +104,16 @@
     setImageSourceValue,
     applyZolaImageProcessingToHtml,
     cancelHtmlAttributeDraft,
-    enterTeraBoundary,
+    enterBoundary,
     deleteSelectedTeraNode,
     openSelectedTeraSource,
     openSelectedMarkdownContent,
     pendingTag = null,
     tagStatus = "",
     changeElementTag,
-    onLivePropertyChange,
     onLivePropertiesChange,
     onCssWorkspaceMutationCommitted,
     onInspectorLivePropertiesRejected,
-    injectPreviewCss,
     onStatusUpdate,
     onPendingChange,
     onInspectorTabChange,
@@ -276,10 +130,11 @@
     onGridOverlayChange,
   }: {
     inspectorSelectionSummary?: InspectorSelectionSummarySnapshot | null;
+    selectionInitializing?: boolean;
     inspectorHtmlPhysicalFacts?: InspectorHtmlPhysicalFacts | null;
     inspectorBlockSelectionContext?: BlockSelectionContext | null;
     inspectorDynamicWidgetSelectionContext?: DynamicWidgetSelectionContext | null;
-    sourceGraph?: import("$lib/types").SourceGraph | null;
+    sourceGraph?: import("$lib/source-graph/graph-contract").SourceGraph | null;
     projectRoot?: string;
     runtimeSessionId?: string;
     selectedTemplateSourceNode?: SourceGraphNode | null;
@@ -291,13 +146,11 @@
     previewDevice?: CssViewport;
     refreshToken?: number;
     historyProjectionQuiesced?: boolean;
-    jsRefreshToken?: number;
     motionWorkspace: MotionWorkspaceState;
     workspaceRevision?: number;
     previewRevision?: string;
     blockPropertiesHeight?: number;
     blockPropertiesCollapsed?: boolean;
-    projectFiles?: ProjectFile[];
     scssVariables?: ScssVariable[];
     fontFamilies?: string[];
     installedFontAxes?: InstalledFontVariationAxis[];
@@ -326,14 +179,13 @@
     setImageSourceValue: (value: string) => void;
     applyZolaImageProcessingToHtml: (intent: ProjectZolaImageIntent) => void | Promise<EditorActionOutcome>;
     cancelHtmlAttributeDraft: (expectedContextKey?: string) => void;
-    enterTeraBoundary: (scopeId: string) => void | Promise<void>;
+    enterBoundary: (scopeId: string) => void | Promise<void>;
     deleteSelectedTeraNode: () => void | Promise<void>;
     openSelectedTeraSource: () => void | Promise<void>;
     openSelectedMarkdownContent: () => void | Promise<void>;
     pendingTag?: string | null;
     tagStatus?: string;
     changeElementTag: (tag: string) => void;
-    onLivePropertyChange?: (selector: string, property: string, value: string) => void;
     onLivePropertiesChange?: (
       selector: string | null,
       properties: Record<string, string>,
@@ -344,7 +196,6 @@
       liveEpoch: number | null,
     ) => void | Promise<void>;
     onInspectorLivePropertiesRejected?: (liveEpoch: number) => void;
-    injectPreviewCss?: (css: string) => void;
     onStatusUpdate?: (text: string, kind: string) => void;
     onPendingChange?: (area: InspectorPendingArea, pending: boolean) => void;
     onInspectorTabChange?: (tab: InspectorTab) => void;
@@ -359,7 +210,7 @@
     applyNativeBlockOption: (request: ApplyNativeBlockOptionRequest) => Promise<EditorActionOutcome>;
     applyNativeIcon: (request: ApplyNativeIconRequest) => Promise<EditorActionOutcome>;
     applyNativeBlockSlotMutation: (
-      request: import("$lib/types").NativeBlockSlotMutationRequest,
+      request: import("$lib/blocks/contracts").NativeBlockSlotMutationRequest,
     ) => Promise<EditorActionOutcome>;
     updateDynamicWidget: (
       snapshot: DynamicWidgetSnapshot,
@@ -373,31 +224,6 @@
 
   let stableHtmlProjection = $state<StableHtmlInspectorProjection | null>(null);
   let htmlProjectionPending = $state(false);
-
-  $effect.pre(() => {
-    const transition = advanceStableHtmlInspectorProjection(
-      untrack(() => stableHtmlProjection),
-      {
-        summary: inspectorSelectionSummary,
-        selection: selectionSnapshot,
-        physicalFacts: inspectorHtmlPhysicalFacts,
-        attributeValues,
-        textContentValue,
-        classEditorValue,
-        imageSourceValue,
-        pendingTag,
-        attributeStatus,
-        textStatus,
-        classStatus,
-        imageStatus,
-        tagStatus,
-        canEditHtml,
-        isActivePreviewHtmlSource,
-      },
-    );
-    stableHtmlProjection = transition.projection;
-    htmlProjectionPending = transition.pending;
-  });
 
   const baseInspectorSelectionSummary = $derived(
     htmlProjectionPending && stableHtmlProjection
@@ -481,7 +307,7 @@
       : isActivePreviewHtmlSource,
   );
 
-  // AppState resolves the canonical ProjectWorkspace target and remains the
+  // The editor domain resolves the canonical ProjectWorkspace target and remains the
   // authority. During a resolving frame the last complete projection stays
   // visually identical; the panel itself is inert until the atomic swap.
   const canEditHtmlEffective = $derived(
@@ -493,15 +319,18 @@
   );
   const hasTeraSelection = $derived(
     selectionResolution(selectionSnapshot) === "resolved"
-      && primarySelectionEntry(selectionSnapshot)?.subject.kind === "teraBoundary",
+      && primarySelectionEntry(selectionSnapshot)?.subject.kind === "boundary"
+      && primarySelectionEntry(selectionSnapshot)?.subject.boundaryKind !== "markdown",
   );
   const hasMarkdownSelection = $derived(
     selectionResolution(selectionSnapshot) === "resolved"
-      && primarySelectionEntry(selectionSnapshot)?.subject.kind === "markdownBoundary",
+      && primarySelectionEntry(selectionSnapshot)?.subject.kind === "boundary"
+      && primarySelectionEntry(selectionSnapshot)?.subject.boundaryKind === "markdown",
   );
   const directAuthoringDocumentPath = $derived(
     hasTeraSelection
-      && selectedEditorNavigationNode?.kind === "teraBoundary"
+      && selectedEditorNavigationNode?.kind === "boundary"
+      && selectedEditorNavigationNode.boundary?.kind === "template"
       && selectedEditorNavigationNode.sourceKind === "block"
       && selectedEditorNavigationNode.origin === "project"
       && selectedEditorNavigationNode.capabilities.requiresEditScopeId === null
@@ -512,6 +341,17 @@
 
   let inspectorTab = $state<InspectorTab>("html");
   let inspectorTabChangeSerial = 0;
+  let CssCoordinatorComponent = $state<typeof CssInspectorCoordinator | null>(null);
+  let JsPaneComponent = $state<typeof JsPane | null>(null);
+  let BlockPropertiesPaneComponent = $state<typeof BlockPropertiesPane | null>(null);
+
+  async function loadInspectorTab(tab: InspectorTab) {
+    if (tab === "css" && !CssCoordinatorComponent) {
+      CssCoordinatorComponent = (await import("$lib/components/inspector/CssInspectorCoordinator.svelte")).default;
+    } else if (tab === "js" && !JsPaneComponent) {
+      JsPaneComponent = (await import("$lib/components/inspector/JsPane.svelte")).default;
+    }
+  }
 
   async function changeInspectorTab(nextTab: InspectorTab) {
     const previousTab = inspectorTab;
@@ -519,6 +359,13 @@
     const serial = ++inspectorTabChangeSerial;
     try {
       await beforeInspectorTabChange?.(previousTab, nextTab);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onStatusUpdate?.(t("inspector-tab-change-blocked", { error: message }), "error");
+      return false;
+    }
+    try {
+      await loadInspectorTab(nextTab);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       onStatusUpdate?.(t("inspector-tab-change-blocked", { error: message }), "error");
@@ -550,253 +397,12 @@
     void focusInspectorTab(inspectorTabs[nextIndex]);
   }
 
-  let classRules = $state<CssProperty[]>([]);
-  let cssRuleContext = $state<CssRuleContext | null>(null);
-  let cssInspectorResolution = $state<CssInspectorContextResolution | null>(null);
-  let cssInspectorSelectionIdentity = $state<SelectionMutationIdentity | null>(null);
-  let loadingClassRules = $state(false);
-  let pendingValues = $state<Record<string, string>>({});
-  let cssWorkspaceMutationTail: Promise<void> = Promise.resolve();
-  let cssWorkspaceMutationFailure = "";
+  let cssCoordinator = $state<{ selectClass: (className: string) => Promise<"allowed" | "blocked"> } | null>(null);
 
-  // Call ID guard — ensures only the latest loadRulesForClass call updates state
-  let loadCallId = 0;
-  let lastCssRuntimeKey = "";
-  let lastCssSelectionKey = "";
-  let lastHandledRefreshToken: number | null = null;
-  let cssTargetInfo = $state<PageCssTarget | null>(null);
-
-  const coordinatedCssState = $derived(
-    presentedSelectionSnapshot?.focus.kind === "cssRule"
-      || presentedSelectionSnapshot?.focus.kind === "cssProperty"
-      ? inspectorStateForCssSelector(presentedSelectionSnapshot.focus.selector)
-      : null,
-  );
-  const selectedClass = $derived(coordinatedCssState?.selectedClass ?? null);
-  const selectorSuffix = $derived(coordinatedCssState?.selectorSuffix ?? "");
-  const customSuffix = $derived(coordinatedCssState?.customSuffix ?? "");
-  const usingCustom = $derived(coordinatedCssState?.usingCustom ?? false);
-  const activeSuffix = $derived(usingCustom ? customSuffix : selectorSuffix);
-  const effectiveSelector = $derived(selectedClass ? "." + selectedClass + activeSuffix : null);
-  const presentedCssState = $derived(
-    inspectorStateForCssSelector(cssInspectorResolution?.selector ?? "")
-      ?? coordinatedCssState,
-  );
-  const presentedCssSelector = $derived(
-    cssInspectorResolution?.selector ?? effectiveSelector,
-  );
-  const presentedCssViewport = $derived(
-    cssInspectorResolution?.viewport ?? previewDevice,
-  );
-  const viewportLabel = $derived(
-    presentedCssViewport === "tablet" ? t("inspector-viewport-tablet")
-      : presentedCssViewport === "mobile" ? t("inspector-viewport-mobile")
-        : t("inspector-viewport-desktop"),
-  );
-  const cssProjectionTransitioning = $derived(Boolean(
-    cssInspectorResolution
-    && effectiveSelector
-    && (
-      cssInspectorResolution.selector !== effectiveSelector
-      || cssInspectorResolution.viewport !== previewDevice
-      || (
-        cssInspectorResolution.target
-        && cssInspectorResolution.target.file !== targetCssFile
-      )
-    )
-  ));
-
-  $effect(() => registerEditFlushHandler("inspector-css-workspace", async () => {
-    await flushStagedCssPanelMutations();
-    await cssWorkspaceMutationTail;
-    if (cssWorkspaceMutationFailure) {
-      throw new Error(cssWorkspaceMutationFailure);
-    }
-  }));
-
-  $effect(() => {
-    const runtimeKey = `${projectRoot}\u0000${runtimeSessionId}`;
-    if (runtimeKey === lastCssRuntimeKey) return;
-    lastCssRuntimeKey = runtimeKey;
-    loadCallId++;
-    loadingClassRules = false;
-    classRules = [];
-    cssRuleContext = null;
-    cssInspectorResolution = null;
-    cssInspectorSelectionIdentity = null;
-    cssTargetInfo = null;
-    cssWorkspaceMutationFailure = "";
-    queuedCssRuleMutationCount = 0;
-    stagedCssRuleMutations.clear();
-    updatePendingIndicators();
-  });
-
-  function applyLiveCssRuleContext(context: CssRuleContext) {
-    cssRuleContext = context;
-    classRules = context.hasViewportRule ? context.viewportRules : context.baseRules;
-    loadingClassRules = false;
-  }
-
-  function applyCssInspectorResolution(
-    resolution: CssInspectorContextResolution,
-    expectedSelection: SelectionMutationIdentity,
-  ) {
-    cssInspectorResolution = resolution;
-    cssInspectorSelectionIdentity = expectedSelection;
-    cssTargetInfo = resolution.target;
-    const resolvedContext = resolution.ruleContext;
-    if (!resolvedContext) {
-      cssRuleContext = null;
-      classRules = [];
-      loadingClassRules = false;
-      return;
-    }
-    const liveContext = getOpenCssRuleContext?.(
-      resolvedContext.file,
-      resolvedContext.selector,
-      resolvedContext.viewport,
-    );
-    if (!liveContext) {
-      applyLiveCssRuleContext(resolvedContext);
-      return;
-    }
-    const resolvedRules = resolvedContext.hasViewportRule
-      ? resolvedContext.viewportRules
-      : resolvedContext.baseRules;
-    const liveRules = liveContext.hasViewportRule
-      ? liveContext.viewportRules
-      : liveContext.baseRules;
-    const sameRules = JSON.stringify(liveRules) === JSON.stringify(resolvedRules);
-    applyLiveCssRuleContext({
-      ...liveContext,
-      background: sameRules ? resolvedContext.background : liveContext.background,
-      grid: sameRules ? resolvedContext.grid : liveContext.grid,
-    });
-  }
-
-  function hasStableCssInspectorProjection(
-    expectedSelection: SelectionMutationIdentity,
-  ) {
-    return Boolean(
-      cssInspectorResolution
-      && cssInspectorResolution.state !== "ambiguous"
-      && cssInspectorResolution.target
-      && sameCssSemanticSelection(
-        cssInspectorSelectionIdentity,
-        expectedSelection,
-      )
-    );
-  }
-
-  function selectedTemplatePath() {
-    const primary = primarySelectionEntry(selectionSnapshot);
-    if (primary?.subject.kind === "cssRule") {
-      return activeRenderedTemplatePath ?? null;
-    }
-    const provenance = primary?.provenance;
-    return provenance?.definition?.file
-      ?? provenance?.composition?.file
-      ?? activeRenderedTemplatePath
-      ?? null;
-  }
-
-  function captureCssSelectionIdentity(): SelectionMutationIdentity | null {
-    const snapshot = selectionSnapshot;
-    const anchor = primarySelectionEntry(snapshot)?.anchor;
-    if (
-      !snapshot
-      || selectionResolution(snapshot) !== "resolved"
-      || snapshot.projectRoot !== projectRoot
-      || snapshot.runtimeSessionId !== runtimeSessionId
-      || !anchor
-      || !Number.isSafeInteger(snapshot.selectionRevision)
-      || snapshot.selectionRevision <= 0
-    ) return null;
-    const members = snapshot.members.map((member) => ({
-      memberId: member.memberId,
-      editorNodeId: member.anchor.editorNodeId?.trim() || null,
-      sourceNodeId: member.anchor.sourceNodeId?.trim() || null,
-      renderInstanceId: member.anchor.renderInstanceId?.trim() || null,
-    }));
-    if (
-      !snapshot.primaryMemberId
-      || members.length === 0
-      || !members.some((member) => member.memberId === snapshot.primaryMemberId)
-    ) return null;
-    const identity: SelectionMutationIdentity = Object.freeze({
-      selectionRevision: snapshot.selectionRevision,
-      workspaceRevision: snapshot.canvasIdentity.workspaceRevision,
-      primaryMemberId: snapshot.primaryMemberId,
-      members,
-    });
-    return identity;
-  }
-
-  function isCurrentCssInspectorSubject(expected: SelectionMutationIdentity): boolean {
-    const expectedKey = cssInspectorSubjectKey(expected);
-    return Boolean(
-      expectedKey
-      && expectedKey === cssInspectorSubjectKey(captureCssSelectionIdentity()),
-    );
-  }
-
-  function isCurrentCssInspectorRead(
-    expected: SelectionMutationIdentity,
-  ): boolean {
-    return cssInspectorReadIsCurrent(
-      expected,
-      captureCssSelectionIdentity(),
-    );
-  }
-
-  function inspectorStateForCssSelector(selector: string) {
-    const normalized = selector.trim();
-    if (!normalized.startsWith(".")) return null;
-    const withoutDot = normalized.slice(1);
-    const simple = withoutDot.match(/^([A-Za-z_-][A-Za-z0-9_-]*)(.*)$/);
-    if (!simple) {
-      return {
-        selectedClass: withoutDot,
-        selectorSuffix: "",
-        customSuffix: "",
-        usingCustom: false,
-      };
-    }
-    const suffix = simple[2] ?? "";
-    if (!suffix) {
-      return {
-        selectedClass: simple[1],
-        selectorSuffix: "",
-        customSuffix: "",
-        usingCustom: false,
-      };
-    }
-    if (/[\s>+~.#\[]/.test(suffix)) {
-      return {
-        selectedClass: withoutDot,
-        selectorSuffix: "",
-        customSuffix: "",
-        usingCustom: false,
-      };
-    }
-    if ([":hover", ":focus", ":active"].includes(suffix)) {
-      return {
-        selectedClass: simple[1],
-        selectorSuffix: suffix,
-        customSuffix: "",
-        usingCustom: false,
-      };
-    }
-    return {
-      selectedClass: simple[1],
-      selectorSuffix: "",
-      customSuffix: suffix,
-      usingCustom: true,
-    };
-  }
-
-  function pendingValuesForCurrentSelector() {
-    return {};
+  async function selectClassForCss(className: string): Promise<"allowed" | "blocked"> {
+    if (!await changeInspectorTab("css")) return "blocked";
+    await tick();
+    return await cssCoordinator?.selectClass(className) ?? "blocked";
   }
 
   $effect(() => {
@@ -807,515 +413,55 @@
     if (
       selectionSnapshot?.focus.kind === "cssRule"
       || selectionSnapshot?.focus.kind === "cssProperty"
-    ) inspectorTab = "css";
+    ) untrack(() => { void changeInspectorTab("css"); });
   });
 
+  const blockSelectionContext = $derived(
+    presentedSelectionSnapshot?.aggregateCapabilities.primaryOnlyEditsAllowed
+      ? inspectorBlockSelectionContext
+      : null,
+  );
+  const dynamicBlockSelectionContext = $derived(
+    presentedSelectionSnapshot?.aggregateCapabilities.primaryOnlyEditsAllowed
+      ? inspectorDynamicWidgetSelectionContext
+      : null,
+  );
+
   $effect(() => {
-    const revision = cssSourceRevision;
-    const selector = effectiveSelector;
-    const file = targetCssFile;
-    const viewport = previewDevice;
-    const resolution = cssInspectorResolution;
-    void revision;
     if (
-      !selector
-      || !file
-      || resolution?.state === "ambiguous"
-      || resolution?.target?.file !== file
-      || resolution.selector !== selector
-      || resolution.viewport !== viewport
-    ) return;
-    const context = getOpenCssRuleContext?.(file, selector, viewport);
-    if (!context) return;
-    applyLiveCssRuleContext(context);
-    pendingValues = untrack(() => pendingValuesForCurrentSelector());
-  });
-
-  $effect(() => {
-    const nextRefreshToken = refreshToken;
-    if (historyProjectionQuiesced) return;
-    if (lastHandledRefreshToken === null) {
-      lastHandledRefreshToken = nextRefreshToken;
-      return;
-    }
-    if (nextRefreshToken === lastHandledRefreshToken) return;
-    lastHandledRefreshToken = nextRefreshToken;
-
-    const classToRefresh = untrack(() => selectedClass);
-    const suffixToRefresh = untrack(() => (usingCustom ? customSuffix : selectorSuffix));
-    const selectorToRefresh = classToRefresh ? `.${classToRefresh}${suffixToRefresh}` : null;
-    const fileToRefresh = untrack(() => targetCssFile);
-    const viewportToRefresh = untrack(() => previewDevice);
-    const keepClassSelected = Boolean(
-      classToRefresh &&
-      presentedInspectorSelectionSummary?.classes.includes(classToRefresh) &&
-      selectorToRefresh &&
-      fileToRefresh,
-    );
-
-    pendingValues = untrack(() => pendingValuesForCurrentSelector());
-    untrack(() => {
-      onPendingChange?.("css", false);
-      onPendingChange?.("js", false);
-    });
-
-    if (keepClassSelected && selectorToRefresh && fileToRefresh) {
-      untrack(() => {
-        void loadRulesForClass(
-          selectorToRefresh,
-          fileToRefresh,
-          viewportToRefresh,
-          { retainProjection: true },
-        );
-      });
-      return;
-    }
-
-    loadingClassRules = false;
-    classRules = [];
-    cssRuleContext = null;
-    cssInspectorResolution = null;
-    cssInspectorSelectionIdentity = null;
-    cssTargetInfo = null;
-    loadCallId++;
-  });
-
-  $effect(() => {
-    const projectionPending = htmlProjectionPending;
-    const nextSelectionIdentity = captureCssSelectionIdentity();
-    if (projectionPending && !nextSelectionIdentity) return;
-    const nextSelectionKey = selectionSnapshot
-      ? [
-        selectionSnapshot.runtimeSessionId,
-        cssInspectorSubjectKey(nextSelectionIdentity),
-      ].join(":")
-      : "";
-    if (nextSelectionKey === lastCssSelectionKey) {
-      if (
-        nextSelectionIdentity
-        && cssInspectorSelectionIdentity
-        && (
-          nextSelectionIdentity.selectionRevision
-            !== cssInspectorSelectionIdentity.selectionRevision
-          || !sameCssSemanticSelection(
-            nextSelectionIdentity,
-            cssInspectorSelectionIdentity,
-          )
-        )
-      ) {
-        cssInspectorSelectionIdentity = nextSelectionIdentity;
-      }
-      return;
-    }
-
-    lastCssSelectionKey = nextSelectionKey;
-    loadingClassRules = false;
-    classRules = [];
-    cssRuleContext = null;
-    cssInspectorResolution = null;
-    cssInspectorSelectionIdentity = null;
-    cssTargetInfo = null;
-    pendingValues = untrack(() => pendingValuesForCurrentSelector());
-    loadCallId++;
-  });
-
-  $effect(() => {
-    const projectionQuiesced = historyProjectionQuiesced;
-    const sel = effectiveSelector;
-    const file = targetCssFile;
-    const viewport = previewDevice;
-    // Selecția Rust face parte din identitatea citirii chiar dacă selectorul
-    // semantic rămâne identic. O revizie nouă trebuie să lanseze cererea care
-    // o înlocuiește pe cea anulată de SelectionCoordinator.
-    const selectionRevision = selectionSnapshot?.selectionRevision ?? 0;
-    // ProjectSession face parte din cheia proiecției. O redeschidere la același
-    // path trebuie să invalideze explicit citirea Inspectorului din runtime A.
-    const sessionRoot = projectRoot;
-    const sessionId = runtimeSessionId;
-    if (projectionQuiesced) return;
-    if (!sel || !file || !sessionRoot || !sessionId || selectionRevision <= 0) {
-      loadingClassRules = false;
-      classRules = [];
-      cssRuleContext = null;
-      cssInspectorResolution = null;
-      cssInspectorSelectionIdentity = null;
-      cssTargetInfo = null;
-      pendingValues = {};
-      return;
-    }
-    pendingValues = untrack(() => pendingValuesForCurrentSelector());
-
-    untrack(() => {
-      void loadRulesForClass(sel, file, viewport, { retainProjection: true });
-    });
-  });
-
-  async function loadRulesForClass(
-    selector: string,
-    file: string,
-    viewport: CssViewport,
-    options: { retainProjection?: boolean } = {},
-  ) {
-    if (historyProjectionQuiesced) return;
-    const expectedSelection = captureCssSelectionIdentity();
-    if (!expectedSelection) return;
-    const identity = captureCssIdentity();
-    const expectedRefreshToken = refreshToken;
-    const myCallId = ++loadCallId;
-    const retainProjection = Boolean(
-      options.retainProjection
-      && hasStableCssInspectorProjection(expectedSelection),
-    );
-    loadingClassRules = !retainProjection;
-    if (!retainProjection) {
-      classRules = [];
-      cssRuleContext = null;
-      cssInspectorResolution = null;
-      cssInspectorSelectionIdentity = null;
-      cssTargetInfo = null;
-    }
-    pendingValues = untrack(() => pendingValuesForCurrentSelector());
-    try {
-      const resolution = await resolveCssInspectorContext({
-        templatePath: selectedTemplatePath(),
-        selector,
-        viewport,
-        fallbackFile: file || null,
-        expectedWorkspaceRevision: workspaceRevision,
-        expectedSelection,
-      }, identity);
-      if (
-        myCallId !== loadCallId
-        || !isCurrentCssIdentity(identity)
-        || historyProjectionQuiesced
-        || refreshToken !== expectedRefreshToken
-        || !isCurrentCssInspectorRead(expectedSelection)
-      ) return;
-      if (
-        resolution.state !== "ambiguous"
-        && resolution.target
-        && resolution.target.file !== file
-      ) {
-        const allowed = await onCssCodeTargetChange?.({
-          selector,
-          file: resolution.target.file,
-          expectedSelectionRevision: expectedSelection.selectionRevision,
+      (blockSelectionContext || dynamicBlockSelectionContext)
+      && !BlockPropertiesPaneComponent
+    ) {
+      void import("$lib/components/inspector/BlockPropertiesPane.svelte")
+        .then((module) => { BlockPropertiesPaneComponent = module.default; })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          onStatusUpdate?.(t("inspector-tab-change-blocked", { error: message }), "error");
         });
-        if (!allowed && myCallId === loadCallId && !retainProjection) {
-          classRules = [];
-          cssRuleContext = null;
-          cssInspectorResolution = null;
-          cssInspectorSelectionIdentity = null;
-          cssTargetInfo = null;
-        }
-        return;
-      }
-      applyCssInspectorResolution(resolution, expectedSelection);
-    } catch (error) {
-      if (
-        !isCurrentCssIdentity(identity)
-        || historyProjectionQuiesced
-        || refreshToken !== expectedRefreshToken
-        || !isCurrentCssInspectorRead(expectedSelection)
-      ) return;
-      if (myCallId === loadCallId) {
-        if (!retainProjection) {
-          classRules = [];
-          cssRuleContext = null;
-          cssInspectorResolution = null;
-          cssInspectorSelectionIdentity = null;
-          cssTargetInfo = null;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        onStatusUpdate?.(t("inspector-css-read-failed", { file, error: message }), "error");
-      }
-    } finally {
-      if (myCallId === loadCallId) {
-        loadingClassRules = false;
-      }
     }
-  }
-
-  async function selectClassForCss(
-    className: string,
-  ): Promise<"allowed" | "blocked"> {
-    const expectedSelection = captureCssSelectionIdentity();
-    if (!expectedSelection || !await changeInspectorTab("css")) return "blocked";
-    pendingValues = pendingValuesForCurrentSelector();
-
-    const selector = `.${className}`;
-    const identity = captureCssIdentity();
-    const myCallId = ++loadCallId;
-    const retainProjection = hasStableCssInspectorProjection(expectedSelection);
-    loadingClassRules = !retainProjection;
-    try {
-      const resolution = await resolveCssInspectorContext({
-        templatePath: selectedTemplatePath(),
-        selector,
-        viewport: previewDevice,
-        fallbackFile: targetCssFile || null,
-        expectedWorkspaceRevision: workspaceRevision,
-        expectedSelection,
-      }, identity);
-      if (
-        myCallId !== loadCallId
-        || !isCurrentCssIdentity(identity)
-        || !isCurrentCssInspectorSubject(expectedSelection)
-      ) return "blocked";
-      if (resolution.state === "ambiguous" || !resolution.target) {
-        applyCssInspectorResolution(resolution, expectedSelection);
-        return "blocked";
-      }
-      const allowed = await onCssCodeTargetChange?.({
-        selector,
-        file: resolution.target.file,
-        expectedSelectionRevision: expectedSelection.selectionRevision,
-      });
-      return allowed ? "allowed" : "blocked";
-    } catch (error) {
-      if (isCurrentCssIdentity(identity)) {
-        const message = error instanceof Error ? error.message : String(error);
-        onStatusUpdate?.(t("inspector-css-target-failed", { selector, error: message }), "error");
-      }
-      return "blocked";
-    } finally {
-      if (myCallId === loadCallId) loadingClassRules = false;
-    }
-  }
-
-  function selectCssVariant(suffix: string) {
-    if (!selectedClass || !targetCssFile) return;
-    onCssCodeTargetChange?.({
-      selector: `.${selectedClass}${suffix}`,
-      file: targetCssFile,
-    });
-  }
-
-  function captureCurrentCssMutationTarget() {
-    if (!effectiveSelector || !targetCssFile) return;
-    const expectedSelection = captureCssSelectionIdentity();
-    const resolution = cssInspectorResolution;
-    if (
-      !expectedSelection
-      || !resolution
-      || resolution.state === "ambiguous"
-      || !sameCssSemanticSelection(cssInspectorSelectionIdentity, expectedSelection)
-      || resolution.selector !== effectiveSelector
-      || resolution.viewport !== previewDevice
-      || resolution.target?.file !== targetCssFile
-    ) return;
-    const identity = captureCssIdentity();
-    const file = targetCssFile;
-    const selector = effectiveSelector;
-    const viewport = previewDevice;
-    const pageTarget = cssTargetInfo;
-    const targetKey = [
-      identity.expectedProjectRoot,
-      identity.expectedSessionId,
-      cssSemanticSelectionKey(expectedSelection),
-      file,
-      selector,
-      viewport,
-      pageTarget?.targetKind === "reusable"
-        ? pageTarget.templatePath ?? "reusable"
-        : pageTarget?.pageOwned ? pageTarget.templatePath ?? "page" : "existing",
-    ].join("\u0000");
-    return {
-      identity,
-      expectedSelection,
-      file,
-      selector,
-      viewport,
-      pageTarget,
-      targetKey,
-    };
-  }
-
-  function draftCssProperties(properties: Readonly<Record<string, string>>) {
-    const target = captureCurrentCssMutationTarget();
-    if (!target) return;
-    const entries = Object.entries(properties);
-    if (!entries.length) return;
-    const focusedProperty = entries.length === 1 ? entries[0][0] : "background-image";
-    onCssCodeTargetChange?.({
-      selector: target.selector,
-      file: target.file,
-      property: focusedProperty,
-      expectedSelectionRevision: target.expectedSelection.selectionRevision,
-    });
-    const baselines = Object.fromEntries(entries.map(([property]) => [
-      property,
-      captureCssPendingValueBaseline(pendingValues, property),
-    ]));
-    const nextPendingValues = { ...pendingValues, ...properties };
-    pendingValues = nextPendingValues;
-    const appliedLiveEpoch = onLivePropertiesChange?.(
-      target.selector,
-      nextPendingValues,
-      target.viewport,
-    );
-    const liveEpoch = typeof appliedLiveEpoch === "number" ? appliedLiveEpoch : null;
-    const {
-      identity,
-      expectedSelection,
-      file,
-      selector,
-      viewport,
-      pageTarget,
-      targetKey,
-    } = target;
-    if (pageTarget?.targetKind === "reusable" && pageTarget.templatePath) {
-      const mutation = {
-        key: targetKey,
-        identity,
-        label: `CSS reutilizabil ${selector}`,
-        liveEpoch,
-        run: (properties: Record<string, string>) => setReusableCssRuleAtViewport({
-          templatePath: pageTarget.templatePath ?? "",
-          relativePath: file,
-          selector,
-          properties,
-          viewport,
-          expectedSelection,
-        }, identity),
-      };
-      for (const [property, value] of entries) {
-        stageCssRuleMutation(mutation, property, value, baselines[property]);
-      }
-    } else if (pageTarget?.pageOwned && pageTarget.templatePath) {
-      const mutation = {
-        key: targetKey,
-        identity,
-        label: `CSS ${selector}`,
-        liveEpoch,
-        run: (properties: Record<string, string>) => setPageCssRuleAtViewport({
-          templatePath: pageTarget.templatePath ?? "",
-          relativePath: file,
-          selector,
-          properties,
-          viewport,
-          expectedSelection,
-        }, identity),
-      };
-      for (const [property, value] of entries) {
-        stageCssRuleMutation(mutation, property, value, baselines[property]);
-      }
-    } else {
-      const mutation = {
-        key: targetKey,
-        identity,
-        label: `CSS ${selector}`,
-        liveEpoch,
-        run: (properties: Record<string, string>) => setCssRuleAtViewport({
-          relativePath: file,
-          selector,
-          properties,
-          viewport,
-          expectedSelection,
-        }, identity),
-      };
-      for (const [property, value] of entries) {
-        stageCssRuleMutation(mutation, property, value, baselines[property]);
-      }
-    }
-    if (!onLivePropertiesChange) {
-      for (const [property, value] of entries) onLivePropertyChange?.(selector, property, value);
-    }
-    onStatusUpdate?.(t("inspector-css-preview-changed", { property: focusedProperty }), "unsaved");
-  }
-
-  function draftCssProperty(property: string, value: string) {
-    draftCssProperties({ [property]: value });
-  }
-
-  function commitCssProperty(property: string, value?: string) {
-    if (value !== undefined && pendingValues[property] !== value) {
-      draftCssProperty(property, value);
-    }
-    scheduleStagedCssPanelFlush();
-  }
-
-  function commitCssProperties(properties: Readonly<Record<string, string>> = {}) {
-    if (Object.keys(properties).length) draftCssProperties(properties);
-    scheduleStagedCssPanelFlush();
-  }
-
-  function cancelCssProperty(property: string) {
-    const target = captureCurrentCssMutationTarget();
-    if (!target) return;
-    const staged = stagedCssRuleMutations.get(target.targetKey);
-    const baseline = staged?.baselines[property];
-    if (!staged || !baseline || !(property in staged.properties)) return;
-
-    const nextProperties = { ...staged.properties };
-    const nextBaselines = { ...staged.baselines };
-    delete nextProperties[property];
-    delete nextBaselines[property];
-    const hasRemainingDrafts = Object.keys(nextProperties).length > 0;
-    if (!hasRemainingDrafts) {
-      stagedCssRuleMutations.delete(target.targetKey);
-    } else {
-      stagedCssRuleMutations.set(target.targetKey, {
-        ...staged,
-        properties: nextProperties,
-        baselines: nextBaselines,
-      });
-    }
-
-    const nextPendingValues = restoreCssPendingValueBaseline(pendingValues, property, baseline);
-    pendingValues = nextPendingValues;
-    const appliedLiveEpoch = onLivePropertiesChange?.(
-      target.selector,
-      nextPendingValues,
-      target.viewport,
-    );
-    const liveEpoch = typeof appliedLiveEpoch === "number" ? appliedLiveEpoch : null;
-    if (hasRemainingDrafts) {
-      const remaining = stagedCssRuleMutations.get(target.targetKey);
-      if (remaining) {
-        stagedCssRuleMutations.set(target.targetKey, { ...remaining, liveEpoch });
-      }
-    } else if (liveEpoch !== null) {
-      // Dacă draftul anulat restaurează o valoare aflată deja într-o mutație
-      // anterioară din coadă, păstrăm overlay-ul până când acea proiecție s-a
-      // terminat. Guard-ul pe epoch nu permite ștergerea unui draft ulterior.
-      void cssWorkspaceMutationTail.then(() => {
-        onInspectorLivePropertiesRejected?.(liveEpoch);
-      });
-    }
-    updatePendingIndicators();
-    onStatusUpdate?.(t("inspector-css-edit-cancelled", { property }), "idle");
-  }
-
-  function cancelCssProperties(properties: readonly string[]) {
-    for (const property of properties) cancelCssProperty(property);
-  }
-
-  const continuousCssPropertyBindings = new Map<string, CssContinuousEditHandlers>();
-
-  function continuousCssProperty(property: string): CssContinuousEditHandlers {
-    const existing = continuousCssPropertyBindings.get(property);
-    if (existing) return existing;
-    const bindings: CssContinuousEditHandlers = {
-      oninput: (value) => draftCssProperty(property, value),
-      oncommit: () => commitCssProperty(property),
-      oncancel: () => cancelCssProperty(property),
-    };
-    continuousCssPropertyBindings.set(property, bindings);
-    return bindings;
-  }
-
-  const cssPropertyEdit: CssPropertyEditController = {
-    draft: draftCssProperty,
-    draftMany: draftCssProperties,
-    commit: commitCssProperty,
-    commitMany: commitCssProperties,
-    cancel: cancelCssProperty,
-    cancelMany: cancelCssProperties,
-    continuous: continuousCssProperty,
-  };
+  });
 
 </script>
+
+<HtmlInspectorCoordinator
+  summary={inspectorSelectionSummary}
+  selection={selectionSnapshot}
+  physicalFacts={inspectorHtmlPhysicalFacts}
+  {attributeValues}
+  {textContentValue}
+  {classEditorValue}
+  {imageSourceValue}
+  {pendingTag}
+  {attributeStatus}
+  {textStatus}
+  {classStatus}
+  {imageStatus}
+  {tagStatus}
+  {canEditHtml}
+  {isActivePreviewHtmlSource}
+  bind:stableProjection={stableHtmlProjection}
+  bind:pending={htmlProjectionPending}
+/>
 
 <aside
   class="inspector-pane"
@@ -1327,6 +473,7 @@
     <SelectionSummaryCard
       summary={presentedInspectorSelectionSummary}
       selection={presentedSelectionSnapshot}
+      initializing={selectionInitializing}
       authoringDocumentPath={directAuthoringDocumentPath}
       selectClass={selectClassForCss}
     />
@@ -1338,7 +485,7 @@
         <TeraSourceCard
           node={selectedTemplateSourceNode}
           navigationNode={selectedEditorNavigationNode}
-          {enterTeraBoundary}
+          {enterBoundary}
           {openSelectedTeraSource}
           {deleteSelectedTeraNode}
         />
@@ -1411,86 +558,92 @@
         inert={htmlProjectionPending}
       >
 
-        {#if inspectorTab === "css"}
-        <CssPane
-          selectionSummary={presentedInspectorSelectionSummary}
-          selectedClass={presentedCssState?.selectedClass ?? selectedClass}
-          effectiveSelector={presentedCssSelector}
-          {viewportLabel}
-          previewDevice={presentedCssViewport}
-          pageCssTarget={cssTargetInfo}
-          resolution={cssInspectorResolution}
-          {cssRuleContext}
-          {classRules}
-          {pendingValues}
-          {scssVariables}
-          {fontFamilies}
-          {installedFontAxes}
-          {scannedAssets}
-          {loadingClassRules}
-          selectorSuffix={presentedCssState?.selectorSuffix ?? selectorSuffix}
-          customSuffix={presentedCssState?.customSuffix ?? customSuffix}
-          usingCustom={presentedCssState?.usingCustom ?? usingCustom}
-          projectionTransitioning={cssProjectionTransitioning}
-          {cssPropertyEdit}
-          {gridOverlayEnabled}
-          {onGridOverlayChange}
-          {selectCssVariant}
-        />
-
-        {:else if inspectorTab === "js"}
-        <JsPane
-          selectionSummary={presentedInspectorSelectionSummary}
-          dataAnim={presentedAttributeValues["data-anim"] ?? null}
-          workspace={motionWorkspace}
-          onSwitchToHtml={() => { void changeInspectorTab("html"); }}
-        />
-
-        {:else if inspectorTab === "html"}
-        <HtmlPane
-          selectionSummary={presentedInspectorSelectionSummary}
-          selectionSnapshot={presentedSelectionSnapshot}
-          physicalFacts={presentedHtmlPhysicalFacts}
-          canEditHtml={canEditHtmlEffective}
-          attributeValues={presentedAttributeValues}
-          {attributePending}
-          textContentValue={presentedTextContentValue}
-          imageSourceValue={presentedImageSourceValue}
-          classEditorValue={presentedClassEditorValue}
-          {classPending}
-          pendingTag={presentedPendingTag}
-          {scannedAssets}
-          isActivePreviewHtmlSource={presentedIsActivePreviewHtmlSource}
-          attributeStatus={presentedAttributeStatus}
-          textStatus={presentedTextStatus}
-          classStatus={presentedClassStatus}
-          imageStatus={presentedImageStatus}
-          updateAttributeValue={updateAttributeValue}
-          removeAttribute={removeAttribute}
-          applyAttributesToHtml={applyAttributesToHtml}
-          updateTextContentValue={updateTextContentValue}
-          applyTextContentToHtml={applyTextContentToHtml}
-          setClassEditorValue={setClassEditorValue}
-          applyClassesToHtml={applyClassesToHtml}
-          generateClassForSelectedHtml={generateClassForSelectedHtml}
-          generateDataAnimForSelectedHtml={generateDataAnimForSelectedHtml}
-          setImageSourceValue={setImageSourceValue}
-          applyZolaImageProcessingToHtml={applyZolaImageProcessingToHtml}
-          cancelHtmlAttributeDraft={cancelHtmlAttributeDraft}
-          changeElementTag={changeElementTag}
-          tagStatus={presentedTagStatus}
-        />
-
+        {#if CssCoordinatorComponent}
+          <div class="inspector-route" hidden={inspectorTab !== "css"} inert={inspectorTab !== "css"}>
+            <CssCoordinatorComponent
+              bind:this={cssCoordinator}
+              selectionSummary={presentedInspectorSelectionSummary}
+              {presentedSelectionSnapshot}
+              {selectionSnapshot}
+              {htmlProjectionPending}
+              {projectRoot}
+              {runtimeSessionId}
+              {targetCssFile}
+              {cssSourceRevision}
+              {activeRenderedTemplatePath}
+              {previewDevice}
+              {refreshToken}
+              {historyProjectionQuiesced}
+              {workspaceRevision}
+              {scssVariables}
+              {fontFamilies}
+              {installedFontAxes}
+              {scannedAssets}
+              {onLivePropertiesChange}
+              {onCssWorkspaceMutationCommitted}
+              {onInspectorLivePropertiesRejected}
+              {onStatusUpdate}
+              {onPendingChange}
+              {onCssCodeTargetChange}
+              {getOpenCssRuleContext}
+              {gridOverlayEnabled}
+              {onGridOverlayChange}
+            />
+          </div>
         {/if}
+
+        {#if JsPaneComponent}
+          <div class="inspector-route" hidden={inspectorTab !== "js"} inert={inspectorTab !== "js"}>
+            <JsPaneComponent
+              selectionSummary={presentedInspectorSelectionSummary}
+              dataAnim={presentedAttributeValues["data-anim"] ?? null}
+              workspace={motionWorkspace}
+              onSwitchToHtml={() => { void changeInspectorTab("html"); }}
+            />
+          </div>
+        {/if}
+
+        <div class="inspector-route" hidden={inspectorTab !== "html"} inert={inspectorTab !== "html"}>
+          <HtmlPane
+            selectionSummary={presentedInspectorSelectionSummary}
+            selectionSnapshot={presentedSelectionSnapshot}
+            physicalFacts={presentedHtmlPhysicalFacts}
+            canEditHtml={canEditHtmlEffective}
+            attributeValues={presentedAttributeValues}
+            {attributePending}
+            textContentValue={presentedTextContentValue}
+            imageSourceValue={presentedImageSourceValue}
+            classEditorValue={presentedClassEditorValue}
+            {classPending}
+            pendingTag={presentedPendingTag}
+            {scannedAssets}
+            isActivePreviewHtmlSource={presentedIsActivePreviewHtmlSource}
+            attributeStatus={presentedAttributeStatus}
+            textStatus={presentedTextStatus}
+            classStatus={presentedClassStatus}
+            imageStatus={presentedImageStatus}
+            updateAttributeValue={updateAttributeValue}
+            removeAttribute={removeAttribute}
+            applyAttributesToHtml={applyAttributesToHtml}
+            updateTextContentValue={updateTextContentValue}
+            applyTextContentToHtml={applyTextContentToHtml}
+            setClassEditorValue={setClassEditorValue}
+            applyClassesToHtml={applyClassesToHtml}
+            generateClassForSelectedHtml={generateClassForSelectedHtml}
+            generateDataAnimForSelectedHtml={generateDataAnimForSelectedHtml}
+            setImageSourceValue={setImageSourceValue}
+            applyZolaImageProcessingToHtml={applyZolaImageProcessingToHtml}
+            cancelHtmlAttributeDraft={cancelHtmlAttributeDraft}
+            changeElementTag={changeElementTag}
+            tagStatus={presentedTagStatus}
+          />
+        </div>
       </div>
     </div>
-    <BlockPropertiesPane
-      selectionContext={presentedSelectionSnapshot?.aggregateCapabilities.primaryOnlyEditsAllowed
-        ? inspectorBlockSelectionContext
-        : null}
-      dynamicSelectionContext={presentedSelectionSnapshot?.aggregateCapabilities.primaryOnlyEditsAllowed
-        ? inspectorDynamicWidgetSelectionContext
-        : null}
+    {#if BlockPropertiesPaneComponent && (blockSelectionContext || dynamicBlockSelectionContext)}
+    <BlockPropertiesPaneComponent
+      selectionContext={blockSelectionContext}
+      dynamicSelectionContext={dynamicBlockSelectionContext}
       {sourceGraph}
       selectedTag={inspectorSelectionSummary?.tag ?? null}
       {projectRoot}
@@ -1512,6 +665,7 @@
       onDynamicUpdate={updateDynamicWidget}
       onDynamicDelete={deleteDynamicWidget}
     />
+    {/if}
   {/if}
 </aside>
 
@@ -1562,6 +716,19 @@
     flex: 1 1 auto;
     flex-direction: column;
     padding: 0;
+  }
+
+  .inspector-route {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .inspector-route[hidden] {
+    display: none;
   }
 
   .inspector-tabs {

@@ -293,8 +293,8 @@
       "position:fixed",
       "z-index:2147483643",
       "display:none",
-      "border:1px dashed rgba(59,130,246,.62)",
-      "background:linear-gradient(135deg,rgba(59,130,246,.055),rgba(59,130,246,.015))",
+      "border:1px dashed color-mix(in srgb, var(--pana-studio-accent, #1d7f6a) 62%, transparent)",
+      "background:linear-gradient(135deg,color-mix(in srgb, var(--pana-studio-accent, #1d7f6a) 5.5%, transparent),color-mix(in srgb, var(--pana-studio-accent, #1d7f6a) 1.5%, transparent))",
       "pointer-events:none",
       "box-sizing:border-box"
     ].join(";");

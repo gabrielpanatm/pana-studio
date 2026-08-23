@@ -1,16 +1,13 @@
 import {
   applyFileBufferChangeSet,
-  clearFileBufferDraft,
   readFileBufferText,
-  setFileBufferDraft,
-} from "$lib/project/io";
+} from "$lib/project/io/workspace";
 import { t } from "$lib/i18n/runtime.svelte";
-import type { FileBufferRequestIdentity } from "$lib/types";
+import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract";
 import type {
-  FileBufferFileSnapshot,
   FileBufferTextChange,
   FileBufferTextSnapshot,
-} from "$lib/types";
+} from "$lib/project/workspace-contract";
 
 type FileBufferDraftSyncLease = {
   expectedProjectRoot: string;
@@ -18,26 +15,15 @@ type FileBufferDraftSyncLease = {
   generation: number;
 };
 
-type FileBufferFullDraftSyncTask = FileBufferDraftSyncLease & {
-  kind: "full";
-  relativePath: string;
-  source: string;
-  base: string;
-  dirty: boolean;
-  contents: string;
-};
-
 type FileBufferChangeSetDraftSyncTask = FileBufferDraftSyncLease & {
-  kind: "changeset";
   relativePath: string;
-  dirty: true;
   base: string;
   contents: string;
   source: string;
   changes: FileBufferTextChange[];
 };
 
-type FileBufferDraftSyncTask = FileBufferFullDraftSyncTask | FileBufferChangeSetDraftSyncTask;
+type FileBufferDraftSyncTask = FileBufferChangeSetDraftSyncTask;
 
 type FileBufferSyncCursor = {
   revision: number;
@@ -108,9 +94,7 @@ export function queueFileBufferDraftChangeSetForPath(
 
   pending.set(key, {
     ...lease,
-    kind: "changeset",
     relativePath,
-    dirty: true,
     base,
     contents: afterText,
     source,
@@ -132,37 +116,6 @@ export function queueFileBufferDraftTextTransitionForPath(
     textTransitionToChangeSet(beforeText, afterText),
     source,
   );
-}
-
-export function queueFileBufferDraftSyncForPath(
-  relativePath: string,
-  beforeText: string,
-  afterText: string,
-  source = "source_draft",
-) {
-  if (!relativePath) return;
-  const lease = captureSyncLease(relativePath);
-  if (!lease) return;
-  if (beforeText === afterText) return;
-  const key = taskKey(lease, relativePath);
-  if (!acceptContinuousFrontendTransition(key, relativePath, beforeText, afterText)) return;
-  const previous = pending.get(key);
-  const base = previous?.base ?? beforeText;
-  if (base === afterText) {
-    pending.delete(key);
-    ensureDrain();
-    return;
-  }
-  pending.set(key, {
-    ...lease,
-    kind: "full",
-    relativePath,
-    source,
-    base,
-    dirty: true,
-    contents: afterText,
-  });
-  ensureDrain();
 }
 
 /**
@@ -187,24 +140,6 @@ export function queueFileBufferDraftFlushSnapshotForPath(
     contents,
     source,
   );
-}
-
-export function queueFileBufferDraftClear(relativePath: string, source = "clear") {
-  if (!relativePath) return;
-  const lease = captureSyncLease(relativePath);
-  if (!lease) return;
-  const key = taskKey(lease, relativePath);
-  desiredBuffers.delete(key);
-  pending.set(key, {
-    ...lease,
-    kind: "full",
-    relativePath,
-    source,
-    base: "",
-    dirty: false,
-    contents: "",
-  });
-  ensureDrain();
 }
 
 function captureSyncLease(relativePath: string): FileBufferDraftSyncLease | null {
@@ -278,6 +213,10 @@ export async function flushFileBufferDraftSync(options: { throwOnFailure?: boole
       .join("; ");
     throw new Error(t("file-buffer-sync-failures", { details }));
   }
+}
+
+export function hasPendingFileBufferDraftSync() {
+  return pending.size > 0 || drainPromise !== null || failures.size > 0;
 }
 
 export function resetFileBufferDraftSyncState() {
@@ -384,17 +323,6 @@ export function rebaseFileBufferDraftSyncProjection(
   return true;
 }
 
-export function fileBufferDraftSyncSnapshot() {
-  return {
-    generation: syncGeneration,
-    activeProjectRoot: activeSession?.expectedProjectRoot ?? null,
-    activeSessionId: activeSession?.expectedSessionId ?? null,
-    pendingCount: pending.size,
-    failureCount: failures.size,
-    cursorCount: confirmedBuffers.size,
-  };
-}
-
 function ensureDrain() {
   if (drainPromise) return;
   if (pending.size === 0) return;
@@ -418,15 +346,7 @@ async function applyTask(task: FileBufferDraftSyncTask) {
   if (!taskIsCurrent(task)) return;
   const key = taskKey(task, task.relativePath);
   try {
-    if (task.dirty) {
-      if (task.kind === "changeset") {
-        if (!await applyChangeSetTask(task)) return;
-      } else {
-        if (!await applyFullDraftTask(task)) return;
-      }
-    } else {
-      if (!await applyClearDraftTask(task)) return;
-    }
+    if (!await applyChangeSetTask(task)) return;
     if (!taskIsCurrent(task)) return;
     if (!failures.get(key)?.sticky) failures.delete(key);
   } catch (error) {
@@ -439,192 +359,6 @@ async function applyTask(task: FileBufferDraftSyncTask) {
     }
     console.warn("[Pană Studio] FileBufferStore draft sync failed", task.relativePath, message);
   }
-}
-
-async function applyFullDraftTask(task: FileBufferFullDraftSyncTask): Promise<boolean> {
-  const key = taskKey(task, task.relativePath);
-  const previousCursor = confirmedBuffers.get(key);
-  const current = await readFileBufferText(task.relativePath, taskIdentity(task));
-  if (!taskIsCurrent(task)) return false;
-  requireReadReceipt(task, current);
-
-  const currentCursor = { revision: current.revision, hash: current.hash };
-  if (current.text === task.contents) {
-    confirmedBuffers.set(key, currentCursor);
-    return true;
-  }
-
-  const taskBaseHash = hashFileBufferText(task.base);
-  if (previousCursor && previousCursor.hash !== current.hash) {
-    throw fullDraftSyncConflict(
-      task.relativePath,
-      t("file-buffer-sync-buffer-advanced", {
-        previousRevision: previousCursor.revision,
-        previousHash: previousCursor.hash,
-        revision: currentCursor.revision,
-        hash: currentCursor.hash,
-      }),
-    );
-  }
-  if (current.hash !== taskBaseHash) {
-    throw fullDraftSyncConflict(
-      task.relativePath,
-      t("file-buffer-sync-base-hash-mismatch", {
-        hash: current.hash,
-        baseHash: taskBaseHash,
-      }),
-    );
-  }
-
-  // Save projection advances the FileBuffer revision even when the current
-  // text/hash remains the base of this full-draft task. That revision-only
-  // advance is safe to reanchor; the mutation below is still bound to the
-  // freshly read revision/hash and therefore cannot overwrite a real change.
-
-  const snapshot = await setFileBufferDraft(
-    task.relativePath,
-    task.contents,
-    mutationExpectation(currentCursor),
-    taskIdentity(task),
-  );
-  if (!taskIsCurrent(task)) return false;
-  requireSetReceipt(task, snapshot, currentCursor);
-  rememberFileSnapshot(task, snapshot);
-  return true;
-}
-
-async function applyClearDraftTask(task: FileBufferFullDraftSyncTask): Promise<boolean> {
-  const key = taskKey(task, task.relativePath);
-  const previousCursor = confirmedBuffers.get(key);
-  const current = await readFileBufferText(task.relativePath, taskIdentity(task));
-  if (!taskIsCurrent(task)) return false;
-  requireReadReceipt(task, current);
-
-  const currentCursor = { revision: current.revision, hash: current.hash };
-  if (previousCursor && !sameCursor(previousCursor, currentCursor) && current.dirty) {
-    throw fullDraftSyncConflict(
-      task.relativePath,
-      t("file-buffer-sync-clear-stale", {
-        revision: currentCursor.revision,
-        hash: currentCursor.hash,
-        previousRevision: previousCursor.revision,
-        previousHash: previousCursor.hash,
-      }),
-    );
-  }
-
-  const snapshot = await clearFileBufferDraft(
-    task.relativePath,
-    mutationExpectation(currentCursor),
-    taskIdentity(task),
-  );
-  if (!taskIsCurrent(task)) return false;
-  requireClearReceipt(task, snapshot, currentCursor);
-  rememberFileSnapshot(task, snapshot);
-  return true;
-}
-
-function mutationExpectation(cursor: FileBufferSyncCursor) {
-  return {
-    expectedRevision: cursor.revision,
-    expectedHash: cursor.hash,
-  };
-}
-
-function sameCursor(left: FileBufferSyncCursor, right: FileBufferSyncCursor) {
-  return left.revision === right.revision && left.hash === right.hash;
-}
-
-function requireReadReceiptPath(task: FileBufferDraftSyncTask, relativePath: string) {
-  if (relativePath !== task.relativePath) {
-    throw new Error(
-      t("file-buffer-sync-receipt-path-mismatch", {
-        actualPath: relativePath,
-        path: task.relativePath,
-      }),
-    );
-  }
-}
-
-function requireReadReceipt(task: FileBufferDraftSyncTask, snapshot: FileBufferTextSnapshot) {
-  requireReadReceiptPath(task, snapshot.relativePath);
-  const calculatedHash = hashFileBufferText(snapshot.text);
-  const calculatedBytes = utf8ByteLength(snapshot.text);
-  if (
-    snapshot.hash !== calculatedHash
-    || snapshot.bytes !== calculatedBytes
-    || !Number.isSafeInteger(snapshot.revision)
-    || snapshot.revision < 0
-  ) {
-    throw new Error(
-      t("file-buffer-sync-read-metadata-mismatch", {
-        path: task.relativePath,
-        hash: snapshot.hash,
-        bytes: snapshot.bytes,
-        revision: snapshot.revision,
-        calculatedHash,
-        calculatedBytes,
-      }),
-    );
-  }
-}
-
-function requireSetReceipt(
-  task: FileBufferFullDraftSyncTask,
-  snapshot: FileBufferFileSnapshot,
-  expectation: FileBufferSyncCursor,
-) {
-  requireReadReceiptPath(task, snapshot.relativePath);
-  const desiredHash = hashFileBufferText(task.contents);
-  const desiredBytes = utf8ByteLength(task.contents);
-  if (
-    snapshot.currentHash !== desiredHash
-    || snapshot.currentBytes !== desiredBytes
-    || !Number.isSafeInteger(snapshot.revision)
-    || snapshot.revision <= expectation.revision
-  ) {
-    throw new Error(
-      t("file-buffer-sync-set-receipt-mismatch", {
-        path: task.relativePath,
-        expectedHash: desiredHash,
-        expectedBytes: desiredBytes,
-        expectedRevision: expectation.revision,
-        actualHash: snapshot.currentHash,
-        actualBytes: snapshot.currentBytes,
-        actualRevision: snapshot.revision,
-      }),
-    );
-  }
-}
-
-function requireClearReceipt(
-  task: FileBufferFullDraftSyncTask,
-  snapshot: FileBufferFileSnapshot,
-  expectation: FileBufferSyncCursor,
-) {
-  requireReadReceiptPath(task, snapshot.relativePath);
-  if (
-    snapshot.hasDraft
-    || snapshot.dirty
-    || !Number.isSafeInteger(snapshot.revision)
-    || snapshot.revision < expectation.revision
-  ) {
-    throw new Error(
-      t("file-buffer-sync-clear-receipt-mismatch", {
-        path: task.relativePath,
-        expectedRevision: expectation.revision,
-      }),
-    );
-  }
-}
-
-function fullDraftSyncConflict(relativePath: string, diagnostic: string) {
-  return new Error(
-    t("file-buffer-sync-full-draft-conflict", {
-      path: relativePath,
-      diagnostic,
-    }),
-  );
 }
 
 async function applyChangeSetTask(task: FileBufferChangeSetDraftSyncTask): Promise<boolean> {
@@ -773,13 +507,6 @@ async function ensureConfirmedBuffer(
   };
   confirmedBuffers.set(key, cursor);
   return cursor;
-}
-
-function rememberFileSnapshot(task: FileBufferDraftSyncTask, snapshot: FileBufferFileSnapshot) {
-  confirmedBuffers.set(taskKey(task, snapshot.relativePath), {
-    revision: snapshot.revision,
-    hash: snapshot.currentHash,
-  });
 }
 
 function utf8ByteLength(text: string) {

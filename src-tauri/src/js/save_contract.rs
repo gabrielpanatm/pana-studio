@@ -8,7 +8,6 @@ use crate::{
         project_session::ProjectSessionSnapshot,
         project_workspace::{WorkspaceTextChange, WorkspaceTextDelete},
     },
-    project::PROJECT_SCAN_MAX_ENTRIES,
     zola_links::template_contains_asset_path,
     zola_theme::{active_theme_from_source, ZolaThemeResolver},
 };
@@ -481,24 +480,10 @@ fn plan_page_js_generated_resource(
 }
 
 fn require_complete_page_js_source_inventory(
-    session: &ProjectSessionSnapshot,
+    _session: &ProjectSessionSnapshot,
     store: &FileBufferStore,
 ) -> Result<(), String> {
-    let scanned_entries = session
-        .scan_summary
-        .file_count
-        .saturating_add(session.scan_summary.directory_count);
-    if scanned_entries >= PROJECT_SCAN_MAX_ENTRIES {
-        return Err(format!(
-            "inventarul proiectului a atins limita de {PROJECT_SCAN_MAX_ENTRIES} intrări și nu poate demonstra acoperire completă"
-        ));
-    }
-    if let Some(diagnostic) = store.diagnostics.iter().find(|diagnostic| {
-        matches!(
-            diagnostic.code.as_str(),
-            "max_files_reached" | "max_total_bytes_reached"
-        )
-    }) {
+    if let Some(diagnostic) = store.diagnostics.first() {
         return Err(format!(
             "FileBufferStore nu are acoperire completă: {}",
             diagnostic.message
@@ -522,7 +507,7 @@ fn require_page_js_resource_identity_available(
         .strip_prefix("static/")
         .unwrap_or(&target_resource);
 
-    for (project_path, entry) in &store.files {
+    for (project_path, entry) in store.files.iter() {
         let Some(candidate) = normalized_template_from_project_path(project_path) else {
             continue;
         };

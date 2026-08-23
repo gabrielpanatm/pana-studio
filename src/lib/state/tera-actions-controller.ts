@@ -2,7 +2,6 @@ import {
   projectCommittedPreviewStructuralMutation,
   previewStructuralBlockingDiagnostic,
   requireCommittedPreviewStructuralPatch,
-  type PreviewStructuralCanonicalProjectionHost,
   type PreviewStructuralExecutionReceipt,
 } from "$lib/kernel/preview-projection-control";
 import {
@@ -14,30 +13,42 @@ import {
 } from "$lib/editor-runtime/action-outcome";
 import {
   previewStructuralCommandIdentity,
-  runInPreviewStructuralLane,
   type PreviewStructuralSessionLease,
 } from "$lib/kernel/preview-structural-lane";
 import { projectRelativeZolaPath, scannedCacheKey } from "$lib/project/files";
 import {
   executePreviewTeraDeleteIntent,
   executePreviewTeraInsertDropIntent,
-} from "$lib/project/io";
+} from "$lib/preview/structural-io";
 import { resolveTeraDropTarget } from "$lib/tera/drop-targets";
 import { deleteTeraNodeCapability } from "$lib/tera/mutations";
 import type { TeraDropRequest } from "$lib/tera/model";
-import type { SourceGraph, SourceGraphNode } from "$lib/types";
+import type { SourceGraph } from "$lib/source-graph/graph-contract";
+import type { SourceGraphNode } from "$lib/source-graph/contracts";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import { errorMessage } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
 
-export type TeraActionsControllerHost = PreviewStructuralCanonicalProjectionHost & {
-  sourceGraph: SourceGraph | null;
-  selectedTemplateSourceNode: SourceGraphNode | null;
-  activeScannedPath: string | null;
-  activeRenderedTemplatePath: string | null;
-  source: string;
-  sourceCache: Record<string, string>;
-  refreshSourceGraph: (options?: { strict?: boolean }) => Promise<void>;
+export type TeraActionsControllerHost = {
+  context: () => Readonly<{
+    sourceGraph: SourceGraph | null;
+    selectedTemplateSourceNode: SourceGraphNode | null;
+    activeScannedPath: string | null;
+    activeRenderedTemplatePath: string | null;
+  }>;
+  source: {
+    source: string;
+    sourceCache: Record<string, string>;
+  };
+  runStructural: <T>(
+    operation: (lease: PreviewStructuralSessionLease) => Promise<T>,
+  ) => Promise<T | null>;
+  projectCommitted: (
+    lease: PreviewStructuralSessionLease,
+    receipt: Parameters<typeof projectCommittedPreviewStructuralMutation>[2],
+    patch: Parameters<typeof projectCommittedPreviewStructuralMutation>[3],
+    projectLocalState: Parameters<typeof projectCommittedPreviewStructuralMutation>[4],
+  ) => ReturnType<typeof projectCommittedPreviewStructuralMutation>;
   selectDynamicWidgetSourceInstance?: (instanceId: string) => Promise<boolean>;
   setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
@@ -82,12 +93,12 @@ function projectCommittedTeraSource(
   host: TeraActionsControllerHost,
   patch: { file: string; contents: string },
 ) {
-  host.sourceCache = {
-    ...host.sourceCache,
+  host.source.sourceCache = {
+    ...host.source.sourceCache,
     [scannedCacheKey({ relativePath: patch.file })]: patch.contents,
   };
-  if (host.activeScannedPath === patch.file) {
-    host.source = patch.contents;
+  if (host.context().activeScannedPath === patch.file) {
+    host.source.source = patch.contents;
   }
 }
 
@@ -96,7 +107,7 @@ export async function insertTeraPaletteItemAtTarget(
   request: TeraDropRequest,
 ): Promise<EditorActionOutcome> {
   try {
-    const result = await runInPreviewStructuralLane(host, (lease) =>
+    const result = await host.runStructural((lease) =>
       insertTeraPaletteItemAtTargetInLane(host, request, lease));
     return result ?? cancelledAction(t("tera-actions-insert-session-cancelled"));
   } catch (error) {
@@ -111,7 +122,7 @@ async function insertTeraPaletteItemAtTargetInLane(
   request: TeraDropRequest,
   lease: PreviewStructuralSessionLease,
 ): Promise<EditorActionOutcome> {
-  const resolution = resolveTeraDropTarget(host.sourceGraph, request);
+  const resolution = resolveTeraDropTarget(host.context().sourceGraph, request);
   if (!resolution.allowed) {
     host.setGlobalStatus(resolution.reason, "error");
     return blockedAction(resolution.reason);
@@ -156,7 +167,7 @@ async function insertTeraPaletteItemAtTargetInLane(
       receipt,
       t("tera-actions-insert-engine-blocked"),
     );
-    const settlement = await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
+    const settlement = await host.projectCommitted(lease, receipt, patch, () => {
       projectCommittedTeraSource(host, patch);
     });
     const insertedDynamicWidgetId = dynamicWidgetInstanceIdFromSnippet(patch.snippet);
@@ -195,10 +206,10 @@ export async function deleteSelectedTeraNode(
   requestedNode?: SourceGraphNode | null,
 ): Promise<EditorActionOutcome> {
   const targetNode = captureTeraActionTarget(
-    requestedNode === undefined ? host.selectedTemplateSourceNode : requestedNode,
+    requestedNode === undefined ? host.context().selectedTemplateSourceNode : requestedNode,
   );
   try {
-    const result = await runInPreviewStructuralLane(host, (lease) =>
+    const result = await host.runStructural((lease) =>
       deleteSelectedTeraNodeInLane(host, targetNode, lease));
     return result ?? cancelledAction(t("tera-actions-delete-session-cancelled"));
   } catch (error) {
@@ -240,7 +251,7 @@ async function deleteSelectedTeraNodeInLane(
       receipt,
       t("tera-actions-delete-engine-blocked"),
     );
-    const settlement = await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
+    const settlement = await host.projectCommitted(lease, receipt, patch, () => {
       projectCommittedTeraSource(host, patch);
     });
     host.setGlobalStatus(

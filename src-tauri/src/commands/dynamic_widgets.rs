@@ -224,10 +224,10 @@ fn resolve_source_context(
         project_root,
         runtime_session_id,
         workspace_revision,
-        model_revision: model.revision,
+        model_revision: model.revision.clone(),
         source,
         source_instance,
-        source_graph: model.source_graph,
+        source_graph: model.source_graph.clone(),
     })
 }
 

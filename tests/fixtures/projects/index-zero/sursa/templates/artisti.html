@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ section.title }} | INDEX ZERO{% endblock title %}
+{% block description %}{{ section.description }}{% endblock description %}
+{% block content %}
+<section class="pagina-arhiva">
+  <header class="titlu-arhiva container-larg"><p class="eticheta-tehnica">DIRECTOR / {{ section.pages | length }} PRACTICI</p><h1>{{ section.title }}</h1><p>{{ section.description }}</p></header>
+  <div class="grila-artisti">
+    {% for pagina in section.pages %}
+    <article>
+      <a class="card-imagine" href="{{ pagina.permalink }}"><img src="{{ get_url(path=pagina.extra.imagine) }}" alt="" width="900" height="1125" loading="lazy"><span>{{ loop.index }}</span></a>
+      <p>{{ pagina.extra.disciplina }} / {{ pagina.extra.oras }}</p>
+      <h2><a href="{{ pagina.permalink }}">{{ pagina.title }}</a></h2>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock content %}

@@ -2,8 +2,8 @@ import type { GlobalStatusKind } from "$lib/status/global-status";
 import type {
   CanvasProjectionIdentity,
   PreviewPhaseReceipt,
-} from "$lib/project/io";
-import type { CanvasPatch } from "$lib/types";
+} from "$lib/contracts/canvas-projection";
+import type { CanvasPatch } from "$lib/preview/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export type PreviewOperationPayload = Record<string, unknown> & {

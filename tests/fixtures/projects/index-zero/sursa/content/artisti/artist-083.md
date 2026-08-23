@@ -1,0 +1,15 @@
++++
+title = "Oana Faur"
+description = "Artist fictiv din Sofia, cu o practică la intersecția dintre imagine, spațiu și procese colective."
+weight = 83
+
+[extra]
+id = "artist-083"
+disciplina = "imagine"
+oras = "Sofia"
+imagine = "imagini/vizual-03.webp"
++++
+
+Oana Faur lucrează cu materiale instabile: înregistrări de teren, obiecte recuperate și protocoale scrise împreună cu publicul. Practica urmărește felul în care o regulă aparent neutră schimbă comportamentul unui grup.
+
+În proiectele recente, instalația nu este tratată ca obiect finit, ci ca o situație care acumulează urme. La INDEX ZERO, această cercetare devine un sistem deschis pentru un spațiu fictiv din Timișoara.

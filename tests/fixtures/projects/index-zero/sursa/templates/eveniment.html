@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} | INDEX ZERO{% endblock title %}
+{% block description %}{{ page.description }}{% endblock description %}
+{% block content %}
+{% set artist_path = "artisti/" ~ page.extra.artist_id ~ ".md" %}
+{% set locatie_path = "locatii/" ~ page.extra.locatie_id ~ ".md" %}
+{% set artist = get_page(path=artist_path) %}
+{% set locatie = get_page(path=locatie_path) %}
+<article class="detaliu">
+  <header class="detaliu-hero">
+    <div class="detaliu-imagine"><img src="{{ get_url(path=page.extra.imagine) }}" alt="" width="1536" height="1024"></div>
+    <div class="detaliu-titlu">
+      <p class="eticheta-tehnica">{{ page.taxonomies.discipline[0] }} / {{ page.taxonomies.formate[0] }}</p>
+      <h1>{{ page.title }}</h1>
+      <p>{{ page.description }}</p>
+    </div>
+    <dl><div><dt>Data</dt><dd>{{ page.date | date(format="%d.%m.2027") }}</dd></div><div><dt>Ora</dt><dd>{{ page.extra.ora }}</dd></div><div><dt>Durata</dt><dd>{{ page.extra.durata }}</dd></div></dl>
+  </header>
+  <div class="detaliu-corp container-larg">
+    <div class="proza">{{ page.content | safe }}</div>
+    <aside><p class="eticheta-tehnica">CONEXIUNI</p><a href="{{ artist.permalink }}"><span>Artist</span><strong>{{ artist.title }}</strong></a><a href="{{ locatie.permalink }}"><span>Spațiu</span><strong>{{ locatie.title }}</strong></a><a class="buton buton-primar" href="{{ get_url(path='@/bilete.md') }}">Rezervare demo</a></aside>
+  </div>
+</article>
+{% endblock content %}

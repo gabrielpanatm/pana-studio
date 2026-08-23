@@ -80,21 +80,21 @@ test("plan și execute refuză dovada locală înainte de credentiale sau invent
 });
 
 test("frontendul consumă decizia Rust, verifică currency și propagă proof chain", () => {
-  const app = source("../src/lib/state/app.svelte.ts");
+  const publishController = source("../src/lib/deploy/publish-state.svelte.ts");
   const workspace = source("../src/lib/components/publish/PublishWorkspace.svelte");
   const targets = source("../src/lib/components/deploy/DeployTargetsPanel.svelte");
 
-  assert.match(workspace, /app\.currentPublishPreflightReceipt\(\)/);
+  assert.match(workspace, /publishWorkspace\.currentPreflight\(\)/);
   assert.match(workspace, /preflight\?\.status === "ready"/);
   assert.doesNotMatch(workspace, /sourceSaved && auditCurrent|controlledPreview\.validation === "valid"/);
   assert.match(workspace, /preflight\.gates as gate/);
   assert.match(workspace, /auditFingerprints/);
   assert.match(workspace, /revealSourceRange/);
 
-  assert.match(app, /receipt\.workspaceRevision === workspace\.revision/);
-  assert.match(app, /receipt\.diskGeneration === workspace\.diskGeneration/);
-  assert.match(app, /build\.preflightToken === preflight\.preflightToken/);
-  assert.match(app, /build\.deploySettingsFingerprint === preflight\.deploySettingsFingerprint/);
+  assert.match(publishController, /receipt\.workspaceRevision === authority\.workspace\.revision/);
+  assert.match(publishController, /receipt\.diskGeneration === authority\.workspace\.diskGeneration/);
+  assert.match(publishController, /build\.preflightToken === preflight\.preflightToken/);
+  assert.match(publishController, /build\.deploySettingsFingerprint === preflight\.deploySettingsFingerprint/);
 
   assert.match(targets, /expectedBuildToken: build\.buildToken/);
   assert.match(targets, /expectedArtifactId: build\.artifactId/);
@@ -116,7 +116,7 @@ test("mutațiile workspace și schimbările deploy invalidează autorizația", (
     const nextCommand = deploy.indexOf("#[tauri::command]", index);
     assert.match(deploy.slice(index, nextCommand === -1 ? undefined : nextCommand), /invalidate_publish_authorization/);
   }
-  assert.match(frontend, /app\?\.invalidatePublishAuthorization\(\)/);
+  assert.match(frontend, /invalidatePublishAuthorization\(\)/);
   assert.match(frontend, /plan\.preflightToken !== publishBuild\.preflightToken/);
   assert.match(frontend, /plan\.artifactId !== publishBuild\.artifactId/);
 });

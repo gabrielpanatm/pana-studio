@@ -14,10 +14,12 @@ const qualifiedSurfaces = [
   "../src/lib/components/creation/BlocksWorkspace.svelte",
   "../src/lib/components/creation/ComponentsWorkspace.svelte",
   "../src/lib/components/creation/AssetsWorkspace.svelte",
-  "../src/lib/components/creation/DesignSystemWorkspace.svelte",
+  "../src/lib/components/creation/design-system/DesignClassesWorkspace.svelte",
+  "../src/lib/components/creation/design-system/StylesheetsWorkspace.svelte",
+  "../src/lib/components/creation/design-system/FontManagerWorkspace.svelte",
+  "../src/lib/components/creation/design-system/font-manager/FontInstaller.svelte",
   "../src/lib/components/creation/DesignTokenCatalog.svelte",
   "../src/lib/components/creation/ThemeStylesWorkspace.svelte",
-  "../src/lib/components/themes/ThemesWorkspace.svelte",
   "../src/lib/components/templates/TemplatesWorkspace.svelte",
   "../src/lib/components/content/ContentWorkspace.svelte",
   "../src/lib/components/data/DataWorkspace.svelte",
@@ -57,6 +59,42 @@ test("semantic entities share one theme-aware outline contract", () => {
     designSystem,
     /button\.ui-entity-trigger:hover:not\(:disabled\)\s*\{[\s\S]*?background:\s*var\(--ui-entity-trigger-background,\s*transparent\);[\s\S]*?box-shadow:\s*var\(--ui-entity-trigger-shadow,\s*none\);/,
   );
+});
+
+test("editor semantic kinds use centralized light/dark colors on every surface", () => {
+  const layers = source("../src/lib/components/project/EditorNavigationTree.svelte");
+  const inspector = source("../src/lib/components/inspector/SelectionSummaryCard.svelte");
+  const previewBridge = source("../src/lib/preview/bridge.ts");
+  const canvasAgent = source("../src-tauri/src/preview/bridge/03_canvas_agent.js");
+  const inspectorShell = source("../src-tauri/src/preview/bridge/08_inspector_shell.js");
+
+  for (const token of [
+    "entity-html",
+    "entity-template",
+    "entity-component",
+    "entity-markdown",
+    "entity-runtime",
+    "entity-readonly",
+  ]) {
+    assert.match(designSystem, new RegExp(`--${token}:`), `lipsește --${token}`);
+  }
+  assert.match(designSystem, /--entity-html:\s*var\(--brand\)/);
+  const light = designSystem.slice(designSystem.indexOf('html[data-pana-theme="light"]'));
+  for (const token of ["entity-template", "entity-component", "entity-markdown", "entity-runtime"]) {
+    assert.match(light, new RegExp(`--${token}:`), `light theme nu redefinește --${token}`);
+  }
+  for (const token of ["template", "component", "markdown", "runtime"]) {
+    assert.match(layers, new RegExp(`var\\(--entity-${token}\\)`));
+    assert.match(inspector, new RegExp(`var\\(--entity-${token}\\)`));
+    assert.match(previewBridge, new RegExp(`--pana-studio-entity-${token}`));
+    assert.match(canvasAgent, new RegExp(`--pana-studio-entity-${token}`));
+  }
+  assert.match(canvasAgent, /default: return "var\(--pana-studio-accent/);
+  assert.doesNotMatch(canvasAgent, /#3b82f6/);
+  assert.match(previewBridge, /--pana-studio-danger/);
+  assert.match(inspectorShell, /var\(--pana-studio-entity-template/);
+  assert.match(inspectorShell, /var\(--pana-studio-danger/);
+  assert.doesNotMatch(inspectorShell, /#3b82f6|rgba\(59,130,246/);
 });
 
 test("all qualified entity surfaces opt in explicitly and publish persistent state", () => {

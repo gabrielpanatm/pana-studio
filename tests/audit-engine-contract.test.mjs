@@ -5,7 +5,6 @@ import { test } from "node:test";
 import {
   auditProviderStatusCounts,
   auditReceiptIsCurrent,
-  filterAuditFindings,
 } from "../src/lib/audit/model.ts";
 import { codeSelectionRangeForSourceRange } from "../src/lib/editor/source-ranges.ts";
 
@@ -87,36 +86,6 @@ test("receipt-ul Audit este curent numai pentru identitatea și revizia exactă"
   }), false);
 });
 
-test("filtrele Audit combină outcome, impact, policy, provider și origine", () => {
-  const values = [
-    finding(),
-    finding({
-      id: "audit:two",
-      providerId: "asset_usage",
-      ruleCode: "asset_without_known_usage",
-      category: "assets",
-      outcome: "needs_review",
-      impact: "info",
-      primaryLocation: {
-        ...finding().primaryLocation,
-        file: "themes/base/static/logo.svg",
-        origin: "theme",
-      },
-    }),
-  ];
-  assert.deepEqual(
-    filterAuditFindings(values, {
-      outcome: "needs_review",
-      impact: "info",
-      policy: "advisory",
-      providerId: "asset_usage",
-      origin: "theme",
-    }).map((item) => item.id),
-    ["audit:two"],
-  );
-  assert.equal(filterAuditFindings(values, { query: "page.md" }).length, 1);
-});
-
 test("stările complete, partial, failed și skipped rămân distincte în UI", () => {
   const provider = (status) => ({
     id: `provider_${status}`,
@@ -155,14 +124,14 @@ test("navigarea exactă convertește offset-urile UTF-8 Rust în offset-uri UTF-
 
 test("UI-ul consumă receipt-ul Rust, propagă Result și navighează la range exact", () => {
   const audit = source("../src/lib/components/audit/AuditWorkspace.svelte");
-  const state = source("../src/lib/state/app.svelte.ts");
+  const state = source("../src/lib/audit/workspace-state.svelte.ts");
   const rust = source("../src-tauri/src/kernel/audit/model.rs");
 
   assert.match(rust, /pub struct AuditRunReceipt/);
   assert.match(rust, /pub struct AuditProviderReceipt/);
   assert.match(rust, /Violation[\s\S]*NeedsReview[\s\S]*EngineError/);
   assert.match(state, /Promise<AuditRefreshResult>/);
-  assert.match(state, /currentProjectAuditReceipt/);
+  assert.match(state, /current\(receipt: AuditRunReceipt \| null = this\.snapshot\)/);
   assert.match(audit, /if \(!result\.ok\) throw new Error/);
   assert.doesNotMatch(audit, /if \(!valid\) throw new Error/);
   assert.match(audit, /buildError[\s\S]*refreshProjectAudit\(true, "full"\)/);
@@ -171,9 +140,9 @@ test("UI-ul consumă receipt-ul Rust, propagă Result și navighează la range e
 });
 
 test("fixul safe trimite numai identități și este reconstruit atomic în Rust", () => {
-  const state = source("../src/lib/state/app.svelte.ts");
-  const io = source("../src/lib/project/io.ts");
-  const types = source("../src/lib/types.ts");
+  const state = source("../src/lib/audit/workspace-state.svelte.ts");
+  const io = source("../src/lib/audit/io.ts");
+  const types = source("../src/lib/audit/contracts.ts");
   const command = source("../src-tauri/src/commands/audit.rs");
 
   const inputContract = types.slice(
@@ -188,8 +157,8 @@ test("fixul safe trimite numai identități și este reconstruit atomic în Rust
   assert.match(inputContract, /fixId/);
   assert.doesNotMatch(inputContract, /replacement|edits|contents/);
   assert.match(io, /invoke<AuditFixApplyReceipt>\("apply_audit_fix", \{ input \}\)/);
-  assert.match(state, /runInPreviewStructuralLane[\s\S]*applyAuditFixInRust/);
-  assert.match(state, /settleProjectWorkspaceMutation/);
+  assert.match(state, /this\.commands\.runStructural[\s\S]*this\.gateway\.applyFix/);
+  assert.match(state, /this\.commands\.settleMutation/);
   assert.match(command, /require_authoritative_audit_request/);
   assert.match(command, /materialize_audit_fix\(&candidate, fix\)/);
   assert.match(command, /publish_prepared_project_workspace_candidate/);

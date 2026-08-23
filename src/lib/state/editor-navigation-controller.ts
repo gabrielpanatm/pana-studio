@@ -2,51 +2,67 @@ import {
   commitEditorMove,
   planEditorMove,
   requestEditorEditScope,
-  type CanvasProjectionIdentity,
-} from "$lib/project/io";
+} from "$lib/editor/navigation-io";
+import type {
+  CanvasProjectionIdentity,
+} from "$lib/contracts/canvas-projection";
 import {
   blockedAction,
   committedAction,
   failedAction,
   type EditorActionOutcome,
 } from "$lib/editor-runtime/action-outcome";
-import { projectCommittedEditorMoveMutation } from "$lib/kernel/preview-projection-control";
+import {
+  projectCommittedEditorMoveMutation,
+  type CommittedMutationProjectionContext,
+} from "$lib/kernel/preview-projection-control";
 import { t } from "$lib/i18n/runtime.svelte";
+import type { NativeBlockSlotMutationContext } from "$lib/blocks/contracts";
 import type {
-  EditScopeGrant,
   EditorMovePlan,
+  EditScopeGrant,
+} from "$lib/editor/contracts";
+import type {
   EditorNavigationNode,
   EditorNavigationSnapshot,
-  NativeBlockSlotMutationContext,
+} from "$lib/editor/contracts";
+import type {
   SelectionAnchor,
-  ProjectMovePosition,
-} from "$lib/types";
+  SelectionSnapshot,
+} from "$lib/editor/contracts";
+import type { ProjectMovePosition } from "$lib/preview/contracts";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import type { PreviewTeraSelectionTarget } from "$lib/state/app-helpers";
-import type { AppState } from "$lib/state/app.svelte";
 import { errorMessage } from "$lib/util";
 import type { EditFlushReason } from "$lib/session/edit-flush-registry";
-import {
-  hoverCanvasNavigationNode,
-  selectCanvasNavigationNode,
-} from "$lib/state/canvas-interaction-controller";
+import { sameCanvasProjectionIdentity as sameCanvasIdentity } from "$lib/contracts/canvas-identity";
+import type { EditorSelectionSessionController } from "$lib/state/editor-selection-session.svelte";
 
 export type EditorNavigationControllerHost = {
-  activeCanvasIdentity: CanvasProjectionIdentity | null;
-  editorNavigationSnapshot: EditorNavigationSnapshot | null;
-  editorEditScopeGrant: EditScopeGrant | null;
-  editorEditScopeId: string | null;
+  context: () => Readonly<{
+    activeCanvasIdentity: CanvasProjectionIdentity | null;
+    projectSessionEpoch: number;
+  }>;
+  editorSelection: Pick<
+    EditorSelectionSessionController,
+    "navigationSnapshot" | "editScopeGrant" | "editScopeId"
+  >;
   setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
   setPreviewTeraSelection: (
     target: PreviewTeraSelectionTarget,
     options?: { status?: string },
   ) => void;
-  refreshEditorNavigationSnapshot: (
-    identity?: CanvasProjectionIdentity,
-    previewUrl?: string,
-  ) => Promise<void>;
   flushInteractiveEditorDrafts: (reason: EditFlushReason) => Promise<void>;
-} & Parameters<typeof projectCommittedEditorMoveMutation>[0];
+  selectCanvasNode: (
+    node: EditorNavigationNode,
+    options?: { toggle?: boolean; extendRange?: boolean; setPrimary?: boolean },
+  ) => Promise<SelectionSnapshot | null>;
+  hoverCanvasNode: (node: EditorNavigationNode | null) => void;
+  projectCommittedMove: (
+    context: CommittedMutationProjectionContext,
+    receipt: Parameters<typeof projectCommittedEditorMoveMutation>[2],
+  ) => ReturnType<typeof projectCommittedEditorMoveMutation>;
+};
 
 export function editorNavigationNodeSelector(node: EditorNavigationNode): string | null {
   const renderInstanceId = node.renderInstanceId
@@ -111,10 +127,10 @@ function editorMoveNodeMatchesAnchor(
 }
 
 export function editorNavigationDropTargetStatus(
-  host: Pick<
-    EditorNavigationControllerHost,
-    "editorNavigationSnapshot" | "editorEditScopeGrant"
-  >,
+  host: {
+    editorNavigationSnapshot: EditorNavigationSnapshot | null;
+    editorEditScopeGrant: EditScopeGrant | null;
+  },
   target: EditorNavigationDropTarget,
 ) {
   const snapshot = host.editorNavigationSnapshot;
@@ -132,7 +148,7 @@ export function editorNavigationDropTargetStatus(
   // boundary instance, so never let that helper render identity shadow it.
   const node = boundaryInstanceId
     ? snapshot.nodes.find(
-      (candidate) => candidate.kind === "teraBoundary"
+      (candidate) => candidate.kind === "boundary"
         && candidate.boundary?.boundaryInstanceId === boundaryInstanceId
         && (!boundarySourceId || candidate.boundary.sourceNodeId === boundarySourceId),
     ) ?? null
@@ -154,7 +170,7 @@ export function editorNavigationDropTargetStatus(
   ) {
     return {
       allowed: false,
-      message: "Deschide boundary-ul Tera înainte de drop.",
+      message: "Deschide boundary-ul semantic înainte de drop.",
     };
   }
   if (
@@ -185,22 +201,22 @@ export function selectEditorNavigationNode(
     setPrimary?: boolean;
   } = {},
 ) {
-  return selectCanvasNavigationNode(host as AppState, node, options);
+  return host.selectCanvasNode(node, options);
 }
 
 export function hoverEditorNavigationNode(
   host: EditorNavigationControllerHost,
   node: EditorNavigationNode | null,
 ) {
-  hoverCanvasNavigationNode(host as AppState, node);
+  host.hoverCanvasNode(node);
 }
 
 export async function enterEditorNavigationScope(
   host: EditorNavigationControllerHost,
   scopeId: string,
 ) {
-  const snapshot = host.editorNavigationSnapshot;
-  const identity = host.activeCanvasIdentity;
+  const snapshot = host.editorSelection.navigationSnapshot;
+  const identity = host.context().activeCanvasIdentity;
   if (!snapshot || !identity) {
     throw new Error(t("editor-navigation-snapshot-unavailable"));
   }
@@ -218,11 +234,11 @@ export async function enterEditorNavigationScope(
     scopeId,
     snapshot.focusedView?.previewContextRenderInstanceId ?? null,
   );
-  if (!sameCanvasIdentity(host.activeCanvasIdentity, identity)) {
+  if (!sameCanvasIdentity(host.context().activeCanvasIdentity, identity)) {
     throw new Error(t("editor-navigation-preview-changed"));
   }
-  host.editorEditScopeGrant = grant;
-  host.editorEditScopeId = scopeId;
+  host.editorSelection.editScopeGrant = grant;
+  host.editorSelection.editScopeId = scopeId;
   const renderInstanceId = editorNavigationViewNodeRenderInstanceId(
     scope.renderInstanceIds,
     scope.boundary.rootRenderInstanceIds,
@@ -247,12 +263,12 @@ export async function enterEditorNavigationScope(
 }
 
 export function exitEditorNavigationScope(host: EditorNavigationControllerHost) {
-  const scope = host.editorNavigationSnapshot?.focusedView?.nodes.find(
-    (node) => node.editorNodeId === host.editorEditScopeId
+  const scope = host.editorSelection.navigationSnapshot?.focusedView?.nodes.find(
+    (node) => node.editorNodeId === host.editorSelection.editScopeId
       && node.kind === "boundary",
   ) ?? null;
-  host.editorEditScopeGrant = null;
-  host.editorEditScopeId = null;
+  host.editorSelection.editScopeGrant = null;
+  host.editorSelection.editScopeId = null;
   if (scope?.boundary) {
     const renderInstanceId = editorNavigationViewNodeRenderInstanceId(
       scope.renderInstanceIds,
@@ -278,8 +294,8 @@ export async function previewEditorNavigationMove(
   position: ProjectMovePosition,
   nativeBlockSlot: NativeBlockSlotMutationContext | null = null,
 ): Promise<EditorMovePlan> {
-  const snapshot = host.editorNavigationSnapshot;
-  const identity = host.activeCanvasIdentity;
+  const snapshot = host.editorSelection.navigationSnapshot;
+  const identity = host.context().activeCanvasIdentity;
   if (!snapshot || !identity || !sameCanvasIdentity(snapshot.identity, identity)) {
     throw new Error(t("editor-navigation-snapshot-stale"));
   }
@@ -292,7 +308,7 @@ export async function previewEditorNavigationMove(
     sourceNodeId,
     targetNodeId,
     position,
-    editScopeGrant: host.editorEditScopeGrant,
+    editScopeGrant: host.editorSelection.editScopeGrant,
     nativeBlockSlot,
   });
 }
@@ -307,7 +323,7 @@ export async function moveEditorNavigationNode(
   nativeBlockSlot: NativeBlockSlotMutationContext | null = null,
 ): Promise<EditorActionOutcome> {
   try {
-    const capturedSnapshot = host.editorNavigationSnapshot;
+    const capturedSnapshot = host.editorSelection.navigationSnapshot;
     if (!capturedSnapshot) {
       throw new Error(t("editor-navigation-snapshot-unavailable"));
     }
@@ -321,7 +337,7 @@ export async function moveEditorNavigationNode(
     // before planning the move also prevents Undo from inheriting a stale
     // interactive edit session.
     await host.flushInteractiveEditorDrafts("snapshot");
-    const settledSnapshot = host.editorNavigationSnapshot;
+    const settledSnapshot = host.editorSelection.navigationSnapshot;
     if (!settledSnapshot) {
       throw new Error(t("editor-navigation-snapshot-unavailable"));
     }
@@ -355,21 +371,21 @@ export async function moveEditorNavigationNode(
       route: plan.route,
       activeDocumentPath: plan.activeDocumentPath,
       previewContextRenderInstanceId:
-        host.editorNavigationSnapshot?.focusedView
+        host.editorSelection.navigationSnapshot?.focusedView
           ?.previewContextRenderInstanceId ?? null,
       planToken: plan.token,
       inputEmittedAtMs,
-      editScopeGrant: host.editorEditScopeGrant,
+      editScopeGrant: host.editorSelection.editScopeGrant,
     });
     if (receipt.status !== "committed" || !receipt.workspaceMutation) {
       const reason = receipt.diagnostic ?? t("editor-navigation-commit-refused");
       host.setGlobalStatus(reason, "error");
       return blockedAction(reason);
     }
-    await projectCommittedEditorMoveMutation(host, {
+    await host.projectCommittedMove({
       projectRoot: plan.identity.projectRoot,
       sessionId: plan.identity.runtimeSessionId,
-      projectSessionEpoch: host.projectSessionEpoch,
+      projectSessionEpoch: host.context().projectSessionEpoch,
       expectedWorkspaceRevision: receipt.workspaceMutation.revisionAfter,
     }, receipt);
     exitEditorNavigationScope(host);
@@ -410,19 +426,4 @@ function requireFocusedActiveDocument(snapshot: EditorNavigationSnapshot) {
     throw new Error(t("editor-navigation-snapshot-unavailable"));
   }
   return activeDocumentPath;
-}
-
-function sameCanvasIdentity(
-  left: CanvasProjectionIdentity | EditorNavigationSnapshot["identity"] | null,
-  right: CanvasProjectionIdentity | EditorNavigationSnapshot["identity"] | null,
-) {
-  return Boolean(
-    left
-    && right
-    && left.projectRoot === right.projectRoot
-    && left.runtimeSessionId === right.runtimeSessionId
-    && left.workspaceRevision === right.workspaceRevision
-    && left.transactionId === right.transactionId
-    && left.previewRevision === right.previewRevision,
-  );
 }

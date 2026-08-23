@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, path::Path, time::Instant};
 
 use tauri::{AppHandle, Manager, Runtime, State};
 
@@ -13,6 +13,7 @@ use crate::{
             KernelExternalDiskReconcileReceipt, KernelExternalDiskReconcileStatus,
         },
         observability::{append_event, KernelEventKind, KernelLogEvent, KernelLogLevel},
+        performance::{elapsed_us, performance_event},
         project_path::normalize_project_relative_path,
         recovery_coordinator::{RecoveryCoordinatorScan, RecoveryCoordinatorStatus},
     },
@@ -49,6 +50,7 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
     app: &AppHandle<R>,
     input: KernelExternalDiskReconcileInput,
 ) -> Result<KernelExternalDiskReconcileReceipt, String> {
+    let performance_started = Instant::now();
     let state = app.state::<AppState>();
     let started_at_ms = file_buffer_now_ms();
     let project_state = current_kernel_project_state_snapshot(&state)?;
@@ -131,6 +133,7 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
         }
     };
 
+    let plan_started = Instant::now();
     let plan = {
         let workspace = state
             .project_workspace
@@ -149,8 +152,10 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
             return Ok(*receipt);
         }
     };
+    let plan_us = elapsed_us(plan_started);
     log_external_reconcile_planned(app, &plan);
 
+    let read_started = Instant::now();
     let staged = match read_clean_external_reconcile_plan(plan, file_buffer_now_ms()) {
         CleanExternalReconcileReadResult::Staged(staged) => staged,
         CleanExternalReconcileReadResult::Terminal(receipt) => {
@@ -158,11 +163,19 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
             return Ok(receipt);
         }
     };
+    let read_us = elapsed_us(read_started);
+    let commit_started = Instant::now();
+    let project_workspace_lock_wait_us;
+    let project_workspace_lock_held_us;
+    let recovery_coordinator_lock_wait_us;
     let (mut receipt, accepted_disk_changed_paths) = {
+        let project_workspace_lock_wait_started = Instant::now();
         let mut live_workspace_guard = state
             .project_workspace
             .lock()
             .map_err(|_| "Nu am putut bloca ProjectWorkspace la commit reconcile.".to_string())?;
+        project_workspace_lock_wait_us = elapsed_us(project_workspace_lock_wait_started);
+        let project_workspace_lock_held_started = Instant::now();
         let Some(live_workspace) = live_workspace_guard.as_mut() else {
             let receipt = KernelExternalDiskReconcileReceipt::stale_manifest(
                 staged.plan(),
@@ -172,6 +185,13 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
             log_external_reconcile_receipt(app, &receipt);
             return Ok(receipt);
         };
+        state
+            .versioning_network_operation
+            .require_source_mutation_allowed(
+                "Reconcilierea disk extern",
+                &live_workspace.session.project_root,
+                &live_workspace.runtime_session_id(),
+            )?;
         if let Err(error) = state.ai_coordination.require_external_reconciliation() {
             let receipt = KernelExternalDiskReconcileReceipt::stale_manifest(
                 staged.plan(),
@@ -204,9 +224,11 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
         live_accepted_disk_manifest.require_complete()?;
 
         let live_store = &live_workspace.documents;
+        let recovery_coordinator_lock_wait_started = Instant::now();
         let recovery_guard = state.recovery_coordinator_scan.lock().map_err(|_| {
             "Nu am putut bloca RecoveryCoordinatorScan la commit reconcile.".to_string()
         })?;
+        recovery_coordinator_lock_wait_us = elapsed_us(recovery_coordinator_lock_wait_started);
         let live_recovery = recovery_guard
             .as_ref()
             .ok_or_else(|| "RecoveryCoordinatorScan a dispărut înainte de commit.".to_string())?;
@@ -257,7 +279,7 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
                 manifest_at_commit,
             )?
         } else {
-            live_accepted_disk_manifest.clone()
+            live_accepted_disk_manifest.as_ref().clone()
         };
 
         let invalidates_history = staged.invalidates_history();
@@ -280,8 +302,10 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
         )?;
         receipt.workspace_revision = Some(live_workspace.revision);
         receipt.mark_committed_runtime_effects(invalidates_history, false);
+        project_workspace_lock_held_us = elapsed_us(project_workspace_lock_held_started);
         (receipt, accepted_disk_changed_paths)
     };
+    let commit_us = elapsed_us(commit_started);
 
     let accepted_disk_changed = !accepted_disk_changed_paths.is_empty();
     if accepted_disk_changed || receipt.status == KernelExternalDiskReconcileStatus::Applied {
@@ -313,6 +337,28 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
     }
 
     log_external_reconcile_receipt(app, &receipt);
+    let event = performance_event(
+        "file_buffer_store",
+        "performance",
+        "external_reconcile",
+        "clean_batch",
+        Some(receipt.operation_id.clone()),
+        elapsed_us(performance_started),
+    )
+    .with_attribute("planUs", plan_us)
+    .with_attribute("readUs", read_us)
+    .with_attribute("commitUs", commit_us)
+    .with_attribute("projectWorkspaceLockWaitUs", project_workspace_lock_wait_us)
+    .with_attribute("projectWorkspaceLockHeldUs", project_workspace_lock_held_us)
+    .with_attribute(
+        "recoveryCoordinatorLockWaitUs",
+        recovery_coordinator_lock_wait_us,
+    )
+    .with_attribute("requestedCount", receipt.requested_count)
+    .with_attribute("reconciledCount", receipt.reconciled_count)
+    .with_attribute("totalBytesRead", receipt.total_bytes_read)
+    .with_attribute("status", receipt.status);
+    let _ = append_event(app, event);
     Ok(receipt)
 }
 

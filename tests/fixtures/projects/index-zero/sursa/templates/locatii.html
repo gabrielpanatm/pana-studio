@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ section.title }} | INDEX ZERO{% endblock title %}
+{% block description %}{{ section.description }}{% endblock description %}
+{% block content %}
+<section class="pagina-arhiva">
+  <header class="titlu-arhiva container-larg"><p class="eticheta-tehnica">HARTĂ FICTIVĂ / {{ section.pages | length }} REPERE</p><h1>{{ section.title }}</h1><p>{{ section.description }}</p></header>
+  <div class="harta-locatii" aria-hidden="true">{% for pagina in section.pages %}<i data-x="{{ pagina.extra.coordonata_x }}" data-y="{{ pagina.extra.coordonata_y }}">{{ loop.index }}</i>{% endfor %}</div>
+  <div class="grila-locatii container-larg">
+    {% for pagina in section.pages %}
+    <article><span>{{ loop.index }}</span><div><p>{{ pagina.extra.adresa }}</p><h2><a href="{{ pagina.permalink }}">{{ pagina.title }}</a></h2><small>{% if pagina.extra.accesibil %}Accesibil{% else %}Acces asistat{% endif %}</small></div><a href="{{ pagina.permalink }}" aria-label="Deschide {{ pagina.title }}">↗</a></article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock content %}

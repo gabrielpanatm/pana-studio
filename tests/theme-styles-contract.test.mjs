@@ -64,19 +64,19 @@ test("mostra informativă folosește proiecția Rust rezolvată, fără a intra 
     /class="specimen info-specimen"[\s\S]*\{@render renderSpecimen\(selected\)\}/,
   );
   assert.match(component, /style=\{specimenStyle\}/);
-  assert.match(component, /if \(requestMode === "edit"\) app\.injectRawCss/);
+  assert.match(component, /if \(requestMode === "edit"\) injectRawCss/);
 });
 
 test("theme style draft previews are read-only and Apply is one Rust workspace mutation", () => {
   const component = source("src/lib/components/creation/ThemeStylesWorkspace.svelte");
   const commands = source("src-tauri/src/commands/design_system.rs");
   const cssCommands = source("src-tauri/src/commands/css.rs");
-  const io = source("src/lib/project/io.ts");
+  const io = source("src/lib/css/io.ts");
 
   assert.match(component, /previewThemeStyleDraft/);
   assert.match(component, /registerEditFlushHandler\(\s*"theme-styles-workspace"/);
   assert.match(component, /applyThemeStyleDraft/);
-  assert.match(component, /projectCommittedInspectorCssMutation\(receipt\.authority, null\)/);
+  assert.match(component, /projectCommittedCssMutation\(receipt\.authority, null\)/);
   assert.match(commands, /preview_theme_style_draft[\s\S]*with_bound_css_file_buffer_revision/);
   assert.match(commands, /apply_theme_style_draft[\s\S]*execute_css_workspace_mutation_with_metadata/);
   assert.match(commands, /"design_system\.theme_styles"/);

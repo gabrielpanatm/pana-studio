@@ -20,7 +20,7 @@ use crate::{
     },
     project::{
         scan_project_workspace_projection_full, ProjectFile, ProjectFileKind, ProjectFileRole,
-        PROJECT_SCAN_MAX_ENTRIES,
+        PROJECT_CAPACITY,
     },
 };
 
@@ -327,11 +327,12 @@ impl FileExplorerRuntime {
 
         let mut diagnostics = Vec::new();
         let complete_entry_count = entries.len();
-        let truncated = complete_entry_count > PROJECT_SCAN_MAX_ENTRIES;
+        let truncated = complete_entry_count > PROJECT_CAPACITY.max_projected_entries;
         if truncated {
-            entries.truncate(PROJECT_SCAN_MAX_ENTRIES);
+            entries.truncate(PROJECT_CAPACITY.max_projected_entries);
             diagnostics.push(format!(
-                "FileExplorer a proiectat {complete_entry_count} intrări și a publicat limita de {PROJECT_SCAN_MAX_ENTRIES}; snapshotul este marcat explicit ca trunchiat."
+                "FileExplorer a proiectat {complete_entry_count} intrări și a publicat limita de {}; snapshotul este marcat explicit ca trunchiat.",
+                PROJECT_CAPACITY.max_projected_entries
             ));
         }
 
@@ -368,7 +369,7 @@ impl FileExplorerRuntime {
             entries,
             root_capabilities: root_capabilities(),
             truncated,
-            max_entries: PROJECT_SCAN_MAX_ENTRIES,
+            max_entries: PROJECT_CAPACITY.max_projected_entries,
             diagnostics,
         })
     }
@@ -1285,11 +1286,11 @@ mod tests {
             runtime_session_id,
             revision: 7,
             workspace_transaction_id: None,
-            source_texts,
-            resource_bytes: HashMap::new(),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::new(),
-            accepted_disk,
+            accepted_disk: accepted_disk.into(),
         }
     }
 
@@ -1378,7 +1379,7 @@ mod tests {
             entries,
             root_capabilities: root_capabilities(),
             truncated: false,
-            max_entries: PROJECT_SCAN_MAX_ENTRIES,
+            max_entries: PROJECT_CAPACITY.max_projected_entries,
             diagnostics: Vec::new(),
         }
     }
@@ -1444,14 +1445,17 @@ mod tests {
     #[test]
     fn snapshot_truncation_is_explicit_and_hierarchy_safe() {
         let runtime = FileExplorerRuntime::default();
-        let source_texts = (0..(PROJECT_SCAN_MAX_ENTRIES + 20))
+        let source_texts = (0..(PROJECT_CAPACITY.max_projected_entries + 20))
             .map(|index| (format!("content/page-{index:04}.md"), String::new()))
             .collect();
         let snapshot = runtime
             .snapshot(&projection(source_texts), &workbench(None))
             .unwrap();
         assert!(snapshot.truncated);
-        assert_eq!(snapshot.entries.len(), PROJECT_SCAN_MAX_ENTRIES);
+        assert_eq!(
+            snapshot.entries.len(),
+            PROJECT_CAPACITY.max_projected_entries
+        );
         assert!(!snapshot.diagnostics.is_empty());
         let ids = snapshot
             .entries

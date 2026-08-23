@@ -114,7 +114,7 @@ def main():
     parser.add_argument("--warmup-cycles", type=int, default=1)
     parser.add_argument("--settle-ms", type=float, default=50)
     parser.add_argument("--timeout-seconds", type=float, default=5)
-    parser.add_argument("activities", nargs="+", default=("Editor", "Teme"))
+    parser.add_argument("activities", nargs="+", default=("Editor", "Șabloane"))
     arguments = parser.parse_args()
     if arguments.cycles <= 0 or arguments.warmup_cycles < 0:
         parser.error("Numărul de cicluri trebuie să fie pozitiv.")

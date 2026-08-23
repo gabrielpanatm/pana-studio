@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}INDEX ZERO — Festival fictiv de artă și sisteme{% endblock title %}
+{% block description %}Zece zile, o sută de artiști și un oraș imaginar pus sub tensiune.{% endblock description %}
+{% block content %}
+{% set evenimente = get_section(path="evenimente/_index.md") %}
+{% set artisti = get_section(path="artisti/_index.md") %}
+{% set jurnal = get_section(path="jurnal/_index.md") %}
+<section class="hero">
+  <div class="hero-imagine">
+    <img src="{{ get_url(path='imagini/vizual-01.webp') }}" alt="Instalație luminoasă într-un spațiu industrial întunecat" width="1536" height="1024" fetchpriority="high">
+  </div>
+  <div class="hero-copie">
+    <p class="eticheta-tehnica">EDIȚIA 00 / TIMIȘOARA</p>
+    <h1><span>INDEX</span><strong>ZERO</strong></h1>
+    <p class="hero-intro">Zece zile de performance, sunet, instalație și cercetare în spații care nu există încă.</p>
+    <div class="hero-actiuni">
+      <a class="buton buton-primar" href="{{ get_url(path='@/program.md') }}">Deschide programul</a>
+      <a class="link-sageata" href="{{ get_url(path='@/despre.md') }}">De ce INDEX ZERO <span aria-hidden="true">↗</span></a>
+    </div>
+  </div>
+  <div class="hero-date"><span>07</span><i>—</i><span>16</span><small>OCT<br>2027</small></div>
+</section>
+
+<section class="manifest container-larg">
+  <p class="eticheta-tehnica">MANIFEST / 001</p>
+  <div>
+    <h2>Un festival despre sistemele pe care le observăm abia când încetinesc.</h2>
+    <p>INDEX ZERO tratează orașul ca pe un instrument colectiv. Fiecare lucrare adaugă o regulă, o frecvență sau o abatere și invită publicul să îi schimbe rezultatul.</p>
+  </div>
+</section>
+
+<section class="sectiune-evenimente">
+  <header class="antet-sectiune container-larg">
+    <div><p class="eticheta-tehnica">ACUM / SELECȚIE</p><h2>Evenimente în prim-plan</h2></div>
+    <a class="link-sageata" href="{{ evenimente.permalink }}">Toate cele {{ evenimente.pages | length }} de evenimente <span aria-hidden="true">→</span></a>
+  </header>
+  <div class="grila-carduri">
+    {% for eveniment in evenimente.pages | slice(end=6) %}
+    <article class="card-eveniment">
+      <a class="card-imagine" href="{{ eveniment.permalink }}">
+        <img src="{{ get_url(path=eveniment.extra.imagine) }}" alt="" width="1200" height="800" loading="lazy">
+        <span>{{ eveniment.date | date(format="%d.%m") }} / {{ eveniment.extra.ora }}</span>
+      </a>
+      <div class="card-copie">
+        <p>{{ eveniment.taxonomies.discipline[0] }} / {{ eveniment.taxonomies.formate[0] }}</p>
+        <h3><a href="{{ eveniment.permalink }}">{{ eveniment.title }}</a></h3>
+        <span>{{ eveniment.description }}</span>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="numere container-larg" aria-label="INDEX ZERO în cifre">
+  <div><strong>{{ artisti.pages | length }}</strong><span>artiști fictivi</span></div>
+  <div><strong>{{ evenimente.pages | length }}</strong><span>evenimente generate</span></div>
+  <div><strong>20</strong><span>spații imaginare</span></div>
+  <div><strong>10</strong><span>zile de program</span></div>
+</section>
+
+<section class="sectiune-artisti">
+  <div class="portret-mare"><img src="{{ get_url(path='imagini/vizual-05.webp') }}" alt="Portret artistic abstract în lumină verde" width="1200" height="1500" loading="lazy"></div>
+  <div class="lista-artisti">
+    <p class="eticheta-tehnica">VOCILE EDIȚIEI 00</p>
+    <h2>Practici fără centru</h2>
+    <ol>
+      {% for artist in artisti.pages | slice(end=8) %}
+      <li><a href="{{ artist.permalink }}"><span>{{ loop.index }}</span><strong>{{ artist.title }}</strong><i>{{ artist.extra.oras }}</i></a></li>
+      {% endfor %}
+    </ol>
+    <a class="buton buton-secundar" href="{{ artisti.permalink }}">Vezi toți artiștii</a>
+  </div>
+</section>
+
+<section class="sectiune-jurnal container-larg">
+  <header class="antet-sectiune">
+    <div><p class="eticheta-tehnica">JURNAL / IDEI ÎN LUCRU</p><h2>Dincolo de program</h2></div>
+    <a class="link-sageata" href="{{ jurnal.permalink }}">Arhiva editorială <span aria-hidden="true">→</span></a>
+  </header>
+  <div class="grila-jurnal">
+    {% for articol in jurnal.pages | slice(end=3) %}
+    <article>
+      <a href="{{ articol.permalink }}"><img src="{{ get_url(path=articol.extra.imagine) }}" alt="" width="1200" height="800" loading="lazy"></a>
+      <p>{{ articol.date | date(format="%d.%m.%Y") }} / {{ articol.extra.durata_lectura }}</p>
+      <h3><a href="{{ articol.permalink }}">{{ articol.title }}</a></h3>
+      <span>{{ articol.description }}</span>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock content %}

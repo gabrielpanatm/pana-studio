@@ -38,15 +38,6 @@ pub fn save_ai_context_snapshot(
     publish_ai_context_projection(&app, state.inner(), snapshot)
 }
 
-#[tauri::command]
-pub fn write_ai_context_snapshot(
-    app: AppHandle,
-    state: State<AppState>,
-    snapshot: UiContextProjection,
-) -> Result<AiContextStatus, String> {
-    publish_ai_context_projection(&app, state.inner(), snapshot)
-}
-
 pub(crate) fn current_ai_context_snapshot(
     state: &AppState,
 ) -> Result<Option<CanonicalAiContextSnapshot>, String> {

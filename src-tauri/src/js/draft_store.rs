@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +41,7 @@ pub struct PageJsDraftStore {
     pub runtime_session_id: String,
     pub project_root: String,
     pub revision: u64,
-    pub drafts: BTreeMap<String, PageJsDraftEntry>,
+    pub drafts: Arc<BTreeMap<String, Arc<PageJsDraftEntry>>>,
     limits: PageJsDraftStoreLimits,
     retained_config_bytes: usize,
 }
@@ -138,7 +138,7 @@ impl PageJsDraftStore {
             runtime_session_id: session.runtime_instance_id(),
             project_root: session.project_root.clone(),
             revision: 0,
-            drafts: BTreeMap::new(),
+            drafts: Arc::default(),
             limits,
             retained_config_bytes: 0,
         }
@@ -158,7 +158,11 @@ impl PageJsDraftStore {
             dirty_count: self.dirty_count(),
             retained_config_bytes: self.retained_config_bytes,
             limits: self.limits,
-            drafts: self.drafts.values().cloned().collect(),
+            drafts: self
+                .drafts
+                .values()
+                .map(|entry| entry.as_ref().clone())
+                .collect(),
         }
     }
 
@@ -269,7 +273,7 @@ impl PageJsDraftStore {
             current_config_bytes,
             retained_config_bytes,
         };
-        self.drafts.insert(template_path.clone(), entry);
+        Arc::make_mut(&mut self.drafts).insert(template_path.clone(), Arc::new(entry));
         self.retained_config_bytes = next_total_config_bytes;
 
         Ok(self.receipt(
@@ -319,7 +323,7 @@ impl PageJsDraftStore {
     }
 
     fn clear_internal(&mut self, template_path: &str) -> PageJsDraftStageReceipt {
-        let removed = self.drafts.remove(template_path);
+        let removed = Arc::make_mut(&mut self.drafts).remove(template_path);
         let changed = removed.is_some();
         if let Some(entry) = removed {
             self.retained_config_bytes = self

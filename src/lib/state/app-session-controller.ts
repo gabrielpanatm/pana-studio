@@ -1,161 +1,103 @@
-import { untrack } from "svelte";
-import {
-  dismissNotification as dismissNotificationFromCenter,
-  type AppNotification,
-} from "$lib/notifications/center";
+import type { AppNotification } from "$lib/notifications/center";
 import {
   EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID,
   EXTERNAL_CHANGE_NOTIFICATION_ID,
   EXTERNAL_CHANGE_RELOAD_ACTION_ID,
-} from "$lib/state/external-disk-controller";
+} from "$lib/session/external-disk/contracts";
 import {
   AI_COORDINATION_ACCEPT_DISK_ACTION_ID,
   AI_COORDINATION_NOTIFICATION_ID,
   reloadAuthorizedAiReconciliationFromDisk,
 } from "$lib/state/ai-coordination-controller";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 import {
-  applyGlobalStatusSnapshot,
-  publishGlobalStatus as publishGlobalStatusFromController,
-} from "$lib/state/status-controller";
-import {
-  globalStatusInputFromKind,
-  type GlobalStatusEscalationRequest,
-  type GlobalStatusInput,
-  type GlobalStatusKind,
-  type GlobalStatusPublishOptions,
-  type GlobalStatusSnapshot,
-} from "$lib/status/global-status";
-import {
-  publishKernelGlobalStatus,
-  readKernelGlobalStatus,
   readProjectFile,
-  resolveKernelGlobalStatus,
-} from "$lib/project/io";
+} from "$lib/project/io/workspace";
 import { scannedCacheKey } from "$lib/project/files";
-import { createEmptyHtmlPending } from "$lib/state/app-helpers";
-import {
-  updateInspectorPendingSource,
-  type InspectorPendingSource,
-} from "$lib/state/inspector-pending";
-import type { AppState } from "$lib/state/app.svelte";
-import type {
-  HtmlPendingArea,
-  InspectorPendingArea,
-} from "$lib/types";
+import type { ProjectScan } from "$lib/project/lifecycle-contract";
+import type { EditFlushReason } from "$lib/session/edit-flush-registry";
+import type { PreviewRefreshReason } from "$lib/preview/controlled";
+import type { AiCoordinationState } from "$lib/ai/coordination-state.svelte";
+import type { ProjectDocumentWorkspaceState } from "$lib/project/document-workspace.svelte";
+import type { ProjectSessionState } from "$lib/project/session-state.svelte";
+import type { SourceWorkspaceState } from "$lib/editor/source-workspace.svelte";
+import type { GlobalStatusState } from "$lib/status/state.svelte";
 import { t } from "$lib/i18n/runtime.svelte";
+import { errorMessage } from "$lib/util";
 
-function projectKernelFailure(
-  app: AppState,
-  error: unknown,
+export type AppSessionControllerHost = {
+  aiCoordination: Pick<AiCoordinationState, "controllerHost">;
+  activeScannedPath: string | null;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
+  saveActiveFile: () => Promise<unknown>;
+  scannedProject: ProjectScan | null;
+  flushInteractiveEditorDrafts: (reason: EditFlushReason) => Promise<void>;
+  source: string;
+  sourceCache: Record<string, string>;
+  refreshToken: number;
+  requestPreviewRefresh: (reason: PreviewRefreshReason) => Promise<boolean>;
+};
+
+export type AppSessionServiceDependencies = {
+  ai: AiCoordinationState;
+  status: GlobalStatusState;
+  project: ProjectSessionState;
+  documents: ProjectDocumentWorkspaceState;
+  source: SourceWorkspaceState;
+  save: () => Promise<unknown>;
+  flushDrafts: (reason: EditFlushReason) => Promise<void>;
+  requestPreviewRefresh: (reason: PreviewRefreshReason) => Promise<boolean>;
+};
+
+/** User-facing session refresh and notification actions over domain owners. */
+export class AppSessionService {
+  private readonly host: AppSessionControllerHost;
+
+  constructor(dependencies: AppSessionServiceDependencies) {
+    const { ai, status, project, documents, source } = dependencies;
+    this.host = {
+      aiCoordination: ai,
+      get activeScannedPath() { return documents.activeScannedPath; },
+      setGlobalStatus: (text, kind) => status.set(text, kind),
+      saveActiveFile: dependencies.save,
+      get scannedProject() { return project.project; },
+      flushInteractiveEditorDrafts: dependencies.flushDrafts,
+      get source() { return source.source; },
+      set source(nextSource) { source.source = nextSource; },
+      get sourceCache() { return source.sourceCache; },
+      set sourceCache(cache) { source.sourceCache = cache; },
+      get refreshToken() { return project.refreshToken; },
+      set refreshToken(token) { project.refreshToken = token; },
+      requestPreviewRefresh: dependencies.requestPreviewRefresh,
+    };
+  }
+
+  async handleNotification(notification: AppNotification, actionId: string) {
+    try {
+      await handleNotificationAction(this.host, notification, actionId);
+    } catch (error) {
+      this.host.setGlobalStatus(t("workbench-notification-action-failed", {
+        action: notification.actionLabel ?? actionId,
+        message: errorMessage(error),
+      }), "error");
+    }
+  }
+
+  refresh() {
+    return refreshCurrentSession(this.host);
+  }
+}
+
+export async function handleNotificationAction(
+  app: AppSessionControllerHost,
+  notification: AppNotification,
+  actionId: string,
 ) {
-  const detail = error instanceof Error ? error.message : String(error);
-  publishGlobalStatusFromController(app.statusControllerHost(), {
-    code: "global-status.kernel-command-failed",
-    source: "global-status",
-    severity: "error",
-    message: t("app-session-global-status-kernel-failed"),
-    detail,
-    lifecycle: "until_resolved",
-    escalation: "notification",
-    dedupeKey: "global-status.kernel",
-    resolutionKey: "global-status.kernel",
-    notification: {
-      title: t("app-session-global-status-unavailable"),
-      message: detail,
-      level: "error",
-    },
-  });
-}
-
-function queueKernelStatusCommand(
-  app: AppState,
-  command: () => Promise<GlobalStatusSnapshot>,
-) {
-  const operation = app.globalStatusKernelTail
-    .catch(() => undefined)
-    .then(async () => {
-      try {
-        const snapshot = await command();
-        applyGlobalStatusSnapshot(app.statusControllerHost(), snapshot);
-      } catch (error) {
-        projectKernelFailure(app, error);
-      }
-    });
-  app.globalStatusKernelTail = operation;
-  return operation;
-}
-
-export function setGlobalStatus(
-  app: AppState,
-  text: string,
-  kind: GlobalStatusKind,
-  options: GlobalStatusPublishOptions = {},
-) {
-  const input = globalStatusInputFromKind(text, kind, options);
-  void queueKernelStatusCommand(app, () => publishKernelGlobalStatus(input));
-}
-
-export function escalateGlobalStatus(
-  app: AppState,
-  notification: GlobalStatusEscalationRequest,
-) {
-  const input: GlobalStatusInput = {
-    code: notification.id,
-    source: notification.id.split(".")[0] || "application",
-    severity: notification.level === "error"
-      ? "error"
-      : notification.level === "warning"
-        ? "warning"
-        : "info",
-    phase: "settled",
-    message: notification.statusMessage ?? notification.title,
-    detail: notification.message,
-    lifecycle: "until_resolved",
-    escalation: "notification",
-    dedupeKey: notification.id,
-    resolutionKey: notification.id,
-    notification: {
-      title: notification.title,
-      message: notification.message,
-      level: notification.level,
-      actionLabel: notification.actionLabel,
-      actionId: notification.actionId,
-      secondaryActionLabel: notification.secondaryActionLabel,
-      secondaryActionId: notification.secondaryActionId,
-    },
-  };
-  void queueKernelStatusCommand(app, () => publishKernelGlobalStatus(input));
-}
-
-export function clearNotification(app: AppState, id: string) {
-  const hasProjection = app.notifications.some((notification) => notification.id === id);
-  const hasOpenStatus = app.globalStatusEvents.some((event) => (
-    event.resolution === "open"
-    && (
-      event.id === id
-      || event.dedupeKey === id
-      || event.resolutionKey === id
-    )
-  ));
-  if (!hasProjection && !hasOpenStatus && !app.dismissedNotificationIds.has(id)) return;
-  void queueKernelStatusCommand(app, () => resolveKernelGlobalStatus(id));
-}
-
-export function refreshGlobalStatusFromKernel(app: AppState) {
-  return queueKernelStatusCommand(app, readKernelGlobalStatus);
-}
-
-export function dismissNotification(app: AppState, id: string) {
-  app.notifications = dismissNotificationFromCenter(app.notifications, id);
-  app.dismissedNotificationIds = new Set([...app.dismissedNotificationIds, id]);
-}
-
-export async function handleNotificationAction(app: AppState, notification: AppNotification, actionId: string) {
   if (
     notification.id === AI_COORDINATION_NOTIFICATION_ID
     && actionId === AI_COORDINATION_ACCEPT_DISK_ACTION_ID
   ) {
-    await reloadAuthorizedAiReconciliationFromDisk(app);
+    await reloadAuthorizedAiReconciliationFromDisk(app.aiCoordination.controllerHost());
     app.setGlobalStatus(
       t("app-session-disk-state-adopted"),
       "restored",
@@ -164,7 +106,7 @@ export async function handleNotificationAction(app: AppState, notification: AppN
   }
   if (notification.id === EXTERNAL_CHANGE_NOTIFICATION_ID) {
     if (actionId === EXTERNAL_CHANGE_RELOAD_ACTION_ID) {
-      await reloadAuthorizedAiReconciliationFromDisk(app);
+      await reloadAuthorizedAiReconciliationFromDisk(app.aiCoordination.controllerHost());
       return;
     }
     if (actionId === EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID) {
@@ -178,33 +120,7 @@ export async function handleNotificationAction(app: AppState, notification: AppN
   await app.saveActiveFile();
 }
 
-export function setInspectorPending(
-  app: AppState,
-  area: InspectorPendingArea,
-  pending: boolean,
-  source: InspectorPendingSource = "session",
-) {
-  const aggregatePending = updateInspectorPendingSource(app.inspectorPendingSources, area, source, pending);
-  const current = untrack(() => app.inspectorPending);
-  if (current[area] === aggregatePending) return;
-  app.markEditorMutation();
-  app.inspectorPending = { ...current, [area]: aggregatePending };
-}
-
-export function setHtmlPending(app: AppState, area: HtmlPendingArea, pending: boolean) {
-  if (app.htmlPending[area] === pending) return;
-  const next = { ...app.htmlPending, [area]: pending };
-  app.htmlPending = next;
-  app.setInspectorPending("html", Object.values(next).some(Boolean));
-}
-
-export function clearHtmlPending(app: AppState) {
-  if (Object.values(app.htmlPending).some(Boolean)) app.markEditorMutation();
-  app.htmlPending = createEmptyHtmlPending();
-  app.setInspectorPending("html", false);
-}
-
-export async function refreshCurrentSession(app: AppState) {
+export async function refreshCurrentSession(app: AppSessionControllerHost) {
   if (!app.scannedProject) return;
   await app.flushInteractiveEditorDrafts("manual");
   if (app.activeScannedPath) {

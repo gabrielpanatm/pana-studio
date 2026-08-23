@@ -5,7 +5,7 @@
     ProjectWorkspaceSaveHotJournalDiskState,
     ProjectWorkspaceSaveHotJournalFileDiskState,
     ProjectWorkspaceSaveRecoveryAction,
-  } from "$lib/types";
+  } from "$lib/kernel/recovery-contract";
   import { compactKernelPath, formatRecoveryTime, shortHash } from "$lib/kernel/recovery-control";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
 

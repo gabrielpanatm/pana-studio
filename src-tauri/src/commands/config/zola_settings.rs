@@ -3,9 +3,8 @@ use std::path::{Path, PathBuf};
 use crate::commands::config::{
     model::ZolaProjectSettings,
     toml_edit::{
-        extract_toml_string, remove_toml_key, toml_array, toml_bool, toml_paginated_sitemap,
-        toml_quote, toml_string, toml_string_array, toml_u32, upsert_or_remove_u32,
-        upsert_toml_string, upsert_toml_value,
+        remove_toml_key, toml_array, toml_bool, toml_paginated_sitemap, toml_quote, toml_string,
+        toml_string_array, toml_u32, upsert_or_remove_u32, upsert_toml_value,
     },
 };
 
@@ -14,14 +13,6 @@ pub(super) fn write_zola_settings_to_source(
     settings: &ZolaProjectSettings,
 ) -> String {
     write_zola_settings_source(source, settings)
-}
-
-pub(super) fn write_zola_base_url_to_source(source: &str, url: &str) -> String {
-    upsert_toml_string(source, "base_url", url)
-}
-
-pub(super) fn extract_base_url_from_source(source: &str) -> String {
-    extract_toml_string(source, "base_url").unwrap_or_default()
 }
 
 pub(super) fn parse_zola_project_settings_source(

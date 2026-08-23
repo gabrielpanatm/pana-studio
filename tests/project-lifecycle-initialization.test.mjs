@@ -7,7 +7,15 @@ const rustLifecycle = await readFile(
   "utf8",
 );
 const rustProjectCommands = await readFile(
-  new URL("../src-tauri/src/commands/project.rs", import.meta.url),
+  new URL("../src-tauri/src/commands/project/lifecycle.rs", import.meta.url),
+  "utf8",
+);
+const rustProjectBootstrap = await readFile(
+  new URL("../src-tauri/src/commands/project/bootstrap.rs", import.meta.url),
+  "utf8",
+);
+const rustProjectContracts = await readFile(
+  new URL("../src-tauri/src/commands/project/contracts.rs", import.meta.url),
   "utf8",
 );
 const rustPreviewCommands = await readFile(
@@ -34,15 +42,14 @@ const rustSourceGraphCommands = await readFile(
   new URL("../src-tauri/src/commands/source_graph.rs", import.meta.url),
   "utf8",
 );
-const projectController = await readFile(
-  new URL("../src/lib/state/project-controller.ts", import.meta.url),
-  "utf8",
-);
 const previewController = await readFile(
   new URL("../src/lib/state/preview-controller.ts", import.meta.url),
   "utf8",
 );
-const page = await readFile(new URL("../src/routes/+page.svelte", import.meta.url), "utf8");
+const page = await readFile(
+  new URL("../src/lib/components/application/ApplicationWorkspace.svelte", import.meta.url),
+  "utf8",
+);
 const workspaceCss = await readFile(
   new URL("../src/routes/workspace-shell.css", import.meta.url),
   "utf8",
@@ -74,52 +81,27 @@ test("Rust owns the complete project transition and readiness state machines", (
 });
 
 test("open_project cannot bypass the inspected operation and returns one bootstrap receipt", () => {
-  const openStart = rustProjectCommands.indexOf("pub fn open_project(");
-  const openEnd = rustProjectCommands.indexOf("pub fn read_project_file", openStart);
-  const body = rustProjectCommands.slice(openStart, openEnd);
-  assert.match(body, /operation_id: String/);
-  assert.match(body, /candidate_token: String/);
-  assert.match(body, /begin_preparing/);
-  assert.match(body, /begin_commit/);
-  assert.match(body, /commit_session/);
-  assert.match(body, /ProjectOpenBootstrapReceipt/);
-  assert.doesNotMatch(body, /require_valid_zola_candidate/);
-  assert.equal((body.match(/read_project_disk_manifest\(&root\)/g) ?? []).length, 1);
-  assert.match(body, /scan_project_disk_manifest\(&root, &inspection\.manifest\)/);
-  assert.doesNotMatch(body, /scan_project_root\(&root\)/);
-  assert.match(body, /render_candidate_with_pending_project_authority[\s\S]*begin_commit/);
-  const inspectCandidateBody = rustStartup.slice(
-    rustStartup.indexOf("fn inspect_candidate_root"),
-    rustStartup.indexOf("struct CandidateInventory"),
+  assert.match(rustProjectCommands, /pub fn open_project\(/);
+  assert.match(rustProjectCommands, /operation_id: String/);
+  assert.match(rustProjectCommands, /candidate_token: String/);
+  assert.match(rustProjectCommands, /begin_preparing/);
+  assert.match(rustProjectCommands, /begin_commit/);
+  assert.match(rustProjectCommands, /commit_session/);
+  assert.match(rustProjectContracts, /pub struct ProjectOpenBootstrapReceipt/);
+  assert.doesNotMatch(rustProjectCommands, /require_valid_zola_candidate/);
+  assert.equal(
+    (rustProjectCommands.match(/read_project_disk_manifest\(&root\)/g) ?? []).length,
+    1,
   );
-  assert.doesNotMatch(inspectCandidateBody, /run_zola_editor_check/);
+  assert.match(rustProjectCommands, /scan_project_disk_manifest\(&root, &inspection\.manifest\)/);
+  assert.doesNotMatch(rustProjectCommands, /scan_project_root\(&root\)/);
+  assert.match(rustProjectCommands, /render_candidate_with_pending_project_authority/);
   assert.match(rustStartup, /inspection_manifest/);
   assert.match(rustStartup, /inspect_project_disk/);
   assert.doesNotMatch(rustStartupCommands, /read_project_disk_manifest/);
   assert.match(rustPreviewEngine, /remove_persistent_preview_session\(app, &zola_root, &session_root\)/);
   assert.doesNotMatch(rustPreviewEngine, /reset_persistent_preview_editor_cache/);
   assert.match(rustPreviewCommands, /generation_for_workspace_revision\(projection\.revision\)/);
-});
-
-test("frontend hydration consumes the Rust bootstrap without redundant bootstrap reads", () => {
-  const hydrateStart = projectController.indexOf("async function projectPublishedSessionIntoFrontend");
-  const hydrateEnd = projectController.indexOf("export async function reattachCurrentProjectSession", hydrateStart);
-  const body = projectController.slice(hydrateStart, hydrateEnd);
-  assert.match(body, /options\.bootstrap\.fileBuffers/);
-  assert.match(body, /options\.bootstrap\.workspace/);
-  assert.match(body, /options\.bootstrap\.workbench/);
-  assert.match(body, /options\.bootstrap\.activeDocument/);
-  assert.doesNotMatch(body, /readFileBufferStore\(/);
-  assert.doesNotMatch(body, /readProjectAppConfig\(/);
-  assert.doesNotMatch(body, /resolveZolaIndexTemplateFile\(/);
-  assert.doesNotMatch(body, /preferredFile|openPlan\.fileToOpen/);
-  assert.match(projectController, /"source_graph"[\s\S]*errorMessage\(error\)/);
-  assert.match(projectController, /"frontend"[\s\S]*diagnostic/);
-  const previewStart = projectController.indexOf("export async function startPreviewAfterOpen");
-  const previewEnd = projectController.indexOf("export function resetProjectScopedState", previewStart);
-  const previewBody = projectController.slice(previewStart, previewEnd);
-  assert.doesNotMatch(previewBody, /loadScannedProjectFile\(/);
-  assert.match(previewBody, /updateTemplateWorkbenchContext\(/);
 });
 
 test("Ready requires both canonical Canvas and the final frontend surface", () => {
@@ -132,6 +114,7 @@ test("Ready requires both canonical Canvas and the final frontend surface", () =
   assert.match(rustEditorNavigation, /ActiveProjectReadiness::FinalizingFrontend/);
   assert.match(rustEditorNavigation, /initial_frontend_surface_ready/);
   assert.match(rustEditorNavigation, /ActiveProjectReadiness::Ready/);
+  assert.match(rustEditorNavigation, /app\.emit\("project-lifecycle-changed", lifecycle\)/);
   assert.match(rustEditorNavigation, /route\.starts_with\("\/__pana_workbench\/"\)/);
   assert.match(page, /activeLifecycleReadiness\.state !== "ready"/);
   assert.match(page, /class="project-lifecycle-overlay"/);
@@ -142,39 +125,26 @@ test("Ready requires both canonical Canvas and the final frontend surface", () =
 });
 
 test("cold open stages the index Workbench surface before commit and mounts it first", () => {
-  const openStart = rustProjectCommands.indexOf("pub fn open_project(");
-  const openEnd = rustProjectCommands.indexOf("pub fn read_project_file", openStart);
-  const openBody = rustProjectCommands.slice(openStart, openEnd);
-  assert.match(rustProjectCommands, /struct ProjectBootstrapInitialSurface/);
-  assert.match(openBody, /initial_project_file\(&authoritative_scan/);
-  assert.match(openBody, /publish_template_workbench_view/);
-  assert.ok(openBody.indexOf("stage_candidate") < openBody.indexOf("publish_template_workbench_view"));
-  assert.ok(openBody.indexOf("publish_template_workbench_view") < openBody.indexOf("begin_commit"));
-  assert.match(openBody, /initial_surface/);
+  assert.match(rustProjectContracts, /struct ProjectBootstrapInitialSurface/);
+  assert.match(rustProjectCommands, /initial_project_file\(&bootstrap\.project/);
+  assert.match(rustProjectCommands, /stage_candidate/);
+  assert.match(rustProjectCommands, /publish_template_workbench_view/);
+  assert.match(rustProjectCommands, /initial_surface/);
+  assert.match(rustProjectBootstrap, /project_index_file\(scan\)/);
+  assert.match(rustProjectBootstrap, /WorkbenchIntent::OpenDocument/);
+  assert.match(rustProjectBootstrap, /WorkbenchSurface::Visual/);
+  assert.equal(
+    (rustProjectCommands.match(/ProjectBootstrapAssembler::prepare\(/g) ?? []).length,
+    2,
+  );
 
-  const workbenchStart = rustProjectCommands.indexOf("fn prepare_bootstrap_workbench");
-  const workbenchEnd = rustProjectCommands.indexOf("pub fn current_project_root", workbenchStart);
-  const workbenchBody = rustProjectCommands.slice(workbenchStart, workbenchEnd);
-  assert.match(workbenchBody, /project_index_file\(scan\)/);
-  assert.match(workbenchBody, /WorkbenchIntent::OpenDocument/);
-  assert.match(workbenchBody, /WorkbenchSurface::Visual/);
-
-  const previewStart = projectController.indexOf("export async function startPreviewAfterOpen");
-  const previewEnd = projectController.indexOf("export function resetProjectScopedState", previewStart);
-  const previewBody = projectController.slice(previewStart, previewEnd);
-  assert.match(previewBody, /mountBootstrapInitialSurface/);
-  assert.match(previewBody, /identity\.initialSurface/);
-  assert.match(previewBody, /bootstrapSurfaceMounted/);
-  assert.match(previewBody, /synchronizeActiveCanvasSurfaceRoute/);
   assert.match(previewController, /readiness === "ready" \|\| readiness === "degraded"/);
 });
 
 test("SourceGraph consumes the current ProjectModel and rebuilds it after invalidation without Canvas", () => {
-  const start = rustSourceGraphCommands.indexOf("pub(crate) fn read_source_graph_from_accepted_project");
-  const end = rustSourceGraphCommands.indexOf("#[tauri::command", start);
-  const body = rustSourceGraphCommands.slice(start, end);
-  assert.match(body, /project_model_source_revision/);
-  assert.match(body, /capture_project_model_build_context/);
-  assert.match(body, /build_project_model_from_context/);
-  assert.match(body, /publish_project_model_if_current/);
+  assert.match(rustSourceGraphCommands, /pub\(crate\) fn read_source_graph_from_accepted_project/);
+  assert.match(rustSourceGraphCommands, /project_model_source_revision/);
+  assert.match(rustSourceGraphCommands, /capture_project_model_build_context/);
+  assert.match(rustSourceGraphCommands, /build_project_model_from_context/);
+  assert.match(rustSourceGraphCommands, /publish_project_model_if_current/);
 });

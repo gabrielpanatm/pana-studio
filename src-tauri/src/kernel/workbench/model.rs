@@ -19,8 +19,8 @@ fn default_split_ratio_basis_points() -> u16 {
 #[serde(rename_all = "snake_case")]
 pub enum WorkbenchActivity {
     #[default]
+    #[serde(alias = "themes")]
     Editor,
-    Themes,
     #[serde(alias = "site")]
     Templates,
     Components,
@@ -308,6 +308,18 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&activity).expect("templates activity"),
             r#""templates""#,
+        );
+    }
+
+    #[test]
+    fn legacy_themes_activity_migrates_to_editor() {
+        let activity: WorkbenchActivity =
+            serde_json::from_str(r#""themes""#).expect("legacy themes activity");
+
+        assert_eq!(activity, WorkbenchActivity::Editor);
+        assert_eq!(
+            serde_json::to_string(&activity).expect("editor activity"),
+            r#""editor""#,
         );
     }
 

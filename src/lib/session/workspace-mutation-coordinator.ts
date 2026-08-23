@@ -1,27 +1,34 @@
 import {
   flushRegisteredEditDrafts,
+  hasPendingRegisteredEditDrafts,
   type EditFlushReason,
 } from "$lib/session/edit-flush-registry";
 import {
   flushFileBufferDraftSync,
+  hasPendingFileBufferDraftSync,
   hashFileBufferText,
   rebaseFileBufferDraftSyncProjection,
 } from "$lib/session/file-buffer-draft-sync";
-import { flushPageJsDraftSync } from "$lib/session/page-js-draft-sync";
+import {
+  flushPageJsDraftSync,
+  hasPendingPageJsDraftSync,
+} from "$lib/session/page-js-draft-sync";
 import {
   projectLatestProjectWorkspacePreview,
   type ProjectWorkspacePreviewHost,
   type ProjectWorkspacePreviewProjectionOutcome,
 } from "$lib/kernel/project-workspace-preview-coordinator";
-import type { CanvasProjectionPlan } from "$lib/project/io";
+import type {
+  CanvasProjectionPlan,
+} from "$lib/contracts/canvas-projection";
 import type { PreviewRefreshReason } from "$lib/preview/controlled";
 import type {
   ProjectWorkspaceMutationReceipt,
   ProjectWorkspaceSnapshot,
   WorkspaceDocumentProjection,
-} from "$lib/types";
+} from "$lib/project/workspace-contract";
 import type { GlobalStatusKind } from "$lib/status/global-status";
-import { PROJECT_WORKSPACE_SCHEMA_VERSION } from "$lib/types";
+import { PROJECT_WORKSPACE_SCHEMA_VERSION } from "$lib/project/workspace-contract";
 import { scannedCacheKey } from "$lib/project/files";
 import { errorMessage } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
@@ -462,10 +469,16 @@ export async function flushWorkspaceMutationInputs(
     checkpoint?: (phase: WorkspaceMutationFlushPhase) => void;
   } = {},
 ) {
-  await flushRegisteredEditDrafts(reason);
+  if (hasPendingRegisteredEditDrafts()) {
+    await flushRegisteredEditDrafts(reason);
+  }
   options.checkpoint?.("editors");
-  await flushPageJsDraftSync({ throwOnFailure: true });
+  if (hasPendingPageJsDraftSync()) {
+    await flushPageJsDraftSync({ throwOnFailure: true });
+  }
   options.checkpoint?.("page-js");
-  await flushFileBufferDraftSync({ throwOnFailure: true });
+  if (hasPendingFileBufferDraftSync()) {
+    await flushFileBufferDraftSync({ throwOnFailure: true });
+  }
   options.checkpoint?.("file-buffer");
 }

@@ -6,12 +6,27 @@
   import CommandCenter from "$lib/components/workbench/CommandCenter.svelte";
   import { contextMenu } from "$lib/context-menu/store.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
-  import type { CommandCenterAction } from "$lib/types";
+  import type { AppNotification } from "$lib/notifications/center";
+  import type { WorkbenchSourceStatus } from "$lib/source-provenance";
+  import type { EditFlushReason } from "$lib/session/edit-flush-registry";
+  import type { ApplicationPreferencesState } from "$lib/application/preferences.svelte";
+  import type { NotificationCenterState } from "$lib/notifications/store.svelte";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { TerminalWorkspaceState } from "$lib/terminal/workspace.svelte";
+  import type { WorkspaceLayoutState } from "$lib/ui/workspace-layout.svelte";
+  import type { CenterView } from "$lib/application/contracts";
+  import type { CommandCenterAction } from "$lib/workbench/contracts";
   import type { Snippet } from "svelte";
 
   let {
-    app,
+    project,
+    surface,
+    commands,
+    applicationPreferences,
+    notificationCenter,
+    globalStatus,
+    terminalWorkspace,
+    workspaceLayout,
     topbarCanUndo = false,
     topbarCanRedo = false,
     undoAction,
@@ -22,7 +37,34 @@
     executeCommandCenterAction = () => {},
     children,
   }: {
-    app: AppState;
+    project: {
+      currentPath: string;
+      root: string;
+      sessionId: string;
+      present: boolean;
+      savePending: boolean;
+    };
+    surface: {
+      application: "workbench" | "settings";
+      activeActivity: string;
+      sourceStatus: WorkbenchSourceStatus | null;
+    };
+    commands: {
+      flushDrafts: (reason: EditFlushReason) => Promise<unknown>;
+      openProjectFolder: () => Promise<void>;
+      openProjectInBrowser: () => Promise<void>;
+      save: () => Promise<boolean>;
+      openCssSource: (target: { selector: string; file: string }) => Promise<unknown>;
+      openSourceLocation: (location: string) => Promise<unknown>;
+      setCenterView: (view: CenterView) => Promise<unknown>;
+      requestCodeSelectionReveal: () => void;
+      handleNotificationAction: (notification: AppNotification, actionId: string) => Promise<unknown>;
+    };
+    applicationPreferences: ApplicationPreferencesState;
+    notificationCenter: NotificationCenterState;
+    globalStatus: GlobalStatusState;
+    terminalWorkspace: TerminalWorkspaceState;
+    workspaceLayout: WorkspaceLayoutState;
     topbarCanUndo?: boolean;
     topbarCanRedo?: boolean;
     undoAction: () => void | Promise<void>;
@@ -35,60 +77,60 @@
   } = $props();
 
   const activeWorkbenchActivity = $derived(
-    app.workbenchSnapshot?.activeActivity ?? "editor",
+    surface.activeActivity,
   );
   async function toggleRightInspectorPane() {
-    if (!app.rightPaneCollapsed) {
+    if (!workspaceLayout.rightPaneCollapsed) {
       try {
-        await app.flushInteractiveEditorDrafts("template-switch");
+        await commands.flushDrafts("template-switch");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        app.setGlobalStatus(t("workbench-inspector-collapse-blocked", { message }), "error");
+        globalStatus.set(t("workbench-inspector-collapse-blocked", { message }), "error");
         return;
       }
     }
-    app.rightPaneCollapsed = !app.rightPaneCollapsed;
+    workspaceLayout.toggleRightPane();
   }
 
   async function openWorkbenchSource() {
-    const source = app.workbenchSourceStatus;
+    const source = surface.sourceStatus;
     if (!source?.openable) return;
     if (source.role === "css" && source.selector) {
-      await app.openCssCodeRevealTarget({
+      await commands.openCssSource({
         selector: source.selector,
         file: source.file,
       });
       return;
     }
-    await app.openSourceLocation(source.location);
-    await app.setCenterView("code");
-    app.requestCodeSelectionReveal();
+    await commands.openSourceLocation(source.location);
+    await commands.setCenterView("code");
+    commands.requestCodeSelectionReveal();
   }
 
 </script>
 
 <div class="chrome-inert-layer" inert={commandCenterOpen ? true : undefined}>
 <Topbar
-  currentProjectPath={app.currentProjectPath}
+  currentProjectPath={project.currentPath}
   canUndo={topbarCanUndo}
-  inspectorHasPending={app.saveHasPending}
+  inspectorHasPending={project.savePending}
   canRedo={topbarCanRedo}
-  uiTheme={app.uiTheme}
-  noProject={!app.scannedProject}
-  leftPaneCollapsed={app.leftPaneCollapsed}
-  rightPaneCollapsed={app.rightPaneCollapsed}
-  terminalPaneOpen={app.terminalPaneOpen}
-  sidebarsAvailable={app.applicationSurface === "workbench" && activeWorkbenchActivity === "editor"}
-  openProjectFolder={() => app.openProjectFolder()}
-  openCurrentProjectInBrowser={() => app.openCurrentProjectInBrowser()}
-  canOpenInBrowser={Boolean(app.scannedProject)}
-  saveActiveFile={() => app.saveActiveFile()}
+  uiTheme={applicationPreferences.theme}
+  noProject={!project.present}
+  leftPaneCollapsed={workspaceLayout.leftPaneCollapsed}
+  rightPaneCollapsed={workspaceLayout.rightPaneCollapsed}
+  terminalPaneOpen={terminalWorkspace.terminalPaneOpen}
+  sidebarsAvailable={surface.application === "workbench" && activeWorkbenchActivity === "editor"}
+  openProjectFolder={() => commands.openProjectFolder()}
+  openCurrentProjectInBrowser={() => commands.openProjectInBrowser()}
+  canOpenInBrowser={project.present}
+  saveActiveFile={() => commands.save()}
   undoAction={undoAction}
   redoAction={redoAction}
-  toggleUiTheme={() => app.toggleUiTheme()}
-  toggleLeftPane={() => { app.leftPaneCollapsed = !app.leftPaneCollapsed; }}
+  toggleUiTheme={() => applicationPreferences.toggleTheme()}
+  toggleLeftPane={() => workspaceLayout.toggleLeftPane()}
   toggleRightPane={toggleRightInspectorPane}
-  toggleTerminalPane={() => { void app.toggleTerminalPane(); }}
+  toggleTerminalPane={() => { void terminalWorkspace.togglePane(); }}
   {openCommandCenter}
 />
 </div>
@@ -101,25 +143,25 @@
 
 <div class="chrome-inert-layer" inert={commandCenterOpen ? true : undefined}>
 <StatusBar
-  globalStatus={app.currentGlobalStatus}
-  sourceStatus={app.workbenchSourceStatus}
+  globalStatus={globalStatus.current}
+  sourceStatus={surface.sourceStatus}
   openSource={openWorkbenchSource}
 />
 </div>
 
 <CommandCenter
   open={commandCenterOpen}
-  projectRoot={app.sessionProjectRoot}
-  runtimeSessionId={app.kernelProjectSessionId}
+  projectRoot={project.root}
+  runtimeSessionId={project.sessionId}
   close={closeCommandCenter}
   execute={executeCommandCenterAction}
 />
 
 <NotificationStack
-  notifications={app.notifications}
-  dismiss={(id) => app.dismissNotification(id)}
-  save={() => app.saveActiveFile()}
-  action={(notification, actionId) => app.handleNotificationAction(notification, actionId)}
+  notifications={notificationCenter.notifications}
+  dismiss={(id) => notificationCenter.dismiss(id)}
+  save={() => commands.save()}
+  action={(notification, actionId) => commands.handleNotificationAction(notification, actionId)}
 />
 
 <style>

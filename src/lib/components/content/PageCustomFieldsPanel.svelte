@@ -7,24 +7,28 @@
   } from "@tabler/icons-svelte";
   import CustomFieldInput from "$lib/components/content/CustomFieldInput.svelte";
   import {
-    applyContentModelMutation,
-    planContentModelMutation,
-    readContentModelCatalog,
-  } from "$lib/project/io";
+  applyContentModelMutation,
+  planContentModelMutation,
+  readContentModelCatalog,
+} from "$lib/content-models/io";
   import {
     flushWorkspaceMutationInputs,
-    settleProjectWorkspaceMutation,
   } from "$lib/session/workspace-mutation-coordinator";
-  import type { AppState } from "$lib/state/app.svelte";
-  import type { ContentModelCatalog } from "$lib/types";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { ContentModelCatalog } from "$lib/content-models/contracts";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    globalStatus,
+    workspaceMutations,
+    openContentModels,
     pageFile,
     onSourceChanged = () => {},
   }: {
-    app: AppState;
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    openContentModels: () => void | Promise<void>;
     pageFile: string;
     onSourceChanged?: () => void | Promise<void>;
   } = $props();
@@ -46,9 +50,9 @@
   );
 
   $effect(() => {
-    const root = app.sessionProjectRoot.trim();
-    const session = app.kernelProjectSessionId.trim();
-    const revision = app.projectWorkspaceSnapshot?.revision ?? 0;
+    const root = workspaceMutations.snapshot?.projectRoot.trim() ?? "";
+    const session = workspaceMutations.snapshot?.runtimeSessionId.trim() ?? "";
+    const revision = workspaceMutations.snapshot?.revision ?? 0;
     const key = `${root}:${session}:${revision}:${pageFile}`;
     if (!root || !session || !pageFile || loading || saving || dirty || loadedKey === key) return;
     loadedKey = key;
@@ -56,9 +60,9 @@
   });
 
   async function load(
-    root = app.sessionProjectRoot,
-    session = app.kernelProjectSessionId,
-    revision = app.projectWorkspaceSnapshot?.revision ?? 0,
+    root = workspaceMutations.snapshot?.projectRoot ?? "",
+    session = workspaceMutations.snapshot?.runtimeSessionId ?? "",
+    revision = workspaceMutations.snapshot?.revision ?? 0,
   ) {
     loading = true;
     error = "";
@@ -69,8 +73,8 @@
         expectedSessionId: session,
       }, revision);
       if (
-        root !== app.sessionProjectRoot
-        || session !== app.kernelProjectSessionId
+        root !== (workspaceMutations.snapshot?.projectRoot ?? "")
+        || session !== (workspaceMutations.snapshot?.runtimeSessionId ?? "")
         || requestedPage !== pageFile
       ) return;
       catalog = next;
@@ -110,8 +114,8 @@
     try {
       await flushWorkspaceMutationInputs("manual");
       const identity = {
-        expectedProjectRoot: app.sessionProjectRoot,
-        expectedSessionId: app.kernelProjectSessionId,
+        expectedProjectRoot: workspaceMutations.snapshot?.projectRoot ?? "",
+        expectedSessionId: workspaceMutations.snapshot?.runtimeSessionId ?? "",
       };
       const input = {
         operation: {
@@ -123,7 +127,7 @@
       const plan = await planContentModelMutation(input, identity);
       if (plan.blocked) throw new Error(plan.blockers.join(" "));
       const receipt = await applyContentModelMutation(input, plan.planId, identity);
-      const settlement = await settleProjectWorkspaceMutation(app, receipt.workspace, {
+      const settlement = await workspaceMutations.settle(receipt.workspace, {
         preferredRelativePath: pageFile,
         warningLabel: "Câmpuri personalizate",
       });
@@ -134,7 +138,7 @@
       notice = settlement.warnings.length > 0
         ? `Valorile au fost actualizate. ${settlement.warnings.join(" ")}`
         : "Valorile au fost actualizate în frontmatter.";
-      app.setGlobalStatus("Câmpurile personalizate au fost actualizate.", "unsaved");
+      globalStatus.set("Câmpurile personalizate au fost actualizate.", "unsaved");
     } catch (cause) {
       error = errorMessage(cause);
     } finally {
@@ -159,7 +163,7 @@
       <IconBraces size={24} />
       <strong>Pagina nu moștenește un model.</strong>
       <span>Atașează un model secțiunii sale din activitatea Modele de conținut.</span>
-      <button type="button" onclick={() => { void app.setWorkbenchActivity("content_models"); }}>Deschide modelele</button>
+      <button type="button" onclick={openContentModels}>Deschide modelele</button>
     </div>
   {:else}
     <div class="contract-origin">

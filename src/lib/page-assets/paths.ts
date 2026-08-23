@@ -14,7 +14,3 @@ export function pageScssRelativePath(templatePath: string) {
   const styleRoot = theme ? `themes/${theme}/sass` : "sass";
   return `${styleRoot}/pagini/${templateToPageSlug(templatePath)}.scss`;
 }
-
-export function pageCssHref(templatePath: string) {
-  return `/pagini/${templateToPageSlug(templatePath)}.css`;
-}

@@ -1,8 +1,8 @@
-import {
-  zolaRelativePath,
-} from "$lib/project/files";
-import { normalizeProjectPath, sourceInteractionOrigin } from "$lib/source-graph/interaction";
-import type { HtmlPendingArea, InspectorPendingArea, SourceGraphNode } from "$lib/types";
+import { normalizeProjectPath } from "$lib/source-graph/interaction";
+import type {
+  HtmlPendingArea,
+  InspectorPendingArea,
+} from "$lib/canvas/contracts";
 
 export type PreviewTeraSelectionOrigin = "current" | "local" | "theme" | "unknown";
 
@@ -17,32 +17,12 @@ export function createEmptyInspectorPending(): Record<InspectorPendingArea, bool
   return { html: false, css: false, js: false };
 }
 
-export function includeTemplateNameForRenderedFile(file: string) {
-  const zolaPath = zolaRelativePath(file).replace(/^\/+/, "");
-  const themeTemplate = zolaPath.match(/^themes\/[^/]+\/templates\/(.+)$/);
-  if (themeTemplate) return themeTemplate[1].toLowerCase();
-  const localTemplate = zolaPath.match(/^templates\/(.+)$/);
-  return localTemplate?.[1]?.toLowerCase() ?? null;
-}
-
 export function normalizedProjectPath(path: string | null | undefined) {
   return normalizeProjectPath(path);
 }
 
-export function templateOriginKind(
-  node: SourceGraphNode | null,
-  activeScannedPath: string | null,
-): PreviewTeraSelectionOrigin {
-  return sourceInteractionOrigin(node, activeScannedPath);
-}
-
 export function createEmptyHtmlPending(): Record<HtmlPendingArea, boolean> {
   return { tag: false, attributes: false, text: false, image: false, classes: false, structure: false };
-}
-
-export function initialUiTheme(): "dark" | "light" {
-  if (typeof document === "undefined") return "dark";
-  return document.documentElement.dataset.panaTheme === "light" ? "light" : "dark";
 }
 
 export function contrastingTextColor(color: string): "#111111" | "#ffffff" {
@@ -56,8 +36,4 @@ export function contrastingTextColor(color: string): "#111111" | "#ffffff" {
   );
   const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
   return luminance > 0.42 ? "#111111" : "#ffffff";
-}
-
-export function shellQuote(value: string) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }

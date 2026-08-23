@@ -1,7 +1,5 @@
 import { canElementAcceptChildren, htmlVoidTags } from "$lib/html/mutations";
 import {
-  currentHtmlRelativePath,
-  currentSourceRelativePath,
   detectSourceLanguage,
   isZolaTemplatePath,
   projectRelativeZolaPath,
@@ -11,51 +9,63 @@ import {
   canPreviewCurrentSource as canPreviewCurrentSourceForWorkflow,
 } from "$lib/project/workflow";
 import { deriveGlobalDirtyState } from "$lib/session/dirty-state";
-import { workbenchSourceStatusFromSelection } from "$lib/source-provenance";
-import type { AppState } from "$lib/state/app.svelte";
-import type { ProjectFile } from "$lib/types";
+import type { GlobalDirtyState } from "$lib/session/dirty-state";
+import type {
+  HtmlPendingArea,
+  InspectorPendingArea,
+} from "$lib/canvas/contracts";
+import type {
+  ProjectFile,
+  ProjectScan,
+} from "$lib/project/lifecycle-contract";
+import type { ProjectWorkspaceSnapshot } from "$lib/project/workspace-contract";
+import type { SourceGraph } from "$lib/source-graph/graph-contract";
+import type { SourceEditTarget } from "$lib/source-graph/contracts";
+import type { EditorSelectionSessionController } from "$lib/state/editor-selection-session.svelte";
 import { t } from "$lib/i18n/runtime.svelte";
-import {
-  primarySelectionEditorNodeId,
-  primarySelectionEntry,
-  selectionResolution,
-} from "$lib/kernel/selection-read-model";
 
-export function deriveCurrentSourcePath(app: AppState) {
-  return app.activeScannedPath ?? "";
-}
+export type AppDerivedSource = {
+  activeScannedPath: string | null;
+  activePreviewPath: string;
+  scannedProject: ProjectScan | null;
+  templateWorkbenchActive: boolean;
+  templateWorkbenchTarget: string | null;
+  sourceGraph: SourceGraph | null;
+  currentSourcePath: string;
+  sourceLanguage: ReturnType<typeof detectSourceLanguage>;
+  currentSourceRelativePath: string;
+  currentHtmlRelativePath: string;
+  activeTemplateFile: ProjectFile | null;
+  activeRenderedPreviewPageFile: ProjectFile | null;
+  editorSelection: Pick<
+    EditorSelectionSessionController,
+    "inspectorSummary" | "navigationSnapshot" | "selectionSnapshot"
+  >;
+  projectWorkspaceSnapshot: ProjectWorkspaceSnapshot | null;
+  htmlPending: Record<HtmlPendingArea, boolean>;
+  inspectorPending: Record<InspectorPendingArea, boolean>;
+  globalDirtyState: GlobalDirtyState;
+  selectedSourceEditTarget: SourceEditTarget | null;
+  selectedSemanticSourceLocation: boolean;
+  isActivePreviewHtmlSource: boolean;
+  resolveSourceEditTargetForSourceId: (
+    sourceId: string | null | undefined,
+  ) => SourceEditTarget | null;
+};
 
-export function deriveSourceLanguage(app: AppState) {
-  return detectSourceLanguage(app.currentSourcePath);
-}
+type DerivedInput<Key extends keyof AppDerivedSource> = Pick<AppDerivedSource, Key>;
 
-export function deriveCurrentSourceCacheKey(app: AppState) {
-  return app.activeScannedPath ? `scanned:${app.activeScannedPath}` : "no-project";
-}
-
-export function deriveCurrentHtmlRelativePath(app: AppState) {
-  return currentHtmlRelativePath(app.activePreviewPath);
-}
-
-export function deriveCurrentSourceRelativePath(app: AppState) {
-  return currentSourceRelativePath(app.activeScannedPath);
-}
-
-export function deriveScannedFilesByRole(app: AppState, role: ProjectFile["role"]) {
-  return app.scannedProject?.files.filter((file) => file.kind !== "DIR" && file.role === role) ?? [];
-}
-
-export function deriveCurrentProjectPath(app: AppState) {
-  return app.scannedProject?.root ?? "";
-}
-
-export function deriveActiveTemplateFile(app: AppState) {
+export function deriveActiveTemplateFile(
+  app: DerivedInput<"scannedProject" | "activeScannedPath">,
+) {
   return app.scannedProject?.files.find(
     (file) => file.relativePath === app.activeScannedPath && file.role === "template",
   ) ?? null;
 }
 
-export function deriveActiveRenderedPreviewPageFile(app: AppState) {
+export function deriveActiveRenderedPreviewPageFile(
+  app: DerivedInput<"scannedProject" | "activePreviewPath">,
+) {
   return app.scannedProject?.previewBaseUrl
     ? (app.scannedProject.files.find(
         (file) => file.relativePath === app.activePreviewPath && file.role === "page" && Boolean(file.previewPath),
@@ -63,7 +73,15 @@ export function deriveActiveRenderedPreviewPageFile(app: AppState) {
     : null;
 }
 
-export function deriveActiveRenderedTemplatePath(app: AppState) {
+export function deriveActiveRenderedTemplatePath(
+  app: DerivedInput<
+    | "templateWorkbenchActive"
+    | "templateWorkbenchTarget"
+    | "activePreviewPath"
+    | "sourceGraph"
+    | "activeScannedPath"
+  >,
+) {
   if (app.templateWorkbenchActive && app.templateWorkbenchTarget) {
     return normalizedProjectPath(app.templateWorkbenchTarget);
   }
@@ -85,60 +103,19 @@ export function deriveActiveRenderedTemplatePath(app: AppState) {
   return null;
 }
 
-export function deriveIsActivePreviewHtmlSource(app: AppState) {
-  return app.sourceLanguage === "html" && app.currentSourceRelativePath === app.currentHtmlRelativePath;
-}
-
-export function deriveIsActiveRenderedPreviewPage(app: AppState) {
-  return Boolean(app.activeRenderedPreviewPageFile);
-}
-
-export function deriveSelectedSourceEditTarget(app: AppState) {
-  return app.resolveSourceEditTargetForSourceId(
-    primarySelectionEntry(app.selectionSnapshot)?.anchor.sourceNodeId,
-  );
-}
-
-export function deriveSelectedTemplateSourceNode(app: AppState) {
-  const primary = primarySelectionEntry(app.selectionSnapshot);
-  const sourceNodeId = primary?.subject.kind === "teraBoundary"
-    ? primary.anchor.sourceNodeId
-    : null;
-  return sourceNodeId
-    ? (app.sourceGraph?.nodes.find((node) => node.id === sourceNodeId) ?? null)
-    : null;
-}
-
-export function deriveSelectedEditorNavigationNode(app: AppState) {
-  const editorNodeId = primarySelectionEditorNodeId(app.selectionSnapshot);
-  return editorNodeId
-    ? (app.editorNavigationSnapshot?.nodes.find(
-        (node) => node.id === editorNodeId,
-      ) ?? null)
-    : null;
-}
-
-export function deriveSelectedSemanticSourceLocation(app: AppState) {
-  const selection = app.selectionSnapshot;
-  return Boolean(
-    selection
-    && selectionResolution(selection) === "resolved"
-    && primarySelectionEntry(selection)?.anchor.file
-    && primarySelectionEntry(selection)?.anchor.range,
-  );
-}
-
-export function deriveWorkbenchSourceStatus(app: AppState) {
-  return workbenchSourceStatusFromSelection(app.selectionSnapshot);
-}
-
-export function deriveCanEditHtml(app: AppState) {
+export function deriveCanEditHtml(
+  app: DerivedInput<
+    "isActivePreviewHtmlSource" | "selectedSourceEditTarget" | "selectedSemanticSourceLocation"
+  >,
+) {
   return app.isActivePreviewHtmlSource
     || Boolean(app.selectedSourceEditTarget)
     || app.selectedSemanticSourceLocation;
 }
 
-export function deriveAppDirtyState(app: AppState) {
+export function deriveAppDirtyState(
+  app: DerivedInput<"projectWorkspaceSnapshot" | "htmlPending" | "inspectorPending">,
+) {
   return deriveGlobalDirtyState({
     workspaceDirty: app.projectWorkspaceSnapshot?.dirty ?? false,
     htmlPending: app.htmlPending,
@@ -146,12 +123,10 @@ export function deriveAppDirtyState(app: AppState) {
   });
 }
 
-export function deriveSessionHasPending(app: AppState) {
-  return app.globalDirtyState.dirty;
-}
-
-export function deriveCanAddChildToSelectedElement(app: AppState) {
-  const summary = app.inspectorSelectionSummary;
+export function deriveCanAddChildToSelectedElement(
+  app: DerivedInput<"editorSelection">,
+) {
+  const summary = app.editorSelection.inspectorSummary;
   return Boolean(
     summary?.state === "resolved"
     && summary.tag
@@ -159,7 +134,9 @@ export function deriveCanAddChildToSelectedElement(app: AppState) {
   );
 }
 
-export function deriveCanPreviewCurrentSource(app: AppState) {
+export function deriveCanPreviewCurrentSource(
+  app: DerivedInput<"activeScannedPath" | "sourceLanguage" | "activeTemplateFile">,
+) {
   return canPreviewCurrentSourceForWorkflow({
     activeScannedPath: app.activeScannedPath,
     sourceLanguage: app.sourceLanguage,
@@ -167,7 +144,7 @@ export function deriveCanPreviewCurrentSource(app: AppState) {
   });
 }
 
-export function deriveHtmlSourceMutationBlockedReason(app: AppState) {
+export function deriveHtmlSourceMutationBlockedReason(app: DerivedInput<"activeScannedPath">) {
   if (app.activeScannedPath?.endsWith(".md")) {
     return t("workbench-html-mutation-markdown-blocked");
   }
@@ -183,8 +160,4 @@ function normalizedProjectPath(path: string | null | undefined) {
     .replaceAll("\\", "/")
     .replace(/\/+/g, "/")
     .replace(/^\.\//, "");
-}
-
-export function deriveActiveTerminalTab(app: AppState) {
-  return app.terminalTabs.find((tab) => tab.id === app.activeTerminalTabId) ?? app.terminalTabs[0] ?? null;
 }

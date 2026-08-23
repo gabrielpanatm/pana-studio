@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Laboratoare de stres | INDEX ZERO{% endblock title %}
+{% block description %}Patru suprafețe controlate pentru DOM, CSS, animații și media.{% endblock description %}
+{% block content %}
+<section class="pagina-arhiva">
+  <header class="titlu-arhiva container-larg"><p class="eticheta-tehnica">INSTRUMENTE / PROFIL ACTIV: MARE</p><h1>Laboratoare</h1><p>Fiecare suprafață izolează o categorie de presiune și păstrează dimensiunea explicită în manifest.</p></header>
+  <div class="grila-laboratoare container-larg">
+    {% for pagina in section.pages %}
+    <article><span>0{{ loop.index }}</span><p>{{ pagina.extra.metoda }}</p><h2><a href="{{ pagina.permalink }}">{{ pagina.title }}</a></h2><p>{{ pagina.description }}</p><a class="link-sageata" href="{{ pagina.permalink }}">Deschide laboratorul →</a></article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock content %}

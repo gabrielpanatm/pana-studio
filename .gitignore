@@ -4,6 +4,8 @@ node_modules
 /.svelte-kit
 /package
 /src-tauri/target
+/tools/performance-benchmark/target
+/benchmark-results
 /src-tauri/gen
 .env
 .env.*

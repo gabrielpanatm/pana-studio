@@ -1,4 +1,4 @@
-import type { ApplicationBootProjection } from "$lib/types";
+import type { ApplicationBootProjection } from "$lib/application/contracts";
 
 export const APPLICATION_BOOT_PROJECTION_STORAGE_KEY =
   "pana-studio-boot-projection-v1";
@@ -39,18 +39,6 @@ export function isApplicationBootProjection(
     )
     && boundedText(projection.loadingLabel, 200)
     && boundedText(projection.loadingSubtitle, 300);
-}
-
-export function parseApplicationBootProjection(
-  serialized: string | null,
-): ApplicationBootProjection | null {
-  if (!serialized || serialized.length > 4_096) return null;
-  try {
-    const value: unknown = JSON.parse(serialized);
-    return isApplicationBootProjection(value) ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 export function storeApplicationBootProjection(

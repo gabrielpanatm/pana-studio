@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} | INDEX ZERO{% endblock title %}
+{% block description %}{{ page.description }}{% endblock description %}
+{% block content %}
+<article class="detaliu detaliu-artist">
+  <header class="detaliu-hero">
+    <div class="detaliu-imagine"><img src="{{ get_url(path=page.extra.imagine) }}" alt="Portret vizual pentru {{ page.title }}" width="1200" height="1500"></div>
+    <div class="detaliu-titlu"><p class="eticheta-tehnica">{{ page.extra.disciplina }} / {{ page.extra.oras }}</p><h1>{{ page.title }}</h1><p>{{ page.description }}</p></div>
+  </header>
+  <div class="detaliu-corp container-larg"><div class="proza">{{ page.content | safe }}</div><aside><p class="eticheta-tehnica">INDEX</p><p>{{ page.extra.id }}</p><a class="link-sageata" href="{{ get_url(path='@/program.md') }}">Caută în program →</a></aside></div>
+</article>
+{% endblock content %}

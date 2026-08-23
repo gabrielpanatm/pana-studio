@@ -1,29 +1,36 @@
-import { handlePreviewInsertDrop } from "$lib/state/preview-insert-controller";
-import { handlePreviewTeraInsertDrop } from "$lib/state/preview-tera-insert-controller";
-import { normalizePreviewProjectionIntent } from "$lib/project/io";
+import {
+  normalizePreviewProjectionIntent,
+} from "$lib/preview/structural-io";
 import {
   capturePreviewStructuralSessionLease,
   isPreviewStructuralCancellation,
   previewStructuralCommandIdentity,
   requireCurrentPreviewStructuralSession,
   requirePreviewStructuralReceiptIdentity,
+  type PreviewStructuralSessionHost,
 } from "$lib/kernel/preview-structural-lane";
-import type { AppState } from "$lib/state/app.svelte";
-import type { PreviewProjectionIntentInput } from "$lib/types";
+import type { PreviewProjectionIntentInput } from "$lib/preview/contracts";
 import { errorMessage } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 
 const projectionIntentTypes = new Set([
   "preview-insert-drop",
   "preview-tera-drop",
 ]);
 
+export type PreviewProjectionControllerHost = PreviewStructuralSessionHost & {
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
+  handlePreviewInsertDrop: (payload: unknown) => Promise<void>;
+  handlePreviewTeraInsertDrop: (payload: unknown) => Promise<unknown>;
+};
+
 export function isPreviewProjectionIntentMessage(type: unknown): type is string {
   return typeof type === "string" && projectionIntentTypes.has(type);
 }
 
 export async function handlePreviewProjectionIntent(
-  app: AppState,
+  app: PreviewProjectionControllerHost,
   data: Record<string, unknown>,
 ) {
   const input = previewProjectionIntentInputFromMessage(data);
@@ -53,11 +60,11 @@ export async function handlePreviewProjectionIntent(
   }
 
   if (data.type === "preview-insert-drop") {
-    await handlePreviewInsertDrop(app.previewInsertControllerHost(), data);
+    await app.handlePreviewInsertDrop(data);
     return;
   }
   if (data.type === "preview-tera-drop") {
-    await handlePreviewTeraInsertDrop(app.previewTeraInsertControllerHost(), data);
+    await app.handlePreviewTeraInsertDrop(data);
   }
 }
 

@@ -14,27 +14,36 @@
     IconX,
   } from "@tabler/icons-svelte";
   import {
-    applyComponentMutation,
-    readFileBufferText,
-  } from "$lib/project/io";
+  applyComponentMutation,
+} from "$lib/creation/components-io";
+import {
+  readFileBufferText,
+} from "$lib/project/io/workspace";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
   import type {
     ComponentCompanionDraft,
-    ComponentDefinition,
-    ComponentDefinitionKind,
     ComponentDraftKind,
     ComponentMutationInput,
-    FileBufferRequestIdentity,
-  } from "$lib/types";
+  } from "$lib/creation/contracts";
+  import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract";
+  import type {
+    ComponentDefinition,
+    ComponentDefinitionKind,
+  } from "$lib/source-graph/contracts";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    globalStatus,
+    workspaceMutations,
+    sourceGraph,
     openWorkspaceSource,
   }: {
-    app: AppState;
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    sourceGraph: SourceGraph | null;
     openWorkspaceSource: (path: string) => void | Promise<void>;
   } = $props();
 
@@ -68,7 +77,7 @@
   let formDataPath = $state("");
   let formDataSource = $state("");
 
-  const componentGraph = $derived(app.sourceGraph?.componentGraph ?? null);
+  const componentGraph = $derived(sourceGraph?.componentGraph ?? null);
   const definitions = $derived(
     (componentGraph?.definitions ?? []).filter((definition) => (
       definition.kind !== "templateFile" && definition.kind !== "templateBlock"
@@ -112,8 +121,8 @@
 
   function identity(): FileBufferRequestIdentity {
     return {
-      expectedProjectRoot: app.sessionProjectRoot,
-      expectedSessionId: app.kernelProjectSessionId,
+      expectedProjectRoot: workspaceMutations.snapshot?.projectRoot ?? "",
+      expectedSessionId: workspaceMutations.snapshot?.runtimeSessionId ?? "",
     };
   }
 
@@ -122,7 +131,9 @@
     if (view === "partials") return definition.kind === "partial";
     if (view === "macros") return definition.kind === "macroLibrary" || definition.kind === "macro";
     if (view === "shortcodes") return definition.kind === "shortcode";
-    if (view === "repeats") return definition.kind === "inlineRepeat";
+    if (view === "repeats") {
+      return ["inlineRepeat", "inlineConditional", "inlineTransform"].includes(definition.kind);
+    }
     return false;
   }
 
@@ -142,6 +153,8 @@
       shortcode: t("components-kind-shortcode"),
       templateBlock: t("components-kind-block"),
       inlineRepeat: t("components-kind-repeat"),
+      inlineConditional: t("components-kind-conditional"),
+      inlineTransform: t("components-kind-transform"),
     };
     return labels[kind];
   }
@@ -152,7 +165,9 @@
   }
 
   function iconForDefinition(definition: ComponentDefinition) {
-    if (definition.kind === "inlineRepeat") return IconGitBranch;
+    if (["inlineRepeat", "inlineConditional", "inlineTransform"].includes(definition.kind)) {
+      return IconGitBranch;
+    }
     if (definition.kind === "shortcode") return IconBraces;
     return IconFileCode;
   }
@@ -278,19 +293,19 @@
 
   async function applyMutation(input: ComponentMutationInput, successMessage: string) {
     const receipt = await applyComponentMutation(input, identity());
-    const settlement = await settleProjectWorkspaceMutation(app, receipt.workspace, {
+    const settlement = await workspaceMutations.settle(receipt.workspace, {
       preferredRelativePath: receipt.workspace.relativePath,
       warningLabel: t("components-mutation-operation"),
     });
     const destination = receipt.plan.destinationRelativePath;
     if (destination) {
-      selectedDefinitionId = app.sourceGraph?.componentGraph.definitions.find((definition) => (
+      selectedDefinitionId = sourceGraph?.componentGraph.definitions.find((definition) => (
         definition.file === destination && definition.active
       ))?.id ?? "";
     } else {
       selectedDefinitionId = "";
     }
-    app.setGlobalStatus(
+    globalStatus.set(
       settlement.warnings.length > 0
         ? t("components-mutation-warning", { message: successMessage })
         : t("components-mutation-success", { message: successMessage }),

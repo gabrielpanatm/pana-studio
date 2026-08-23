@@ -1,4 +1,4 @@
-import type { SourceLanguage } from "$lib/types";
+import type { SourceLanguage } from "$lib/application/contracts";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import {
   StateEffect,

@@ -2,13 +2,18 @@
   import { IconChevronLeft, IconChevronRight, IconSearch } from "@tabler/icons-svelte";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
   import { t } from "$lib/i18n/runtime.svelte";
-  import { readIconCatalog, searchIconCatalog } from "$lib/project/io";
+  import {
+  readIconCatalog,
+  searchIconCatalog,
+} from "$lib/creation/icon-io";
+  import type {
+    NativeIconMutationIntent,
+    UiBlockSourceInstance,
+  } from "$lib/blocks/contracts";
   import type {
     IconCatalogPage,
     IconCatalogSummary,
-    NativeIconMutationIntent,
-    UiBlockSourceInstance,
-  } from "$lib/types";
+  } from "$lib/creation/contracts";
   import { errorMessage } from "$lib/util";
 
   let {

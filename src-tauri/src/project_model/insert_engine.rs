@@ -41,7 +41,6 @@ pub struct ProjectHtmlInsertIntent {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectHtmlInsertElement {
     pub kind: Option<String>,
-    #[serde(default, alias = "componentId")]
     pub block_id: Option<String>,
     pub tag: String,
     pub class_name: Option<String>,
@@ -573,11 +572,13 @@ fn build_insert_snippet(
     intent: &ProjectHtmlInsertIntent,
 ) -> Result<InsertSnippet, String> {
     let element = &intent.element;
-    if element
+    let kind = element
         .kind
         .as_deref()
-        .is_some_and(|kind| kind.trim() == "nativeBlockSlotItem")
-    {
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .ok_or_else(|| "Inserarea HTML cere kind explicit html sau block.".to_string())?;
+    if kind == "nativeBlockSlotItem" {
         let context = intent.native_block_slot.as_ref().ok_or_else(|| {
             "Inserarea unui item de slot nativ cere contextul Rust al slotului.".to_string()
         })?;
@@ -598,16 +599,20 @@ fn build_insert_snippet(
             block_instance_id: None,
         });
     }
-    if element
-        .kind
-        .as_deref()
-        .is_some_and(|kind| matches!(kind.trim(), "block" | "component"))
-        || element
-            .block_id
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-    {
+    if kind == "block" {
         return build_native_block_insert_snippet(model, element);
+    }
+    if kind != "html" {
+        return Err(format!(
+            "Inserarea HTML nu acceptă element kind {kind}; sunt permise html și block."
+        ));
+    }
+    if element
+        .block_id
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Err("Elementul html nu poate declara blockId.".to_string());
     }
 
     let tag = normalize_tag(&element.tag)?;
@@ -1657,7 +1662,7 @@ mod tests {
                 target_kind: Some("html".to_string()),
                 position: ProjectMovePosition::Inside,
                 element: ProjectHtmlInsertElement {
-                    kind: Some("component".to_string()),
+                    kind: Some("block".to_string()),
                     block_id: Some("hero-card".to_string()),
                     tag: "section".to_string(),
                     class_name: None,
@@ -1675,6 +1680,47 @@ mod tests {
             .diagnostic
             .unwrap()
             .contains("NativeBlockRegistry Rust"));
+    }
+
+    #[test]
+    fn plan_html_insert_rejects_legacy_component_kind() {
+        let root = unique_test_dir();
+        let fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<section></section>\n").unwrap();
+        let model = fixture.build_model().unwrap();
+        let section = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "<section>")
+            .unwrap();
+
+        let plan = plan_html_insert(
+            &model,
+            &ProjectHtmlInsertIntent {
+                target_source_id: Some(section.id.clone()),
+                target_tag: Some("section".to_string()),
+                target_kind: Some("html".to_string()),
+                position: ProjectMovePosition::Inside,
+                element: ProjectHtmlInsertElement {
+                    kind: Some("component".to_string()),
+                    block_id: Some("counter".to_string()),
+                    tag: "span".to_string(),
+                    class_name: None,
+                    text: None,
+                    label: Some("Contor legacy".to_string()),
+                },
+                native_block_slot: None,
+            },
+            None,
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(!plan.allowed);
+        assert!(plan
+            .diagnostic
+            .unwrap()
+            .contains("sunt permise html și block"));
     }
 
     #[test]

@@ -3,7 +3,6 @@ import { afterEach, beforeEach, test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { resetProjectWorkspacePreviewCoordinator } from "$lib/kernel/project-workspace-preview-coordinator";
 import {
-  fileBufferDraftSyncSnapshot,
   hashFileBufferText,
   resetFileBufferDraftSyncState,
   setFileBufferDraftSyncSession,
@@ -156,7 +155,6 @@ test("proiecția text Rust înlocuiește cache-ul gol al unui fișier creat îna
     target.sourceCache[`scanned:${relativePath}`],
     "<main>Proiecție Rust</main>",
   );
-  assert.equal(fileBufferDraftSyncSnapshot().cursorCount, 1);
 });
 
 test("o confirmare derivată veche nu poate regresa snapshot-ul unei mutații CSS mai noi", async () => {

@@ -9,7 +9,7 @@ function source(relativePath) {
 test("Taxonomii este o activitate Workbench sincronizată între Rust și frontend", () => {
   const rustWorkbench = source("../src-tauri/src/kernel/workbench/model.rs");
   const rustCommands = source("../src-tauri/src/kernel/command_center/search.rs");
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/workbench/contracts.ts");
   const terms = source("../src/lib/i18n/ui-terms.ts");
   const rail = source("../src/lib/components/workbench/ActivityRail.svelte");
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
@@ -34,8 +34,8 @@ test("catalogul și toate mutațiile taxonomice rămân autoritate Rust", () => 
   const command = source("../src-tauri/src/commands/taxonomies.rs");
   const catalog = source("../src-tauri/src/source_graph/taxonomy_catalog.rs");
   const mutation = source("../src-tauri/src/kernel/taxonomy_mutation.rs");
-  const io = source("../src/lib/project/io.ts");
-  const types = source("../src/lib/types.ts");
+  const io = source("../src/lib/taxonomies/io.ts");
+  const types = source("../src/lib/taxonomies/contracts.ts");
 
   for (const commandName of [
     "read_taxonomy_catalog",
@@ -79,7 +79,7 @@ test("Conținut atribuie dinamic taxonomiile din catalog, fără Tags/Categories
   const legacyPanel = source("../src/lib/components/project/ProjectPageSettingsTab.svelte");
   const frontmatter = source("../src/lib/markdown/frontmatter.ts");
 
-  assert.match(content, /<PageTaxonomyAssignments \{app\} page=\{editingPage\}/);
+  assert.match(content, /<PageTaxonomyAssignments \{globalStatus\} \{workspaceMutations\}[\s\S]*page=\{editingPage\}/);
   assert.match(assignments, /readTaxonomyCatalog/);
   assert.match(assignments, /entry\.declared && entry\.language === pageLanguage/);
   assert.match(assignments, /kind:\s*"set_page_terms"/);

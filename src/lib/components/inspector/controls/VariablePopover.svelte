@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import type { CssPropertySuggestion } from "$lib/types";
+  import type { CssPropertySuggestion } from "$lib/css/contracts";
   import { t } from "$lib/i18n/runtime.svelte";
 
   let {

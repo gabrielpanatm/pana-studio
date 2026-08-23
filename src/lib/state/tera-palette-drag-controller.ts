@@ -1,6 +1,6 @@
 import type { TeraPaletteItem } from "$lib/tera/model";
 import { listenForExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
-import type { CenterView } from "$lib/types";
+import type { CenterView } from "$lib/application/contracts";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import { t } from "$lib/i18n/runtime.svelte";
 

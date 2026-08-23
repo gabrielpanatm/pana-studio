@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Semnal pierdut | INDEX ZERO{% endblock title %}
+{% block description %}Pagina cerută nu există în arhiva INDEX ZERO.{% endblock description %}
+{% block content %}
+<article class="pagina-text container-larg">
+  <header><p class="eticheta-tehnica">EROARE / 404</p><h1>Semnal pierdut</h1><p>Pagina cerută nu există în arhiva INDEX ZERO.</p></header>
+  <div class="proza"><p>Ruta cerută nu face parte din ediția curentă.</p><p><a class="buton buton-primar" href="{{ get_url(path='@/program.md') }}">Întoarce-te la program</a></p></div>
+</article>
+{% endblock content %}

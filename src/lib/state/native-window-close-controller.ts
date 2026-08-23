@@ -1,8 +1,9 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import type { AppState } from "$lib/state/app.svelte";
 import { errorMessage } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
+import type { GlobalStatusKind } from "$lib/status/global-status";
+import type { ProjectTransitionFrontendLeaseOwner } from "$lib/state/project-transition-frontend-lease";
 
 export const NATIVE_WINDOW_CLOSE_REQUESTED_EVENT = "pana-native-window-close-requested";
 
@@ -10,7 +11,26 @@ type NativeWindowCloseRequestPayload = {
   projectRoot: string;
 };
 
-export async function registerNativeWindowCloseGuard(app: AppState): Promise<UnlistenFn> {
+export type NativeWindowCloseControllerHost = {
+  nativeWindowClosePending: boolean;
+  nativeWindowCloseInProgress: boolean;
+  projectTransitionFrontendLeaseActive: boolean;
+  projectTransitionFrontendLease?: { kind: string } | null;
+  scannedProject: { root: string } | null;
+  projectTransitionDecisionRequest: {
+    continuation: { kind: string };
+  } | null;
+  closeCurrentProject: (
+    detachedProjectRoot?: string | null,
+    leaseOwner?: ProjectTransitionFrontendLeaseOwner,
+  ) => Promise<boolean>;
+  waitForProjectTransitionFrontendLeaseIdle: () => Promise<void>;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
+};
+
+export async function registerNativeWindowCloseGuard(
+  app: NativeWindowCloseControllerHost,
+): Promise<UnlistenFn> {
   return await getCurrentWindow().listen<NativeWindowCloseRequestPayload>(
     NATIVE_WINDOW_CLOSE_REQUESTED_EVENT,
     (event) => {
@@ -20,7 +40,7 @@ export async function registerNativeWindowCloseGuard(app: AppState): Promise<Unl
 }
 
 export async function handleNativeWindowCloseRequest(
-  app: AppState,
+  app: NativeWindowCloseControllerHost,
   requestedProjectRoot: string | null = null,
 ) {
   if (app.nativeWindowClosePending && isWaitingForProjectCloseDecision(app)) return;
@@ -29,6 +49,20 @@ export async function handleNativeWindowCloseRequest(
   app.nativeWindowCloseInProgress = true;
   app.nativeWindowClosePending = true;
   try {
+    let waitedForActiveTransition = false;
+    const activeTransitionKind = app.projectTransitionFrontendLease?.kind ?? null;
+    if (app.projectTransitionFrontendLeaseActive) {
+      waitedForActiveTransition = true;
+      await app.waitForProjectTransitionFrontendLeaseIdle();
+    }
+    if (
+      waitedForActiveTransition
+      && activeTransitionKind === "close"
+      && !app.scannedProject
+      && !isWaitingForProjectCloseDecision(app)
+    ) {
+      return;
+    }
     if (
       requestedProjectRoot
       && app.scannedProject
@@ -41,7 +75,10 @@ export async function handleNativeWindowCloseRequest(
         }),
       );
     }
-    const closed = await app.closeCurrentProject(app.scannedProject ? null : requestedProjectRoot);
+    const closed = await app.closeCurrentProject(
+      app.scannedProject ? null : requestedProjectRoot,
+      "native-window-close",
+    );
     if (!closed && !isWaitingForProjectCloseDecision(app)) {
       app.nativeWindowClosePending = false;
     }
@@ -61,7 +98,9 @@ export async function handleNativeWindowCloseRequest(
   }
 }
 
-export async function closeNativeWindowIfProjectClosed(app: AppState): Promise<boolean> {
+export async function closeNativeWindowIfProjectClosed(
+  app: NativeWindowCloseControllerHost,
+): Promise<boolean> {
   if (
     !app.nativeWindowClosePending
     || app.scannedProject
@@ -72,11 +111,11 @@ export async function closeNativeWindowIfProjectClosed(app: AppState): Promise<b
   return true;
 }
 
-export function cancelPendingNativeWindowClose(app: AppState) {
+export function cancelPendingNativeWindowClose(app: NativeWindowCloseControllerHost) {
   app.nativeWindowClosePending = false;
   app.nativeWindowCloseInProgress = false;
 }
 
-function isWaitingForProjectCloseDecision(app: AppState): boolean {
+function isWaitingForProjectCloseDecision(app: NativeWindowCloseControllerHost): boolean {
   return app.projectTransitionDecisionRequest?.continuation.kind === "close_project";
 }

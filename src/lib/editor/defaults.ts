@@ -1,4 +1,4 @@
-import type { EditableStyles } from "$lib/types";
+import type { EditableStyles } from "$lib/css/contracts";
 
 export function createDefaultEditableStyles(): EditableStyles {
   return {

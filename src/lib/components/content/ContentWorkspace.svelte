@@ -22,15 +22,54 @@
     PageFrontmatterMutationValue,
   } from "$lib/markdown/frontmatter";
   import { slugifyPageTitle } from "$lib/project/files";
-  import type { AppState } from "$lib/state/app.svelte";
-  import type { SourceGraphPage, SourcePageKind } from "$lib/types";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { AuditRunReceipt } from "$lib/audit/contracts";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
+  import type { SourcePageKind } from "$lib/source-graph/contracts";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
+  import type { SourceGraphPage } from "$lib/source-graph/contracts";
+  import type { WorkbenchSnapshot } from "$lib/workbench/contracts";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    sourceGraph,
+    contentWorkspace,
+    currentAudit,
+    projectStatus,
+    refreshToken,
+    scannedPages,
+    scannedTemplates,
+    activeTheme,
+    commands,
+    globalStatus,
+    workspaceMutations,
     openWorkspaceSource,
   }: {
-    app: AppState;
+    sourceGraph: SourceGraph | null;
+    contentWorkspace: WorkbenchSnapshot["contentWorkspace"] | null;
+    currentAudit: AuditRunReceipt | null;
+    projectStatus: string;
+    refreshToken: number;
+    scannedPages: ProjectFile[];
+    scannedTemplates: ProjectFile[];
+    activeTheme: string | null;
+    commands: {
+      createPage: (input: { title: string; slug: string; section: string }) => Promise<string | null>;
+      openPageEditor: (relativePath: string) => Promise<unknown>;
+      updateFrontmatterSource: (relativePath: string, source: string) => void;
+      updateFrontmatterField: (
+        relativePath: string,
+        field: PageFrontmatterField,
+        value: PageFrontmatterMutationValue,
+      ) => Promise<string>;
+      readPageSettings: (relativePath: string) => Promise<string>;
+      openTaxonomies: () => Promise<unknown>;
+      openContentModels: () => Promise<unknown>;
+      openInBrowser: (route: string) => Promise<unknown>;
+    };
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
     openWorkspaceSource: (path: string) => void | Promise<void>;
   } = $props();
 
@@ -65,7 +104,7 @@
   let pageListScrollTop = $state(0);
   let pageSettingsView = $state<PageSettingsView>("settings");
 
-  const pages = $derived(app.sourceGraph?.pages ?? []);
+  const pages = $derived(sourceGraph?.pages ?? []);
   const sections = $derived.by(() => {
     const values = new Set<string>();
     for (const page of pages) values.add(contentSection(page.file));
@@ -94,8 +133,8 @@
     pages.find((page) => page.id === selectedPageId) ?? filteredPages[0] ?? null,
   );
   const editingPagePath = $derived(
-    app.workbenchSnapshot?.contentWorkspace.mode === "edit"
-      ? app.workbenchSnapshot.contentWorkspace.pagePath
+    contentWorkspace?.mode === "edit"
+      ? contentWorkspace.pagePath
       : null,
   );
   const editingPage = $derived(
@@ -103,7 +142,6 @@
       ? pages.find((page) => page.file === editingPagePath) ?? null
       : null,
   );
-  const currentAudit = $derived(app.currentProjectAuditReceipt());
   const contentDiagnostics = $derived(
     (currentAudit?.findings ?? []).filter((finding) => (
       finding.category === "seo"
@@ -136,7 +174,7 @@
 
   function relationCount(page: SourceGraphPage) {
     const ids = new Set([page.id, page.contentNodeId]);
-    return (app.sourceGraph?.relations ?? []).filter(
+    return (sourceGraph?.relations ?? []).filter(
       (relation) => ids.has(relation.from) || ids.has(relation.to),
     ).length;
   }
@@ -186,18 +224,18 @@
     creating = true;
     createError = "";
     try {
-      const relativePath = await app.createContentPageFromInput({
+      const relativePath = await commands.createPage({
         title,
         slug,
         section: sectionDraft,
       });
       if (!relativePath) {
-        createError = app.projectStatus || t("content-create-failed");
+        createError = projectStatus || t("content-create-failed");
         return;
       }
-      selectedPageId = app.sourceGraph?.pages.find((page) => page.file === relativePath)?.id ?? "";
+      selectedPageId = sourceGraph?.pages.find((page) => page.file === relativePath)?.id ?? "";
       detailMode = "info";
-      app.setGlobalStatus(
+      globalStatus.set(
         t("content-created-status", { path: relativePath }),
         "unsaved",
       );
@@ -214,12 +252,12 @@
 
   async function beginEdit(page: SourceGraphPage) {
     selectedPageId = page.id;
-    await app.openContentPageEditor(page.file);
+    await commands.openPageEditor(page.file);
   }
 
   function updateMetadataSource(relativePath: string, source: string) {
     metadataSource = source;
-    app.updatePageFrontmatterSource(relativePath, source);
+    commands.updateFrontmatterSource(relativePath, source);
   }
 
   async function updateMetadataField(
@@ -227,18 +265,18 @@
     field: PageFrontmatterField,
     value: PageFrontmatterMutationValue,
   ) {
-    metadataSource = await app.updatePageFrontmatterField(relativePath, field, value);
+    metadataSource = await commands.updateFrontmatterField(relativePath, field, value);
     loadedMetadataPath = relativePath;
   }
 
   async function refreshMetadataSource() {
     if (!editingPagePath) return;
-    metadataSource = await app.readPageSettingsDocument(editingPagePath);
+    metadataSource = await commands.readPageSettings(editingPagePath);
     loadedMetadataPath = editingPagePath;
   }
 
   $effect(() => {
-    const sessionId = app.kernelProjectSessionId;
+    const sessionId = workspaceMutations.identity?.expectedSessionId ?? "";
     if (contentSessionId === sessionId) return;
     contentSessionId = sessionId;
     activeView = "all";
@@ -256,10 +294,9 @@
 
   $effect(() => {
     const relativePath = editingPagePath;
-    const projectRoot = app.sessionProjectRoot;
-    const runtimeSessionId = app.kernelProjectSessionId;
-    const workspaceRevision = app.projectWorkspaceSnapshot?.revision ?? 0;
-    const refreshToken = app.refreshToken;
+    const projectRoot = workspaceMutations.identity?.expectedProjectRoot ?? "";
+    const runtimeSessionId = workspaceMutations.identity?.expectedSessionId ?? "";
+    const workspaceRevision = workspaceMutations.snapshot?.revision ?? 0;
     void workspaceRevision;
     void refreshToken;
 
@@ -273,11 +310,11 @@
 
     metadataLoading = loadedMetadataPath !== relativePath;
     metadataError = "";
-    void app.readPageSettingsDocument(relativePath).then((source) => {
+    void commands.readPageSettings(relativePath).then((source) => {
       if (
         requestSerial !== metadataRequestSerial
-        || app.sessionProjectRoot !== projectRoot
-        || app.kernelProjectSessionId !== runtimeSessionId
+        || workspaceMutations.identity?.expectedProjectRoot !== projectRoot
+        || workspaceMutations.identity?.expectedSessionId !== runtimeSessionId
         || editingPagePath !== relativePath
       ) return;
       metadataSource = source;
@@ -343,7 +380,7 @@
         <MarkdownEditor
           source={metadataSource}
           path={editingPagePath}
-          refreshToken={app.refreshToken}
+          {refreshToken}
           onChange={(source, path) => updateMetadataSource(path, source)}
         />
       {:else}
@@ -379,18 +416,20 @@
           {#if pageSettingsView === "settings" || pageSettingsView === "seo"}
             <ProjectPageSettingsTab
               activeScannedPath={editingPage.file}
-              scannedPages={app.scannedPages}
-              scannedTemplates={app.scannedTemplates}
-              activeTheme={app.scannedProject?.activeTheme ?? null}
+              {scannedPages}
+              {scannedTemplates}
+              {activeTheme}
               pageSource={metadataSource}
               pageKind={editingPage.pageKind}
               updatePageFrontmatterField={updateMetadataField}
               view={pageSettingsView === "seo" ? "seo" : "settings"}
             />
-            {#if pageSettingsView === "settings"}<PageTaxonomyAssignments {app} page={editingPage} />{/if}
+            {#if pageSettingsView === "settings"}<PageTaxonomyAssignments {globalStatus} {workspaceMutations} openTaxonomies={async () => { await commands.openTaxonomies(); }} page={editingPage} />{/if}
           {:else}
             <PageCustomFieldsPanel
-              {app}
+              {globalStatus}
+              {workspaceMutations}
+              openContentModels={async () => { await commands.openContentModels(); }}
               pageFile={editingPage.file}
               onSourceChanged={refreshMetadataSource}
             />
@@ -551,7 +590,7 @@
       {:else if selectedPage}
         <span class="detail-kicker">{kindLabel(selectedPage.pageKind)} · {contentSection(selectedPage.file) || t("content-root-short")}</span>
         <h2>{selectedPage.title}</h2>
-        <a class="route" href={selectedPage.url || "/"} onclick={(event) => { event.preventDefault(); void app.openCurrentProjectInBrowser(selectedPage.url || "/"); }}>
+        <a class="route" href={selectedPage.url || "/"} onclick={(event) => { event.preventDefault(); void commands.openInBrowser(selectedPage.url || "/"); }}>
           {selectedPage.url || "/"} <IconExternalLink size={13} />
         </a>
         <dl>
@@ -578,7 +617,7 @@
             <IconCode size={14} /> {t("content-open-markdown")}
           </button>
         </div>
-        <button class="ui-button secondary-action" type="button" onclick={() => { void app.openCurrentProjectInBrowser(selectedPage.url || "/"); }}>
+        <button class="ui-button secondary-action" type="button" onclick={() => { void commands.openInBrowser(selectedPage.url || "/"); }}>
           {t("content-view-public")} <IconExternalLink size={13} />
         </button>
       {:else}

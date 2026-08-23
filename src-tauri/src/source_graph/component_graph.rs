@@ -26,17 +26,35 @@ use crate::{
     },
 };
 
-pub(crate) const COMPONENT_GRAPH_SCHEMA_VERSION: u32 = 2;
+pub(crate) const COMPONENT_GRAPH_SCHEMA_VERSION: u32 = 3;
 
 pub(crate) fn build_component_graph(source_graph: &SourceGraph) -> ComponentGraph {
     let mut builder = ComponentGraphBuilder::new(source_graph);
-    builder.project_template_file_definitions();
+    builder.project_template_file_definitions(None);
     builder.reconcile_template_shadowing();
-    builder.project_template_symbol_definitions();
-    builder.project_include_invocations();
-    builder.project_macro_invocations();
+    builder.project_template_symbol_definitions(None);
+    builder.project_include_invocations(None);
+    builder.project_macro_invocations(None);
     builder.project_shortcode_invocations();
-    builder.project_repeat_invocations();
+    builder.project_repeat_invocations(None);
+    builder.project_inline_control_invocations(None);
+    builder.reconcile_consumers();
+    builder.finish()
+}
+
+pub(crate) fn upsert_component_graph_template(
+    source_graph: &SourceGraph,
+    previous: ComponentGraph,
+    template_file: &str,
+) -> ComponentGraph {
+    let mut builder = ComponentGraphBuilder::from_previous(source_graph, previous, template_file);
+    builder.project_template_file_definitions(Some(template_file));
+    builder.reconcile_template_shadowing();
+    builder.project_template_symbol_definitions(Some(template_file));
+    builder.project_include_invocations(Some(template_file));
+    builder.project_macro_invocations(Some(template_file));
+    builder.project_repeat_invocations(Some(template_file));
+    builder.project_inline_control_invocations(Some(template_file));
     builder.reconcile_consumers();
     builder.finish()
 }
@@ -51,6 +69,8 @@ struct ComponentGraphBuilder<'a> {
     macro_definition_by_template_and_name: HashMap<(String, String), String>,
     shortcode_definition_by_name: HashMap<String, String>,
     repeat_definition_by_source_node: HashMap<String, String>,
+    conditional_definition_by_source_node: HashMap<String, String>,
+    transform_definition_by_source_node: HashMap<String, String>,
 }
 
 impl<'a> ComponentGraphBuilder<'a> {
@@ -65,11 +85,76 @@ impl<'a> ComponentGraphBuilder<'a> {
             macro_definition_by_template_and_name: HashMap::new(),
             shortcode_definition_by_name: HashMap::new(),
             repeat_definition_by_source_node: HashMap::new(),
+            conditional_definition_by_source_node: HashMap::new(),
+            transform_definition_by_source_node: HashMap::new(),
         }
     }
 
-    fn project_template_file_definitions(&mut self) {
-        for template in &self.source_graph.templates {
+    fn from_previous(
+        source_graph: &'a SourceGraph,
+        previous: ComponentGraph,
+        template_file: &str,
+    ) -> Self {
+        let definitions = previous
+            .definitions
+            .into_iter()
+            .filter(|definition| definition.file.as_deref() != Some(template_file))
+            .collect::<Vec<_>>();
+        let invocations = previous
+            .invocations
+            .into_iter()
+            .filter(|invocation| invocation.file != template_file)
+            .collect::<Vec<_>>();
+        let file_definition_by_template_node = definitions
+            .iter()
+            .filter(|definition| definition.owner_definition_id.is_none())
+            .filter_map(|definition| {
+                Some((definition.source_node_id.clone()?, definition.id.clone()))
+            })
+            .collect();
+        let repeat_definition_by_source_node = definitions
+            .iter()
+            .filter(|definition| definition.kind == ComponentDefinitionKind::InlineRepeat)
+            .filter_map(|definition| {
+                Some((definition.source_node_id.clone()?, definition.id.clone()))
+            })
+            .collect();
+        let conditional_definition_by_source_node = definitions
+            .iter()
+            .filter(|definition| definition.kind == ComponentDefinitionKind::InlineConditional)
+            .filter_map(|definition| {
+                Some((definition.source_node_id.clone()?, definition.id.clone()))
+            })
+            .collect();
+        let transform_definition_by_source_node = definitions
+            .iter()
+            .filter(|definition| definition.kind == ComponentDefinitionKind::InlineTransform)
+            .filter_map(|definition| {
+                Some((definition.source_node_id.clone()?, definition.id.clone()))
+            })
+            .collect();
+        Self {
+            source_graph,
+            definitions,
+            invocations,
+            diagnostics: Vec::new(),
+            file_definition_by_template_node,
+            effective_file_definition_by_template_name: HashMap::new(),
+            macro_definition_by_template_and_name: HashMap::new(),
+            shortcode_definition_by_name: HashMap::new(),
+            repeat_definition_by_source_node,
+            conditional_definition_by_source_node,
+            transform_definition_by_source_node,
+        }
+    }
+
+    fn project_template_file_definitions(&mut self, template_file: Option<&str>) {
+        for template in self
+            .source_graph
+            .templates
+            .iter()
+            .filter(|template| template_file.is_none_or(|file| template.file == file))
+        {
             let kind = template_definition_kind(&template.name);
             let id = component_id("definition", &["template-file", template.node_id.as_str()]);
             let origin = component_origin(&template.origin);
@@ -113,6 +198,7 @@ impl<'a> ComponentGraphBuilder<'a> {
     }
 
     fn reconcile_template_shadowing(&mut self) {
+        self.effective_file_definition_by_template_name.clear();
         let mut by_name = BTreeMap::<String, Vec<usize>>::new();
         for (index, definition) in self.definitions.iter().enumerate() {
             if definition.template_name.is_none() || definition.owner_definition_id.is_some() {
@@ -157,8 +243,13 @@ impl<'a> ComponentGraphBuilder<'a> {
             .collect();
     }
 
-    fn project_template_symbol_definitions(&mut self) {
-        for template in &self.source_graph.templates {
+    fn project_template_symbol_definitions(&mut self, template_file: Option<&str>) {
+        for template in self
+            .source_graph
+            .templates
+            .iter()
+            .filter(|template| template_file.is_none_or(|file| template.file == file))
+        {
             let owner_definition_id = self
                 .file_definition_by_template_node
                 .get(&template.node_id)
@@ -373,6 +464,124 @@ impl<'a> ComponentGraphBuilder<'a> {
                     diagnostics: Vec::new(),
                 });
             }
+
+            let semantic_conditionals = template
+                .semantics
+                .as_ref()
+                .map(semantic_conditionals)
+                .unwrap_or_default();
+            for (index, source_node) in
+                source_nodes_for_template(self.source_graph, template, SourceNodeKind::If)
+                    .into_iter()
+                    .enumerate()
+            {
+                let mut context_dependencies = match semantic_conditionals.get(index).copied() {
+                    Some(TeraSemanticNode::If {
+                        branches,
+                        otherwise,
+                    }) => {
+                        let mut dependencies = Vec::new();
+                        for branch in branches {
+                            dependencies
+                                .extend(context_dependencies_for_expression(&branch.condition));
+                            dependencies.extend(context_dependencies_for_nodes(&branch.body));
+                        }
+                        if let Some(otherwise) = otherwise {
+                            dependencies.extend(context_dependencies_for_nodes(otherwise));
+                        }
+                        dependencies
+                    }
+                    _ => Vec::new(),
+                };
+                context_dependencies.sort();
+                context_dependencies.dedup();
+                let id = component_id(
+                    "definition",
+                    &[
+                        "conditional",
+                        template.node_id.as_str(),
+                        source_node.id.as_str(),
+                    ],
+                );
+                self.conditional_definition_by_source_node
+                    .insert(source_node.id.clone(), id.clone());
+                self.definitions.push(ComponentDefinition {
+                    id,
+                    kind: ComponentDefinitionKind::InlineConditional,
+                    name: format!("{}#{}", template.name, source_node.id),
+                    display_name: format!("Condiție · {}", source_node.label),
+                    origin: component_origin(&template.origin),
+                    theme_name: template.theme_name.clone(),
+                    file: Some(template.file.clone()),
+                    template_name: Some(template.name.clone()),
+                    source_node_id: Some(source_node.id.clone()),
+                    owner_definition_id: owner_definition_id.clone(),
+                    symbol: None,
+                    parameters: Vec::new(),
+                    context_dependencies,
+                    data_bindings: Vec::new(),
+                    dependencies: base_dependencies.clone(),
+                    consumer_invocation_ids: Vec::new(),
+                    shadowed_by: None,
+                    active: owner_active,
+                    capabilities: symbol_capabilities(editable),
+                    diagnostics: Vec::new(),
+                });
+            }
+
+            let semantic_transforms = template
+                .semantics
+                .as_ref()
+                .map(semantic_transforms)
+                .unwrap_or_default();
+            for (index, source_node) in
+                source_nodes_for_template(self.source_graph, template, SourceNodeKind::Filter)
+                    .into_iter()
+                    .enumerate()
+            {
+                let mut context_dependencies = match semantic_transforms.get(index).copied() {
+                    Some(TeraSemanticNode::FilterSection { filter, body }) => {
+                        let mut dependencies = context_dependencies_for_call(filter);
+                        dependencies.extend(context_dependencies_for_nodes(body));
+                        dependencies
+                    }
+                    _ => Vec::new(),
+                };
+                context_dependencies.sort();
+                context_dependencies.dedup();
+                let id = component_id(
+                    "definition",
+                    &[
+                        "transform",
+                        template.node_id.as_str(),
+                        source_node.id.as_str(),
+                    ],
+                );
+                self.transform_definition_by_source_node
+                    .insert(source_node.id.clone(), id.clone());
+                self.definitions.push(ComponentDefinition {
+                    id,
+                    kind: ComponentDefinitionKind::InlineTransform,
+                    name: format!("{}#{}", template.name, source_node.id),
+                    display_name: format!("Transformare · {}", source_node.label),
+                    origin: component_origin(&template.origin),
+                    theme_name: template.theme_name.clone(),
+                    file: Some(template.file.clone()),
+                    template_name: Some(template.name.clone()),
+                    source_node_id: Some(source_node.id.clone()),
+                    owner_definition_id: owner_definition_id.clone(),
+                    symbol: None,
+                    parameters: Vec::new(),
+                    context_dependencies,
+                    data_bindings: Vec::new(),
+                    dependencies: base_dependencies.clone(),
+                    consumer_invocation_ids: Vec::new(),
+                    shadowed_by: None,
+                    active: owner_active,
+                    capabilities: symbol_capabilities(editable),
+                    diagnostics: Vec::new(),
+                });
+            }
         }
 
         self.reconcile_symbol_shadowing();
@@ -418,8 +627,13 @@ impl<'a> ComponentGraphBuilder<'a> {
         self.macro_definition_by_template_and_name = active_macros;
     }
 
-    fn project_include_invocations(&mut self) {
-        for template in &self.source_graph.templates {
+    fn project_include_invocations(&mut self, template_file: Option<&str>) {
+        for template in self
+            .source_graph
+            .templates
+            .iter()
+            .filter(|template| template_file.is_none_or(|file| template.file == file))
+        {
             let include_nodes =
                 source_nodes_for_template(self.source_graph, template, SourceNodeKind::Include);
             for (index, group) in template.include_groups.iter().enumerate() {
@@ -494,8 +708,13 @@ impl<'a> ComponentGraphBuilder<'a> {
         }
     }
 
-    fn project_macro_invocations(&mut self) {
-        for template in &self.source_graph.templates {
+    fn project_macro_invocations(&mut self, template_file: Option<&str>) {
+        for template in self
+            .source_graph
+            .templates
+            .iter()
+            .filter(|template| template_file.is_none_or(|file| template.file == file))
+        {
             let Some(semantics) = template.semantics.as_ref() else {
                 continue;
             };
@@ -601,8 +820,13 @@ impl<'a> ComponentGraphBuilder<'a> {
         self.invocations.extend(projected);
     }
 
-    fn project_repeat_invocations(&mut self) {
-        for template in &self.source_graph.templates {
+    fn project_repeat_invocations(&mut self, template_file: Option<&str>) {
+        for template in self
+            .source_graph
+            .templates
+            .iter()
+            .filter(|template| template_file.is_none_or(|file| template.file == file))
+        {
             for source_node in
                 source_nodes_for_template(self.source_graph, template, SourceNodeKind::For)
             {
@@ -648,7 +872,73 @@ impl<'a> ComponentGraphBuilder<'a> {
         }
     }
 
+    fn project_inline_control_invocations(&mut self, template_file: Option<&str>) {
+        for template in self
+            .source_graph
+            .templates
+            .iter()
+            .filter(|template| template_file.is_none_or(|file| template.file == file))
+        {
+            for (source_kind, invocation_kind, definitions, id_kind, fallback_name) in [
+                (
+                    SourceNodeKind::If,
+                    ComponentInvocationKind::Conditional,
+                    &self.conditional_definition_by_source_node,
+                    "conditional",
+                    "Condiție",
+                ),
+                (
+                    SourceNodeKind::Filter,
+                    ComponentInvocationKind::Transform,
+                    &self.transform_definition_by_source_node,
+                    "transform",
+                    "Transformare",
+                ),
+            ] {
+                for source_node in
+                    source_nodes_for_template(self.source_graph, template, source_kind)
+                {
+                    let Some(definition_id) = definitions.get(&source_node.id).cloned() else {
+                        continue;
+                    };
+                    let definition = self.definition(&definition_id);
+                    self.invocations.push(ComponentInvocation {
+                        id: component_id(
+                            "invocation",
+                            &[id_kind, template.node_id.as_str(), source_node.id.as_str()],
+                        ),
+                        kind: invocation_kind.clone(),
+                        name: definition
+                            .map(|definition| definition.display_name.clone())
+                            .unwrap_or_else(|| fallback_name.to_string()),
+                        file: template.file.clone(),
+                        source_node_id: Some(source_node.id.clone()),
+                        owner_definition_id: self
+                            .file_definition_by_template_node
+                            .get(&template.node_id)
+                            .cloned(),
+                        parent_invocation_id: None,
+                        target_reference: source_node.label.clone(),
+                        resolved_definition_ids: vec![definition_id],
+                        fallback_references: Vec::new(),
+                        arguments: Vec::new(),
+                        context_dependencies: definition
+                            .map(|definition| definition.context_dependencies.clone())
+                            .unwrap_or_default(),
+                        data_bindings: Vec::new(),
+                        status: ComponentResolutionStatus::Resolved,
+                        diagnostics: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+
     fn reconcile_consumers(&mut self) {
+        self.sort_invocations_by_source_order();
+        for definition in &mut self.definitions {
+            definition.consumer_invocation_ids.clear();
+        }
         let consumers = self
             .invocations
             .iter()
@@ -695,6 +985,35 @@ impl<'a> ComponentGraphBuilder<'a> {
                 && left.file == right.file
                 && left.source_node_id == right.source_node_id
                 && left.diagnostic == right.diagnostic
+        });
+    }
+
+    fn sort_invocations_by_source_order(&mut self) {
+        let source_positions = self
+            .source_graph
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                Some((
+                    node.id.as_str(),
+                    (node.file.as_str(), node.range.as_ref()?.start),
+                ))
+            })
+            .collect::<HashMap<_, _>>();
+        self.invocations.sort_by(|left, right| {
+            let left_start = left
+                .source_node_id
+                .as_deref()
+                .and_then(|id| source_positions.get(id))
+                .map(|(_, start)| *start)
+                .unwrap_or(usize::MAX);
+            let right_start = right
+                .source_node_id
+                .as_deref()
+                .and_then(|id| source_positions.get(id))
+                .map(|(_, start)| *start)
+                .unwrap_or(usize::MAX);
+            (left.file.as_str(), left_start).cmp(&(right.file.as_str(), right_start))
         });
     }
 
@@ -767,18 +1086,7 @@ impl<'a> ComponentGraphBuilder<'a> {
                     right.id.as_str(),
                 ))
         });
-        self.invocations.sort_by(|left, right| {
-            (
-                left.file.as_str(),
-                left.source_node_id.as_deref().unwrap_or_default(),
-                left.id.as_str(),
-            )
-                .cmp(&(
-                    right.file.as_str(),
-                    right.source_node_id.as_deref().unwrap_or_default(),
-                    right.id.as_str(),
-                ))
-        });
+        self.sort_invocations_by_source_order();
         ComponentGraph {
             schema_version: COMPONENT_GRAPH_SCHEMA_VERSION,
             definitions: self.definitions,
@@ -1119,6 +1427,22 @@ fn semantic_loops(document: &TeraSemanticDocument) -> Vec<&TeraSemanticNode> {
         .walk()
         .into_iter()
         .filter(|node| matches!(node, TeraSemanticNode::For { .. }))
+        .collect()
+}
+
+fn semantic_conditionals(document: &TeraSemanticDocument) -> Vec<&TeraSemanticNode> {
+    document
+        .walk()
+        .into_iter()
+        .filter(|node| matches!(node, TeraSemanticNode::If { .. }))
+        .collect()
+}
+
+fn semantic_transforms(document: &TeraSemanticDocument) -> Vec<&TeraSemanticNode> {
+    document
+        .walk()
+        .into_iter()
+        .filter(|node| matches!(node, TeraSemanticNode::FilterSection { .. }))
         .collect()
 }
 
@@ -1726,6 +2050,8 @@ mod tests {
 {{ cards::missing() }}
 {{ missing::render() }}
 {% endfor %}
+{% if page.extra.featured %}<strong>{{ page.title }}</strong>{% endif %}
+{% filter upper %}<span>{{ page.description }}</span>{% endfilter %}
 <div data-pana-block="tabs"></div>
 "#
                     .to_string(),
@@ -1756,8 +2082,9 @@ mod tests {
                     "{% set article = get_page(path='blog/post.md') %}\n**Video {{ id }} ({{ nth }}) — {{ article.title }}**"
                         .to_string(),
                 ),
-            ]),
-            resource_bytes: HashMap::new(),
+            ])
+            .into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::new(),
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -1770,7 +2097,8 @@ mod tests {
                     max_files: 100,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         let graph = build_source_graph_from_workspace_projection(&root, &projection).unwrap();
         let components = &graph.component_graph;
@@ -1871,6 +2199,30 @@ mod tests {
             .any(|definition| definition.data_bindings.iter().any(|binding| {
                 binding.name == "item" && binding.producer.contains("load_data")
             })));
+        for (definition_kind, invocation_kind) in [
+            (
+                crate::source_graph::model::ComponentDefinitionKind::InlineConditional,
+                crate::source_graph::model::ComponentInvocationKind::Conditional,
+            ),
+            (
+                crate::source_graph::model::ComponentDefinitionKind::InlineTransform,
+                crate::source_graph::model::ComponentInvocationKind::Transform,
+            ),
+        ] {
+            let definition = components
+                .definitions
+                .iter()
+                .find(|definition| definition.kind == definition_kind)
+                .expect("inline control definition");
+            assert!(definition
+                .context_dependencies
+                .iter()
+                .any(|dependency| dependency.starts_with("page.")));
+            assert!(components.invocations.iter().any(|invocation| {
+                invocation.kind == invocation_kind
+                    && invocation.resolved_definition_ids == vec![definition.id.clone()]
+            }));
+        }
 
         fs::remove_dir_all(root).unwrap();
     }

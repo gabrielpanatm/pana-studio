@@ -190,36 +190,3 @@ fn finish_toml_lines(lines: Vec<String>) -> String {
     result.push('\n');
     result
 }
-
-pub(super) fn extract_toml_string(source: &str, key: &str) -> Option<String> {
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with(key) {
-            if let Some(eq) = trimmed.find('=') {
-                let val = trimmed[eq + 1..]
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'');
-                return Some(val.to_string());
-            }
-        }
-    }
-    None
-}
-
-pub(super) fn upsert_toml_string(source: &str, key: &str, value: &str) -> String {
-    let mut lines: Vec<String> = source.lines().map(|l| l.to_string()).collect();
-    let mut found = false;
-    for line in &mut lines {
-        let trimmed = line.trim();
-        if trimmed.starts_with(key) && trimmed.contains('=') {
-            *line = format!("{} = \"{}\"", key, value);
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        lines.insert(0, format!("{} = \"{}\"", key, value));
-    }
-    lines.join("\n") + "\n"
-}

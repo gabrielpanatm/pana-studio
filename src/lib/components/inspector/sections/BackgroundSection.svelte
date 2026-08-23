@@ -10,7 +10,8 @@
   } from "@tabler/icons-svelte";
   import { untrack } from "svelte";
   import { t } from "$lib/i18n/runtime.svelte";
-  import type { ProjectFile, ScssVariable } from "$lib/types";
+  import type { ScssVariable } from "$lib/css/contracts";
+  import type { ProjectFile } from "$lib/project/lifecycle-contract";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import {
     BACKGROUND_LONGHAND_PROPERTIES,

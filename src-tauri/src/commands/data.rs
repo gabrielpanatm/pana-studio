@@ -267,7 +267,7 @@ mod tests {
                     size: source.len() as u64,
                     readonly: false,
                 },
-                baseline_text: source,
+                baseline_text: source.into(),
                 draft: None,
                 revision: 1,
             });

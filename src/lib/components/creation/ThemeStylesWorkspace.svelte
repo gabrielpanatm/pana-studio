@@ -24,25 +24,32 @@
   import {
     applyThemeStyleDraft,
     previewThemeStyleDraft,
-  } from "$lib/project/io";
-  import {
-    registerEditFlushHandler,
-    type EditFlushReason,
-  } from "$lib/session/edit-flush-registry";
-  import type { AppState } from "$lib/state/app.svelte";
+  } from "$lib/css/io";
   import type {
-    FileBufferRequestIdentity,
     ThemeStyleCatalogSnapshot,
     ThemeStyleDraftPreview,
     ThemeStylePropertyInput,
     ThemeStyleTargetSnapshot,
-  } from "$lib/types";
+  } from "$lib/css/design-system-contract";
+  import type { CssMutationAuthorityReceipt } from "$lib/css/mutation-contract";
+  import type { ScssVariable } from "$lib/css/contracts";
+  import {
+    registerEditFlushHandler,
+    type EditFlushReason,
+  } from "$lib/session/edit-flush-registry";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract";
   import { errorMessage } from "$lib/util";
 
   const LIVE_STYLE_ID = "pana-theme-style-draft";
 
   let {
-    app,
+    globalStatus,
+    workspaceMutations,
+    scssVariables,
+    injectRawCss,
+    projectCommittedCssMutation,
     catalog,
     loading,
     error,
@@ -51,7 +58,14 @@
     reload,
     openWorkspaceSource,
   }: {
-    app: AppState;
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    scssVariables: ScssVariable[];
+    injectRawCss: (id: string, css: string) => void;
+    projectCommittedCssMutation: (
+      authority: CssMutationAuthorityReceipt,
+      liveEpoch: number | null,
+    ) => Promise<unknown>;
     catalog: ThemeStyleCatalogSnapshot | null;
     loading: boolean;
     error: string;
@@ -148,18 +162,19 @@
     async (reason: EditFlushReason) => {
       if (mode === "edit" && dirty) await applyDraft(reason);
     },
+    () => mode === "edit" && dirty,
   );
 
   onDestroy(() => {
     unregisterFlush();
     clearPreviewTimer();
-    app.injectRawCss(LIVE_STYLE_ID, "");
+    injectRawCss(LIVE_STYLE_ID, "");
   });
 
   function identity(): FileBufferRequestIdentity {
     return {
-      expectedProjectRoot: app.sessionProjectRoot,
-      expectedSessionId: app.kernelProjectSessionId,
+      expectedProjectRoot: workspaceMutations.snapshot?.projectRoot ?? "",
+      expectedSessionId: workspaceMutations.snapshot?.runtimeSessionId ?? "",
     };
   }
 
@@ -193,7 +208,7 @@
     editRevision = -1;
     previewError = "";
     applyError = "";
-    app.injectRawCss(LIVE_STYLE_ID, "");
+    injectRawCss(LIVE_STYLE_ID, "");
   }
 
   function setDraftValue(propertyId: string, value: string) {
@@ -239,7 +254,7 @@
       : catalog?.workspaceRevision ?? -1;
     if (!target?.editable || expectedRevision < 0) return;
     const requestId = ++previewSequence;
-    const sessionId = app.kernelProjectSessionId;
+    const sessionId = workspaceMutations.snapshot?.runtimeSessionId ?? "";
     previewError = "";
     try {
       const next = await previewThemeStyleDraft(
@@ -251,15 +266,15 @@
       if (
         requestId !== previewSequence
         || mode !== requestMode
-        || app.kernelProjectSessionId !== sessionId
+        || (workspaceMutations.snapshot?.runtimeSessionId ?? "") !== sessionId
         || selected.id !== next.targetId
       ) return;
       preview = next;
-      if (requestMode === "edit") app.injectRawCss(LIVE_STYLE_ID, next.css);
+      if (requestMode === "edit") injectRawCss(LIVE_STYLE_ID, next.css);
     } catch (cause) {
       if (requestId !== previewSequence || mode !== requestMode) return;
       preview = null;
-      if (requestMode === "edit") app.injectRawCss(LIVE_STYLE_ID, "");
+      if (requestMode === "edit") injectRawCss(LIVE_STYLE_ID, "");
       previewError = errorMessage(cause);
     }
   }
@@ -269,8 +284,8 @@
     clearPreviewTimer();
     applying = true;
     applyError = "";
-    const projectRoot = app.sessionProjectRoot;
-    const sessionId = app.kernelProjectSessionId;
+    const projectRoot = workspaceMutations.snapshot?.projectRoot ?? "";
+    const sessionId = workspaceMutations.snapshot?.runtimeSessionId ?? "";
     try {
       const receipt = await applyThemeStyleDraft(
         selected.id,
@@ -279,22 +294,22 @@
         identity(),
       );
       if (
-        app.sessionProjectRoot !== projectRoot
-        || app.kernelProjectSessionId !== sessionId
+        (workspaceMutations.snapshot?.projectRoot ?? "") !== projectRoot
+        || (workspaceMutations.snapshot?.runtimeSessionId ?? "") !== sessionId
       ) return;
-      await app.projectCommittedInspectorCssMutation(receipt.authority, null);
+      await projectCommittedCssMutation(receipt.authority, null);
       if (
-        app.sessionProjectRoot !== projectRoot
-        || app.kernelProjectSessionId !== sessionId
+        (workspaceMutations.snapshot?.projectRoot ?? "") !== projectRoot
+        || (workspaceMutations.snapshot?.runtimeSessionId ?? "") !== sessionId
       ) return;
-      app.injectRawCss(LIVE_STYLE_ID, "");
+      injectRawCss(LIVE_STYLE_ID, "");
       await reload();
       mode = "info";
       draft = {};
       original = {};
       preview = null;
       editRevision = -1;
-      app.setGlobalStatus(
+      globalStatus.set(
         t("theme-style-updated", { name: receipt.payload.label }),
         "unsaved",
       );
@@ -426,7 +441,7 @@
               <ColorInput
                 property={property.id}
                 value={draft[property.id] ?? ""}
-                suggestions={app.scssVariables}
+                suggestions={scssVariables}
                 oninput={(value) => setDraftValue(property.id, value)}
                 oncommit={(value) => setDraftValue(property.id, value)}
               />

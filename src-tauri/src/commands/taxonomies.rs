@@ -166,8 +166,8 @@ mod tests {
             runtime_session_id: "test".to_string(),
             revision: 0,
             workspace_transaction_id: None,
-            source_texts: source_texts.clone(),
-            resource_bytes: HashMap::new(),
+            source_texts: source_texts.clone().into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::new(),
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -175,7 +175,8 @@ mod tests {
                 root.canonicalize().unwrap().to_string_lossy().into_owned(),
                 disk,
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         let graph = build_source_graph_from_workspace_projection(&root, &projection).unwrap();
         let catalog = catalog_for_projection(&graph, &source_texts).unwrap();

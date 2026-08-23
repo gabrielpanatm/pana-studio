@@ -7,8 +7,13 @@
     IconRefresh,
   } from "@tabler/icons-svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import { readKernelDiskConflicts } from "$lib/project/io";
-  import type { KernelDiskConflictFileSnapshot, KernelDiskConflictSnapshot } from "$lib/types";
+  import {
+  readKernelDiskConflicts,
+} from "$lib/kernel/recovery-io";
+  import type {
+    KernelDiskConflictFileSnapshot,
+    KernelDiskConflictSnapshot,
+  } from "$lib/project/external-disk-contract";
   import { compactKernelPath, formatBytes } from "$lib/kernel/recovery-control";
   import { errorMessage } from "$lib/util";
 

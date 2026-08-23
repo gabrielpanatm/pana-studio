@@ -2,8 +2,8 @@ use tauri::{AppHandle, State};
 
 use crate::{
     kernel::workbench::{
-        persist_latest_workbench, persist_workbench, read_persisted_workbench,
-        WorkbenchCommandReceipt, WorkbenchIdentity, WorkbenchIntent, WorkbenchSnapshot,
+        persist_workbench, read_persisted_workbench, WorkbenchCommandReceipt, WorkbenchIdentity,
+        WorkbenchIntent, WorkbenchSnapshot,
     },
     state::AppState,
 };
@@ -48,19 +48,21 @@ pub fn apply_workbench_intent(
     state
         .workbench
         .read_or_restore(&session, || read_persisted_workbench(&session))?;
-    if matches!(&intent, WorkbenchIntent::SetActivity { .. }) {
+    if intent_uses_projection_write_behind(&intent) {
         let receipt = state.workbench.apply(&session, &identity, intent)?;
         if receipt.changed {
-            let app = app.clone();
             let snapshot = receipt.snapshot.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                if let Err(error) = persist_latest_workbench(&app, &session, &snapshot) {
-                    eprintln!(
-                        "[Pană Studio] Workbench activity write-behind failed at revision {}: {}",
-                        snapshot.revision, error
-                    );
-                }
-            });
+            let revision = snapshot.revision;
+            if let Err(error) =
+                state
+                    .workbench_projection_persistence
+                    .schedule(app.clone(), session, snapshot)
+            {
+                eprintln!(
+                    "[Pană Studio] Workbench projection write-behind scheduling failed at revision {}: {}",
+                    revision, error
+                );
+            }
         }
         return Ok(receipt);
     }
@@ -69,4 +71,11 @@ pub fn apply_workbench_intent(
         .apply_persisted(&session, &identity, intent, |snapshot| {
             persist_workbench(&app, &session, snapshot)
         })
+}
+
+fn intent_uses_projection_write_behind(intent: &WorkbenchIntent) -> bool {
+    matches!(
+        intent,
+        WorkbenchIntent::SetActivity { .. } | WorkbenchIntent::ActivateDocument { .. }
+    )
 }

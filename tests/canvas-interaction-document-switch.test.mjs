@@ -6,9 +6,10 @@ import {
   synchronizeCanvasInteractionBinding,
 } from "$lib/state/canvas-interaction-controller";
 import {
+  CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
   CANVAS_AGENT_MESSAGE_SOURCE,
 } from "$lib/preview/canvas-interaction";
-import { CANVAS_INTERACTION_SCHEMA_VERSION } from "$lib/types";
+import { CANVAS_INTERACTION_SCHEMA_VERSION } from "$lib/canvas/contracts";
 
 if (!globalThis.window) globalThis.window = globalThis;
 
@@ -22,7 +23,7 @@ async function nextTurn() {
 
 function focusedSnapshot(identity, route, activeDocumentPath) {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     identity,
     modelRevision: "model-1",
     route,
@@ -55,7 +56,7 @@ test("Canvas Interaction waits for the navigation snapshot of the new Workbench 
   const messages = [];
   const statuses = [];
   const bindRequests = [];
-  const app = {
+  const session = {
     activeCanvasIdentity: identity,
     activeCanvasUrl: `http://127.0.0.1:41000${route}`,
     previewSrc: `http://127.0.0.1:41000${route}`,
@@ -70,18 +71,31 @@ test("Canvas Interaction waits for the navigation snapshot of the new Workbench 
         { relativePath: "templates/page.html", role: "template" },
       ],
     },
-    editorNavigationSnapshot: focusedSnapshot(
-      identity,
-      route,
-      "templates/index.html",
-    ),
-    coordinatedElementSelection: null,
     previewFrame: { contentWindow },
-    postPreviewMessage(message) {
-      messages.push(message);
+  };
+  const editorSelection = {
+      navigationSnapshot: focusedSnapshot(
+        identity,
+        route,
+        "templates/index.html",
+      ),
+  };
+  const app = {
+    session,
+    selection: {
+      coordinatedElementSelection: null,
+      editorSelection,
+      sourceGraph: null,
     },
-    setGlobalStatus(text, kind) {
-      statuses.push({ text, kind });
+    runtime: { editorRuntime: {}, gridOverlayEnabled: false },
+    commands: {
+      closeContextMenu() {},
+      async moveEditorNavigationNode() {},
+      postPreviewMessage(message) { messages.push(message); },
+      async previewEditorNavigationMove() {},
+      async recordCanvasProjectionRuntimeEvent() {},
+      setGlobalStatus(text, kind) { statuses.push({ text, kind }); },
+      syncCodeSelectionHighlight() {},
     },
   };
 
@@ -101,7 +115,7 @@ test("Canvas Interaction waits for the navigation snapshot of the new Workbench 
     source: contentWindow,
     data: {
       source: CANVAS_AGENT_MESSAGE_SOURCE,
-      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: "agentReady",
       agentInstanceId: "agent-1",
     },
@@ -116,14 +130,14 @@ test("Canvas Interaction waits for the navigation snapshot of the new Workbench 
     source: contentWindow,
     data: {
       source: CANVAS_AGENT_MESSAGE_SOURCE,
-      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: "agentActivated",
       agentInstanceId: "agent-1",
       documentEpoch: bindRequests[0].identity.documentEpoch,
     },
   });
 
-  app.activeScannedPath = "templates/page.html";
+  app.session.activeScannedPath = "templates/page.html";
   synchronizeCanvasInteractionBinding(app);
   await nextTurn();
 
@@ -131,7 +145,7 @@ test("Canvas Interaction waits for the navigation snapshot of the new Workbench 
   assert.deepEqual(statuses, []);
   assert.equal(messages.at(-1).type, "deactivate-canvas-interaction-agent");
 
-  app.editorNavigationSnapshot = focusedSnapshot(
+  app.selection.editorSelection.navigationSnapshot = focusedSnapshot(
     identity,
     route,
     "templates/page.html",
@@ -148,7 +162,7 @@ test("Canvas Interaction waits for the navigation snapshot of the new Workbench 
     source: contentWindow,
     data: {
       source: CANVAS_AGENT_MESSAGE_SOURCE,
-      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: "agentActivated",
       agentInstanceId: "agent-1",
       documentEpoch: bindRequests[1].identity.documentEpoch,

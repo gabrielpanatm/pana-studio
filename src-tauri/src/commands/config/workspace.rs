@@ -3,9 +3,9 @@ use std::path::Path;
 use tauri::{AppHandle, State};
 
 use crate::{
-    commands::project::require_current_project_root,
     kernel::{
         file_buffer_store::FileBufferStore,
+        project_runtime_access::require_current_project_root,
         project_workspace::{
             commit_project_workspace_session_mutation, ProjectWorkspaceIdentity,
             WorkspaceMutationMetadata, WorkspaceResourceMutation,
@@ -30,21 +30,6 @@ pub(super) fn read_current_project_text(
     project_relative_path: &str,
 ) -> Option<String> {
     store.text_for(project_relative_path)
-}
-
-pub(super) fn read_current_project_text_from_state(
-    state: &State<AppState>,
-    project_relative_path: &str,
-) -> Result<Option<String>, String> {
-    require_current_project_root(state)?;
-    let slot = state
-        .project_workspace
-        .lock()
-        .map_err(|_| "Nu am putut bloca ProjectWorkspace.".to_string())?;
-    let workspace = slot
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    Ok(workspace.documents.text_for(project_relative_path))
 }
 
 pub(super) fn push_text_change_if_changed(
@@ -76,18 +61,6 @@ pub(super) fn workspace_mutation_input(
         target: target.into(),
         changes,
     })
-}
-
-pub(super) fn execute_config_workspace_mutation<R>(
-    app: &AppHandle,
-    state: &State<AppState>,
-    build: impl FnOnce(
-        &Path,
-        &Path,
-        &FileBufferStore,
-    ) -> Result<(Option<ConfigWorkspaceMutationInput>, R), String>,
-) -> Result<R, String> {
-    execute_config_workspace_mutation_at_revision(app, state, None, build).map(|(value, _)| value)
 }
 
 pub(super) fn execute_config_workspace_mutation_at_revision<R>(

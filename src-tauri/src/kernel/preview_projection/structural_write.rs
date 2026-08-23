@@ -110,10 +110,10 @@ pub(crate) fn stage_preview_structural_write(
     workspace: &mut ProjectWorkspace,
     write: PreviewStructuralWrite,
 ) -> Result<PreviewStructuralWriteCommit, String> {
-    let mut candidate = workspace.clone();
+    let mut candidate = workspace.fork_candidate();
     let commit =
         stage_preview_structural_write_in_transaction(project_root, &mut candidate, write)?;
-    *workspace = candidate;
+    workspace.adopt_candidate(candidate);
     Ok(commit)
 }
 
@@ -167,7 +167,7 @@ pub(crate) fn stage_preview_structural_write_in_transaction(
         }
     };
     let TimedWorkspaceStage {
-        mutation: workspace_mutation,
+        mutation: mut workspace_mutation,
         native_block_contract_ms,
         workspace_stage_ms,
     } = stage;
@@ -175,7 +175,7 @@ pub(crate) fn stage_preview_structural_write_in_transaction(
     let after_project_model_started = Instant::now();
     let model_build = rebuild_project_model_after_workspace_change_with_source_changes(
         project_root,
-        previous_model.as_ref(),
+        previous_model.as_deref(),
         previous_model_source_revision,
         &projection,
         &workspace_mutation.touched_files,
@@ -183,6 +183,8 @@ pub(crate) fn stage_preview_structural_write_in_transaction(
         source_changes,
     )?;
     let after_project_model_build_ms = elapsed_ms(after_project_model_started);
+    workspace_mutation.project_model_performance =
+        Some(crate::kernel::performance::ProjectModelPerformanceSample::from(&model_build.report));
     let after_model = model_build.model;
     let primary_contents = workspace.documents.text_for(&write.file).ok_or_else(|| {
         format!(
@@ -226,18 +228,20 @@ pub(crate) fn stage_preview_structural_batch_write_in_transaction(
         coalesce_key: None,
         transaction_id: None,
     };
-    let workspace_mutation =
+    let mut workspace_mutation =
         workspace.stage_document_texts(&identity, metadata, write.documents, now_ms())?;
     let projection = workspace.capture_projection_snapshot()?;
     let model_build = rebuild_project_model_after_workspace_change_with_source_changes(
         project_root,
-        previous_model.as_ref(),
+        previous_model.as_deref(),
         previous_model_source_revision,
         &projection,
         &workspace_mutation.touched_files,
         write.project_model_incremental_intent,
         write.source_changes,
     )?;
+    workspace_mutation.project_model_performance =
+        Some(crate::kernel::performance::ProjectModelPerformanceSample::from(&model_build.report));
     Ok(PreviewStructuralBatchWriteCommit {
         workspace_mutation,
         after_model: model_build.model,
@@ -400,43 +404,37 @@ mod tests {
                 max_total_bytes: 4 * 1024 * 1024,
             },
         );
-        documents.files.insert(
-            relative_path.to_string(),
-            FileBufferEntry {
-                relative_path: relative_path.to_string(),
-                absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
-                language: TextBufferLanguage::Html,
-                role: TextBufferRole::Template,
-                baseline: FileBufferBaseline {
-                    hash: hash_text(before),
-                    modified_ms: 1,
-                    size: before.len() as u64,
-                    readonly: false,
-                },
-                baseline_text: before.to_string(),
-                draft: None,
-                revision: 0,
+        documents.insert_loaded_file(FileBufferEntry {
+            relative_path: relative_path.to_string(),
+            absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
+            language: TextBufferLanguage::Html,
+            role: TextBufferRole::Template,
+            baseline: FileBufferBaseline {
+                hash: hash_text(before),
+                modified_ms: 1,
+                size: before.len() as u64,
+                readonly: false,
             },
-        );
+            baseline_text: before.into(),
+            draft: None,
+            revision: 0,
+        });
         let config_source = "base_url = '/'\n";
-        documents.files.insert(
-            "zola.toml".to_string(),
-            FileBufferEntry {
-                relative_path: "zola.toml".to_string(),
-                absolute_path: root.join("zola.toml").to_string_lossy().into_owned(),
-                language: TextBufferLanguage::Toml,
-                role: TextBufferRole::Config,
-                baseline: FileBufferBaseline {
-                    hash: hash_text(config_source),
-                    modified_ms: 1,
-                    size: config_source.len() as u64,
-                    readonly: false,
-                },
-                baseline_text: config_source.to_string(),
-                draft: None,
-                revision: 0,
+        documents.insert_loaded_file(FileBufferEntry {
+            relative_path: "zola.toml".to_string(),
+            absolute_path: root.join("zola.toml").to_string_lossy().into_owned(),
+            language: TextBufferLanguage::Toml,
+            role: TextBufferRole::Config,
+            baseline: FileBufferBaseline {
+                hash: hash_text(config_source),
+                modified_ms: 1,
+                size: config_source.len() as u64,
+                readonly: false,
             },
-        );
+            baseline_text: config_source.into(),
+            draft: None,
+            revision: 0,
+        });
         let page_js = PageJsDraftStore::new(&session);
         let mut workspace =
             ProjectWorkspace::new(session, accepted.unwrap(), documents, page_js).unwrap();
@@ -634,24 +632,21 @@ mod tests {
                 max_total_bytes: 4 * 1024 * 1024,
             },
         );
-        documents.files.insert(
-            relative_path.to_string(),
-            FileBufferEntry {
-                relative_path: relative_path.to_string(),
-                absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
-                language: TextBufferLanguage::Html,
-                role: TextBufferRole::Template,
-                baseline: FileBufferBaseline {
-                    hash: hash_text(before),
-                    modified_ms: 1,
-                    size: before.len() as u64,
-                    readonly: false,
-                },
-                baseline_text: before.to_string(),
-                draft: None,
-                revision: 0,
+        documents.insert_loaded_file(FileBufferEntry {
+            relative_path: relative_path.to_string(),
+            absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
+            language: TextBufferLanguage::Html,
+            role: TextBufferRole::Template,
+            baseline: FileBufferBaseline {
+                hash: hash_text(before),
+                modified_ms: 1,
+                size: before.len() as u64,
+                readonly: false,
             },
-        );
+            baseline_text: before.into(),
+            draft: None,
+            revision: 0,
+        });
         let page_js = PageJsDraftStore::new(&session);
         let mut workspace =
             ProjectWorkspace::new(session, accepted.unwrap(), documents, page_js).unwrap();
@@ -745,24 +740,21 @@ mod tests {
                 max_total_bytes: 4 * 1024 * 1024,
             },
         );
-        documents.files.insert(
-            relative_path.to_string(),
-            FileBufferEntry {
-                relative_path: relative_path.to_string(),
-                absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
-                language: TextBufferLanguage::Html,
-                role: TextBufferRole::Template,
-                baseline: FileBufferBaseline {
-                    hash: hash_text(before),
-                    modified_ms: 1,
-                    size: before.len() as u64,
-                    readonly: false,
-                },
-                baseline_text: before.to_string(),
-                draft: None,
-                revision: 0,
+        documents.insert_loaded_file(FileBufferEntry {
+            relative_path: relative_path.to_string(),
+            absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
+            language: TextBufferLanguage::Html,
+            role: TextBufferRole::Template,
+            baseline: FileBufferBaseline {
+                hash: hash_text(before),
+                modified_ms: 1,
+                size: before.len() as u64,
+                readonly: false,
             },
-        );
+            baseline_text: before.into(),
+            draft: None,
+            revision: 0,
+        });
         let page_js = PageJsDraftStore::new(&session);
         let mut workspace =
             ProjectWorkspace::new(session, accepted.unwrap(), documents, page_js).unwrap();
@@ -895,24 +887,21 @@ mod tests {
                 max_total_bytes: 4 * 1024 * 1024,
             },
         );
-        documents.files.insert(
-            relative_path.to_string(),
-            FileBufferEntry {
-                relative_path: relative_path.to_string(),
-                absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
-                language: TextBufferLanguage::Html,
-                role: TextBufferRole::Template,
-                baseline: FileBufferBaseline {
-                    hash: hash_text(before),
-                    modified_ms: 1,
-                    size: before.len() as u64,
-                    readonly: false,
-                },
-                baseline_text: before.to_string(),
-                draft: None,
-                revision: 0,
+        documents.insert_loaded_file(FileBufferEntry {
+            relative_path: relative_path.to_string(),
+            absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
+            language: TextBufferLanguage::Html,
+            role: TextBufferRole::Template,
+            baseline: FileBufferBaseline {
+                hash: hash_text(before),
+                modified_ms: 1,
+                size: before.len() as u64,
+                readonly: false,
             },
-        );
+            baseline_text: before.into(),
+            draft: None,
+            revision: 0,
+        });
         let page_js = PageJsDraftStore::new(&session);
         let mut workspace =
             ProjectWorkspace::new(session, accepted.unwrap(), documents, page_js).unwrap();

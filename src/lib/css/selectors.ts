@@ -1,4 +1,5 @@
-import type { CssSelectorOption, CanvasElementObservation } from "$lib/types";
+import type { CssSelectorOption } from "$lib/css/contracts";
+import type { CanvasElementObservation } from "$lib/canvas/contracts";
 
 function escapeCssIdentifier(value: string) {
   return value.replace(/[^A-Za-z0-9_-]/g, (character) => `\\${character}`);

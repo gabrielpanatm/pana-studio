@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ section.title }} | INDEX ZERO{% endblock title %}
+{% block description %}{{ section.description }}{% endblock description %}
+{% block content %}
+<article class="pagina-text container-larg">
+  <header><p class="eticheta-tehnica">LEGAL / MODELE</p><h1>{{ section.title }}</h1><p>{{ section.description }}</p></header>
+  <div class="proza">{{ section.content | safe }}<ul>{% for pagina in section.pages %}<li><a href="{{ pagina.permalink }}">{{ pagina.title }}</a></li>{% endfor %}</ul></div>
+</article>
+{% endblock content %}

@@ -14,6 +14,11 @@ use super::{
 
 use crate::{
     kernel::{
+        observability::append_events,
+        performance::{
+            elapsed_us, performance_event, project_model_performance_event,
+            with_project_model_sample,
+        },
         preview_projection::PreviewStructuralCommandIdentity,
         project_workspace::{
             publish_prepared_project_workspace_candidate, ProjectWorkspace,
@@ -204,14 +209,14 @@ where
     R: Runtime,
     O: PreviewStructuralCommandOutcome,
 {
-    let context = prepare_preview_write_command(state, identity)?;
     let total_started = Instant::now();
+    let context = prepare_preview_write_command(state, identity)?;
     let commit = || {
         state
             .ai_coordination
             .require_user_source_mutation()
             .map_err(|error| error.to_string())?;
-        let (mut candidate, candidate_clone_ms) =
+        let (mut candidate, candidate_timings) =
             capture_preview_write_workspace_candidate(state, &context)?;
         let mutation_started = Instant::now();
         let mut outcome = execute(&context, &mut candidate)?;
@@ -268,19 +273,26 @@ where
             ));
         }
         let mutation_ms = mutation_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        let timings = with_preview_write_workspace_cas(state, &context, |live_workspace| {
-            publish_prepared_project_workspace_candidate(
-                app,
-                live_workspace,
-                context.workspace_revision,
-                candidate,
-                preview_projection,
-                candidate_clone_ms,
-                mutation_ms,
-                total_started,
-            )
-        })?;
-        Ok((outcome, timings, selection_replacement))
+        let (timings, cas_timings) =
+            with_preview_write_workspace_cas(state, &context, |live_workspace| {
+                publish_prepared_project_workspace_candidate(
+                    app,
+                    live_workspace,
+                    context.workspace_revision,
+                    candidate,
+                    preview_projection,
+                    candidate_timings.candidate_clone_us / 1_000,
+                    mutation_ms,
+                    total_started,
+                )
+            })?;
+        Ok((
+            outcome,
+            timings,
+            selection_replacement,
+            candidate_timings,
+            cas_timings,
+        ))
     };
     let outcome = if let Some(expected) = identity.expected_selection.as_ref() {
         state.selection_coordinator.with_mutation_target(
@@ -292,7 +304,7 @@ where
         commit()
     };
 
-    let (outcome, timings, selection_replacement) = outcome?;
+    let (outcome, timings, selection_replacement, candidate_timings, cas_timings) = outcome?;
     if selection_effect == PreviewStructuralSelectionEffect::ClearCommittedTarget
         && outcome.command_succeeded()
     {
@@ -325,6 +337,54 @@ where
                     primary_source_id.as_deref(),
                 );
         }
+    }
+    if outcome.command_succeeded() {
+        let project_model_sample = outcome
+            .workspace_mutation()
+            .and_then(|mutation| mutation.project_model_performance.as_ref());
+        let event = performance_event(
+            "project_workspace",
+            "performance",
+            "html_edit",
+            operation_label,
+            Some(context.session.runtime_instance_id()),
+            elapsed_us(total_started),
+        )
+        .with_attribute("currentRootLockWaitUs", context.current_root_lock_wait_us)
+        .with_attribute(
+            "projectWorkspaceAuthorityLockWaitUs",
+            context.project_workspace_lock_wait_us,
+        )
+        .with_attribute("authorityLocksHeldUs", context.authority_locks_held_us)
+        .with_attribute(
+            "projectWorkspaceCandidateLockWaitUs",
+            candidate_timings.project_workspace_lock_wait_us,
+        )
+        .with_attribute(
+            "projectWorkspaceCandidateLockHeldUs",
+            candidate_timings.project_workspace_lock_held_us,
+        )
+        .with_attribute("candidateCloneUs", candidate_timings.candidate_clone_us)
+        .with_attribute("mutationUs", timings.mutation_us)
+        .with_attribute("recoveryPersistUs", timings.recovery_persist_us)
+        .with_attribute("authorityPublishUs", timings.authority_publish_us)
+        .with_attribute(
+            "projectWorkspaceCasLockWaitUs",
+            cas_timings.project_workspace_lock_wait_us,
+        )
+        .with_attribute(
+            "projectWorkspaceCasLockHeldUs",
+            cas_timings.project_workspace_lock_held_us,
+        );
+        let mut events = vec![with_project_model_sample(event, project_model_sample)];
+        if let Some(sample) = project_model_sample {
+            events.push(project_model_performance_event(
+                "project_workspace",
+                Some(context.session.runtime_instance_id()),
+                sample,
+            ));
+        }
+        let _ = append_events(app, events);
     }
     let receipt = finalize_preview_structural_outcome(Ok(outcome))?;
     Ok((receipt, timings))

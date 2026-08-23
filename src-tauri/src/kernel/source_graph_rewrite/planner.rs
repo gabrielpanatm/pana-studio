@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
+    sync::Arc,
 };
 
 mod replacements;
@@ -99,10 +100,11 @@ fn plan_template_reference_workspace_mutation_with_graph(
 ) -> Result<SourceGraphReferenceRewritePlan, String> {
     let projected_store = allow_current_drafts.then(|| {
         let mut projected = store.clone();
-        for entry in projected.files.values_mut() {
+        for entry in projected.files_mut().values_mut() {
+            let entry = Arc::make_mut(entry);
             if entry.draft.is_some() {
                 let current_text = entry.current_text().to_string();
-                entry.baseline_text = current_text;
+                entry.baseline_text = current_text.into();
                 entry.draft = None;
             }
         }
@@ -265,7 +267,7 @@ fn plan_template_reference_workspace_mutation_with_graph(
         let mut next_text = if allow_current_drafts {
             entry.current_text().to_string()
         } else {
-            entry.baseline_text.clone()
+            entry.baseline_text.to_string()
         };
         for replacement in &replacements {
             next_text.replace_range(
@@ -1168,7 +1170,7 @@ mod tests {
                 language: language_for_path(relative_path),
                 role: role_for_path(relative_path),
                 baseline: baseline(text),
-                baseline_text: (*text).to_string(),
+                baseline_text: (*text).to_string().into(),
                 draft: None,
                 revision: 1,
             });

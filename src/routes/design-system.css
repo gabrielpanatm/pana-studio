@@ -12,8 +12,19 @@
   --brand: #1d7f6a;
   --brand-strong: color-mix(in srgb, var(--brand) 70%, white);
   --brand-soft: color-mix(in srgb, var(--brand) 19%, transparent);
-  --markdown: #f59e0b;
-  --markdown-soft: color-mix(in srgb, var(--markdown) 18%, transparent);
+  --entity-html: var(--brand);
+  --entity-html-soft: var(--brand-soft);
+  --entity-template: #5795f5;
+  --entity-template-soft: color-mix(in srgb, var(--entity-template) 18%, transparent);
+  --entity-component: #a78bfa;
+  --entity-component-soft: color-mix(in srgb, var(--entity-component) 18%, transparent);
+  --entity-markdown: #f59e0b;
+  --entity-markdown-soft: color-mix(in srgb, var(--entity-markdown) 18%, transparent);
+  --entity-runtime: #22d3ee;
+  --entity-runtime-soft: color-mix(in srgb, var(--entity-runtime) 18%, transparent);
+  --entity-readonly: var(--text-muted);
+  --markdown: var(--entity-markdown);
+  --markdown-soft: var(--entity-markdown-soft);
   --focus-ring: color-mix(in srgb, var(--brand) 72%, white);
   --entity-selection-outline: var(--brand);
   --success: #3db27a;
@@ -111,17 +122,6 @@
   --font-body: 13px;
   --font-meta: 12px;
   --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  --app-scrollbar-hit-size: 12px;
-  --app-scrollbar-indicator-size: 3px;
-  --app-scrollbar-slider-size: 7px;
-  --app-scrollbar-edge-gap: 2px;
-  --app-scrollbar-fade-duration: 180ms;
-  --app-scrollbar-expand-duration: 120ms;
-  --app-scrollbar-thumb: color-mix(in srgb, var(--text-muted) 46%, transparent);
-  --app-scrollbar-thumb-active: color-mix(in srgb, var(--text-muted) 72%, transparent);
-  --app-scrollbar-thumb-edge: color-mix(in srgb, var(--surface-base) 30%, transparent);
-  --app-scrollbar-focus: color-mix(in srgb, var(--focus-ring) 48%, transparent);
-
   /* Aliasuri de compatibilitate. Toate se rezolvă în cele trei suprafețe canonice. */
   --app-bg: var(--surface-base);
   --app-bg-overlay: color-mix(in srgb, var(--brand) 12%, transparent);
@@ -186,8 +186,16 @@ html[data-pana-theme="light"] {
   --text-strong: #17211f;
   --brand-strong: color-mix(in srgb, var(--brand) 70%, black);
   --brand-soft: color-mix(in srgb, var(--brand) 11%, transparent);
-  --markdown: #c96a06;
-  --markdown-soft: color-mix(in srgb, var(--markdown) 12%, transparent);
+  --entity-html: var(--brand);
+  --entity-html-soft: var(--brand-soft);
+  --entity-template: #2563eb;
+  --entity-template-soft: color-mix(in srgb, var(--entity-template) 12%, transparent);
+  --entity-component: #7c3aed;
+  --entity-component-soft: color-mix(in srgb, var(--entity-component) 12%, transparent);
+  --entity-markdown: #c96a06;
+  --entity-markdown-soft: color-mix(in srgb, var(--entity-markdown) 12%, transparent);
+  --entity-runtime: #0891b2;
+  --entity-runtime-soft: color-mix(in srgb, var(--entity-runtime) 12%, transparent);
   --focus-ring: color-mix(in srgb, var(--brand) 72%, black);
   --success: #2aa66f;
   --warning: #c98518;
@@ -234,11 +242,6 @@ html[data-pana-contrast="high"] {
   --shadow-accent-hover: none;
   --shadow-inset: inset 0 0 0 1px var(--border-strong);
   --shadow-pressed: inset 0 0 0 1px var(--border-strong);
-  --app-scrollbar-indicator-size: 4px;
-  --app-scrollbar-slider-size: 8px;
-  --app-scrollbar-thumb: color-mix(in srgb, var(--text) 72%, transparent);
-  --app-scrollbar-thumb-active: var(--text);
-  --app-scrollbar-thumb-edge: transparent;
 }
 
 html[data-pana-reduced-motion="true"] *,

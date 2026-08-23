@@ -14,30 +14,35 @@
     IconX,
   } from "@tabler/icons-svelte";
   import {
-    applyContentModelMutation,
-    planContentModelMutation,
-    readContentModelCatalog,
-  } from "$lib/project/io";
+  applyContentModelMutation,
+  planContentModelMutation,
+  readContentModelCatalog,
+} from "$lib/content-models/io";
   import {
     flushWorkspaceMutationInputs,
-    settleProjectWorkspaceMutation,
   } from "$lib/session/workspace-mutation-coordinator";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
   import type {
     ContentFieldDefinition,
     ContentFieldKind,
     ContentModelCatalog,
     ContentModelDefinition,
     ContentModelMutationInput,
-    FileBufferRequestIdentity,
-  } from "$lib/types";
+  } from "$lib/content-models/contracts";
+  import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
   import { errorMessage } from "$lib/util";
 
   let {
-    app,
+    globalStatus,
+    workspaceMutations,
+    sourceGraph,
     openWorkspaceSource,
   }: {
-    app: AppState;
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    sourceGraph: SourceGraph | null;
     openWorkspaceSource: (path: string) => void | Promise<void>;
   } = $props();
 
@@ -239,7 +244,7 @@
     }),
   );
   const sections = $derived(
-    (app.sourceGraph?.pages ?? [])
+    (sourceGraph?.pages ?? [])
       .filter((page) => page.pageKind === "section" || page.pageKind === "home")
       .sort((left, right) => left.file.localeCompare(right.file)),
   );
@@ -260,9 +265,9 @@
   });
 
   $effect(() => {
-    const root = app.sessionProjectRoot.trim();
-    const session = app.kernelProjectSessionId.trim();
-    const revision = app.projectWorkspaceSnapshot?.revision ?? 0;
+    const root = workspaceMutations.snapshot?.projectRoot.trim() ?? "";
+    const session = workspaceMutations.snapshot?.runtimeSessionId.trim() ?? "";
+    const revision = workspaceMutations.snapshot?.revision ?? 0;
     const key = `${root}:${session}:${revision}`;
     if (!root || !session || loading || busy || loadedKey === key) return;
     loadedKey = key;
@@ -271,15 +276,15 @@
 
   function identity(): FileBufferRequestIdentity {
     return {
-      expectedProjectRoot: app.sessionProjectRoot,
-      expectedSessionId: app.kernelProjectSessionId,
+      expectedProjectRoot: workspaceMutations.snapshot?.projectRoot ?? "",
+      expectedSessionId: workspaceMutations.snapshot?.runtimeSessionId ?? "",
     };
   }
 
   async function loadCatalog(
-    root = app.sessionProjectRoot,
-    session = app.kernelProjectSessionId,
-    revision = app.projectWorkspaceSnapshot?.revision ?? 0,
+    root = workspaceMutations.snapshot?.projectRoot ?? "",
+    session = workspaceMutations.snapshot?.runtimeSessionId ?? "",
+    revision = workspaceMutations.snapshot?.revision ?? 0,
   ) {
     loading = true;
     error = "";
@@ -289,9 +294,9 @@
         expectedSessionId: session,
       }, revision);
       if (
-        root !== app.sessionProjectRoot
-        || session !== app.kernelProjectSessionId
-        || revision !== app.projectWorkspaceSnapshot?.revision
+        root !== (workspaceMutations.snapshot?.projectRoot ?? "")
+        || session !== (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+        || revision !== workspaceMutations.snapshot?.revision
       ) return;
       catalog = next;
       if (!next.models.some((model) => model.id === selectedModelId)) {
@@ -299,11 +304,17 @@
         selectedFieldId = "";
       }
     } catch (cause) {
-      if (root === app.sessionProjectRoot && session === app.kernelProjectSessionId) {
+      if (
+        root === (workspaceMutations.snapshot?.projectRoot ?? "")
+        && session === (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+      ) {
         error = errorMessage(cause);
       }
     } finally {
-      if (root === app.sessionProjectRoot && session === app.kernelProjectSessionId) loading = false;
+      if (
+        root === (workspaceMutations.snapshot?.projectRoot ?? "")
+        && session === (workspaceMutations.snapshot?.runtimeSessionId ?? "")
+      ) loading = false;
     }
   }
 
@@ -337,7 +348,7 @@
         if (!window.confirm(`${plan.label}\n\n${details}\n\nContinui?`)) return false;
       }
       const receipt = await applyContentModelMutation(input, plan.planId, commandIdentity);
-      const settlement = await settleProjectWorkspaceMutation(app, receipt.workspace, {
+      const settlement = await workspaceMutations.settle(receipt.workspace, {
         preferredRelativePath: preferredPath ?? receipt.plan.touchedFiles[0] ?? null,
         warningLabel: "Modele de conținut",
       });
@@ -345,11 +356,11 @@
       await loadCatalog();
       const warnings = [...plan.warnings, ...settlement.warnings];
       notice = warnings.length > 0 ? `${success} ${warnings.join(" ")}` : success;
-      app.setGlobalStatus(success, "unsaved");
+      globalStatus.set(success, "unsaved");
       return true;
     } catch (cause) {
       error = errorMessage(cause);
-      app.setGlobalStatus(`Modelele de conținut nu au putut fi modificate: ${error}`, "error");
+      globalStatus.set(`Modelele de conținut nu au putut fi modificate: ${error}`, "error");
       return false;
     } finally {
       busy = false;

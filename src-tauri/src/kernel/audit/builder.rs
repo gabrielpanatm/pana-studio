@@ -1965,8 +1965,8 @@ mod tests {
             revision: 7,
             workspace_transaction_id: None,
             changed_paths: source_texts.keys().cloned().collect(),
-            source_texts,
-            resource_bytes: HashMap::new(),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             accepted_disk: AcceptedProjectDiskManifest::new(
                 session,
@@ -1978,7 +1978,8 @@ mod tests {
                     max_files: 10_000,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         (root, projection)
     }

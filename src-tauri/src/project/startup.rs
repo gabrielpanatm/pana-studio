@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
@@ -13,7 +14,6 @@ use crate::{
     deploy::run_zola_editor_check,
     kernel::{
         file_buffer_store::hash_bytes,
-        themes::{ThemePack, ThemeRegistry},
         write_authority::{
             ProjectCreationAuthority, WriteAuthority, WriteCategory, WriteIntent,
             WriteOperationKind, WriteOwner, WritePolicy,
@@ -22,54 +22,16 @@ use crate::{
     zola_engine::EMBEDDED_ZOLA_VERSION,
 };
 
-use super::{manifest::project_disk_metadata_version_token, zola_project_root};
+use super::{
+    manifest::project_disk_metadata_version_token,
+    starters::{ProjectStarterKind, ProjectStarterPack, ProjectStarterRegistry},
+    zola_project_root,
+};
 
 pub const STARTUP_FLOW_SCHEMA_VERSION: u32 = 1;
 pub const STARTUP_CREATION_CATALOG_SCHEMA_VERSION: u32 = 1;
 pub const STARTUP_CREATION_PLAN_SCHEMA_VERSION: u32 = 1;
 pub const STARTUP_CREATION_RECEIPT_SCHEMA_VERSION: u32 = 1;
-
-const MINIMAL_OPTION_ID: &str = "minimal";
-const BASE_ZOLA_CONFIG: &str = r#"base_url = "http://127.0.0.1:1111"
-title = "Proiect Pană Studio"
-description = "Un proiect Zola inițializat cu Pană Studio."
-default_language = "ro"
-compile_sass = true
-build_search_index = false
-minify_html = false
-generate_sitemap = true
-generate_robots_txt = true
-
-[markdown]
-render_emoji = false
-smart_punctuation = false
-insert_anchor_links = "none"
-lazy_async_image = false
-github_alerts = false
-bottom_footnotes = false
-external_links_target_blank = false
-external_links_no_follow = false
-external_links_no_referrer = false
-
-[extra]
-"#;
-const BASE_GITIGNORE: &str = "/public/\n.env\n";
-const MINIMAL_SECTION: &str = "+++\ntitle = \"Acasă\"\nsort_by = \"weight\"\n+++\n\nBun venit în proiectul tău Pană Studio.\n";
-const MINIMAL_TEMPLATE: &str = r#"<!doctype html>
-<html lang="ro">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ section.title }}</title>
-  </head>
-  <body>
-    <main>
-      <h1>{{ section.title }}</h1>
-      {{ section.content | safe }}
-    </main>
-  </body>
-</html>
-"#;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -177,7 +139,6 @@ impl StartupFlowSnapshot {
 pub enum StartupCreationKind {
     Minimal,
     Starter,
-    ProjectTemplate,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -288,11 +249,6 @@ impl StartupFlowRuntime {
         state.inspection_manifest = None;
         state.lifecycle_operation_id = None;
         Ok(state.snapshot.clone())
-    }
-
-    #[allow(dead_code)]
-    pub fn inspect(&self, requested_root: &Path) -> Result<StartupFlowSnapshot, String> {
-        self.inspect_for_operation(requested_root, None)
     }
 
     pub(crate) fn inspect_for_operation(
@@ -518,35 +474,33 @@ pub fn read_creation_catalog<R: Runtime>(
     expected_snapshot_token: &str,
 ) -> Result<StartupCreationCatalog, String> {
     runtime.require_empty_candidate(expected_snapshot_token)?;
-    let registry = ThemeRegistry::load(app).map_err(|error| error.to_string())?;
-    let theme_catalog = registry.snapshot(None)?;
-    let mut options = vec![StartupCreationOption {
-        id: MINIMAL_OPTION_ID.to_string(),
-        kind: StartupCreationKind::Minimal,
-        name: "Proiect minimal".to_string(),
-        description: "Structură Zola curată, cu o singură pagină și fără temă.".to_string(),
-        preview_data_url: None,
-        compatibility_label: format!("Zola embedded {}", EMBEDDED_ZOLA_VERSION),
-        capabilities: vec!["structură minimă".to_string(), "fără temă".to_string()],
-    }];
-    options.extend(theme_catalog.themes.into_iter().map(|theme| {
-        let kind = creation_kind_for_theme(&theme.id, &theme.category);
-        StartupCreationOption {
-            id: creation_option_id(kind, &theme.id),
-            kind,
-            name: theme.name,
-            description: theme.description,
-            preview_data_url: Some(theme.preview_data_url),
+    let registry = ProjectStarterRegistry::load(app).map_err(|error| error.to_string())?;
+    let mut options = registry
+        .packs()
+        .map(|pack| StartupCreationOption {
+            id: pack.manifest.id.clone(),
+            kind: startup_creation_kind(pack.manifest.kind),
+            name: pack.manifest.display_name.clone(),
+            description: pack.manifest.summary.clone(),
+            preview_data_url: pack
+                .preview_bytes
+                .as_ref()
+                .map(|bytes| format!("data:image/webp;base64,{}", STANDARD.encode(bytes))),
             compatibility_label: format!(
                 "Zola {} · testat {}",
-                theme.compatibility.minimum, theme.compatibility.tested
+                pack.manifest.zola.minimum, pack.manifest.zola.tested
             ),
-            capabilities: theme.capabilities,
-        }
-    }));
+            capabilities: pack.manifest.capabilities.clone(),
+        })
+        .collect::<Vec<_>>();
+    options.sort_by(|left, right| {
+        creation_kind_rank(left.kind)
+            .cmp(&creation_kind_rank(right.kind))
+            .then_with(|| left.name.cmp(&right.name))
+    });
     Ok(StartupCreationCatalog {
         schema_version: STARTUP_CREATION_CATALOG_SCHEMA_VERSION,
-        registry_version: theme_catalog.registry_version,
+        registry_version: registry.version().to_string(),
         embedded_zola_version: EMBEDDED_ZOLA_VERSION.to_string(),
         expected_snapshot_token: expected_snapshot_token.to_string(),
         options,
@@ -892,19 +846,17 @@ fn regular_directory(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn creation_kind_for_theme(id: &str, category: &str) -> StartupCreationKind {
-    if id == "pana-studio" || category.eq_ignore_ascii_case("starter") {
-        StartupCreationKind::Starter
-    } else {
-        StartupCreationKind::ProjectTemplate
+fn startup_creation_kind(kind: ProjectStarterKind) -> StartupCreationKind {
+    match kind {
+        ProjectStarterKind::Minimal => StartupCreationKind::Minimal,
+        ProjectStarterKind::Starter => StartupCreationKind::Starter,
     }
 }
 
-fn creation_option_id(kind: StartupCreationKind, theme_id: &str) -> String {
+fn creation_kind_rank(kind: StartupCreationKind) -> u8 {
     match kind {
-        StartupCreationKind::Minimal => MINIMAL_OPTION_ID.to_string(),
-        StartupCreationKind::Starter => format!("starter:{theme_id}"),
-        StartupCreationKind::ProjectTemplate => format!("template:{theme_id}"),
+        StartupCreationKind::Minimal => 0,
+        StartupCreationKind::Starter => 1,
     }
 }
 
@@ -912,72 +864,23 @@ fn materialize_project<R: Runtime>(
     app: &AppHandle<R>,
     option_id: &str,
 ) -> Result<MaterializedProject, String> {
-    if option_id == MINIMAL_OPTION_ID {
-        let settings_source = crate::commands::config::serialize_default_project_settings()?;
-        let deploy_source =
-            crate::deploy::serialize_deploy_settings(&crate::deploy::DeploySettings::default())?;
-        let files = BTreeMap::from([
-            (".gitignore".to_string(), BASE_GITIGNORE.as_bytes().to_vec()),
-            (
-                ".panastudio/settings.toml".to_string(),
-                settings_source.into_bytes(),
-            ),
-            (
-                ".panastudio/deploy.toml".to_string(),
-                deploy_source.into_bytes(),
-            ),
-            (
-                "content/_index.md".to_string(),
-                MINIMAL_SECTION.as_bytes().to_vec(),
-            ),
-            (
-                "templates/index.html".to_string(),
-                MINIMAL_TEMPLATE.as_bytes().to_vec(),
-            ),
-            (
-                "zola.toml".to_string(),
-                BASE_ZOLA_CONFIG.as_bytes().to_vec(),
-            ),
-        ]);
-        return Ok(MaterializedProject {
-            option_id: option_id.to_string(),
-            option_kind: StartupCreationKind::Minimal,
-            option_name: "Proiect minimal".to_string(),
-            registry_version: "minimal-v1".to_string(),
-            files,
-        });
-    }
-
-    let (declared_kind, theme_id) = option_id
-        .split_once(':')
-        .ok_or_else(|| format!("Opțiune de creare necunoscută: {option_id}"))?;
-    let registry = ThemeRegistry::load(app).map_err(|error| error.to_string())?;
-    let catalog = registry.snapshot(None)?;
-    let pack = registry.require(theme_id)?;
-    let option_kind = creation_kind_for_theme(&pack.manifest.id, &pack.manifest.category);
-    let expected_prefix = match option_kind {
-        StartupCreationKind::Starter => "starter",
-        StartupCreationKind::ProjectTemplate => "template",
-        StartupCreationKind::Minimal => unreachable!(),
-    };
-    if declared_kind != expected_prefix {
-        return Err(format!(
-            "Opțiunea `{option_id}` nu corespunde categoriei validate din catalog."
-        ));
-    }
-    let files = materialize_theme_pack(pack)?;
+    let registry = ProjectStarterRegistry::load(app).map_err(|error| error.to_string())?;
+    let pack = registry.require(option_id)?;
+    let files = materialize_starter(pack)?;
     Ok(MaterializedProject {
         option_id: option_id.to_string(),
-        option_kind,
+        option_kind: startup_creation_kind(pack.manifest.kind),
         option_name: pack.manifest.display_name.clone(),
-        registry_version: catalog.registry_version,
+        registry_version: registry.version().to_string(),
         files,
     })
 }
 
-fn materialize_theme_pack(pack: &ThemePack) -> Result<BTreeMap<String, Vec<u8>>, String> {
+fn materialize_starter(pack: &ProjectStarterPack) -> Result<BTreeMap<String, Vec<u8>>, String> {
     let mut files = BTreeMap::new();
-    insert_materialized(&mut files, ".gitignore", BASE_GITIGNORE.as_bytes().to_vec())?;
+    for file in &pack.project_files {
+        insert_materialized(&mut files, &file.relative_path, file.bytes.clone())?;
+    }
     insert_materialized(
         &mut files,
         ".panastudio/settings.toml",
@@ -989,16 +892,6 @@ fn materialize_theme_pack(pack: &ThemePack) -> Result<BTreeMap<String, Vec<u8>>,
         crate::deploy::serialize_deploy_settings(&crate::deploy::DeploySettings::default())?
             .into_bytes(),
     )?;
-    let config =
-        crate::zola_theme::set_active_theme_in_source(BASE_ZOLA_CONFIG, &pack.manifest.id)?;
-    insert_materialized(&mut files, "zola.toml", config.into_bytes())?;
-    for file in &pack.theme_files {
-        let path = format!("themes/{}/{}", pack.manifest.id, file.relative_path);
-        insert_materialized(&mut files, &path, file.bytes.clone())?;
-    }
-    for file in &pack.recipe_files {
-        insert_materialized(&mut files, &file.relative_path, file.bytes.clone())?;
-    }
     Ok(files)
 }
 
@@ -1369,6 +1262,71 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "performance baseline; run through the canonical benchmark runner"]
+    fn performance_baseline_startup_inspection_real_fixture() {
+        let root = PathBuf::from(
+            std::env::var("PANA_PERFORMANCE_BENCH_PROJECT")
+                .expect("PANA_PERFORMANCE_BENCH_PROJECT"),
+        )
+        .canonicalize()
+        .unwrap();
+        let sample_count = std::env::var("PANA_PERFORMANCE_SAMPLE_COUNT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value >= 20)
+            .unwrap_or(20);
+        let warmup_count = std::env::var("PANA_PERFORMANCE_WARMUP_COUNT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(3);
+        let mut samples = Vec::with_capacity(sample_count);
+        let mut last_candidate = None;
+        for sample in 0..(warmup_count + sample_count) {
+            let started = std::time::Instant::now();
+            let candidate = inspect_candidate_root(&root).unwrap();
+            if sample >= warmup_count {
+                samples.push(started.elapsed().as_micros().min(u64::MAX as u128) as u64);
+            }
+            last_candidate = Some(candidate);
+        }
+        samples.sort_unstable();
+        let percentile =
+            |percent: usize| samples[(samples.len() * percent).div_ceil(100).saturating_sub(1)];
+        let candidate = last_candidate.unwrap();
+        let scan_file_count = if candidate.kind == StartupCandidateKind::ValidProject {
+            crate::project::scan_project_root(&root)
+                .map(|scan| scan.files.len())
+                .unwrap_or_default()
+        } else {
+            0
+        };
+        let diagnostic_codes = candidate
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        eprintln!(
+            "[pana-performance] {}",
+            serde_json::json!({
+                "schemaVersion": 1,
+                "operation": "startup_inspection",
+                "variant": "real_project_contract",
+                "sampleCount": samples.len(),
+                "samplesUs": samples,
+                "p50Us": percentile(50),
+                "p95Us": percentile(95),
+                "maxUs": samples.last().copied().unwrap_or_default(),
+                "candidateKind": candidate.kind,
+                "candidateTruncated": candidate.truncated,
+                "candidateEntryCount": candidate.entry_count,
+                "scanFileCount": scan_file_count,
+                "diagnosticCodes": diagnostic_codes,
+            })
+        );
+    }
+
+    #[test]
     fn detached_inspection_accepts_unreachable_external_links() {
         let fixture = temp_dir("offline-external-links");
         let project = fixture.join("project");
@@ -1402,7 +1360,7 @@ mod tests {
             .unwrap();
         ensure_app_home(app.handle()).unwrap();
         let runtime = StartupFlowRuntime::default();
-        let inspected = runtime.inspect(&root).unwrap();
+        let inspected = runtime.inspect_for_operation(&root, None).unwrap();
         let token = inspected.candidate.unwrap().snapshot_token;
         let plan = plan_creation(
             app.handle(),
@@ -1479,17 +1437,11 @@ mod tests {
             .unwrap();
         ensure_app_home(app.handle()).unwrap();
 
-        for option_id in [
-            "minimal",
-            "starter:pana-studio",
-            "template:nord",
-            "template:cadru",
-            "template:radacini",
-        ] {
+        for option_id in ["minimal", "pana-studio", "nord", "cadru", "radacini"] {
             let root = fixture.join(option_id.replace(':', "-"));
             fs::create_dir_all(&root).unwrap();
             let runtime = StartupFlowRuntime::default();
-            let inspected = runtime.inspect(&root).unwrap();
+            let inspected = runtime.inspect_for_operation(&root, None).unwrap();
             let token = inspected.candidate.unwrap().snapshot_token;
             let plan = plan_creation(
                 app.handle(),
@@ -1520,9 +1472,21 @@ mod tests {
     fn create_minimal_fixture(root: &Path) {
         fs::create_dir_all(root.join("content")).unwrap();
         fs::create_dir_all(root.join("templates")).unwrap();
-        fs::write(root.join("zola.toml"), BASE_ZOLA_CONFIG).unwrap();
-        fs::write(root.join("content/_index.md"), MINIMAL_SECTION).unwrap();
-        fs::write(root.join("templates/index.html"), MINIMAL_TEMPLATE).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            include_str!("../../resources/project-starters/minimal/project/zola.toml"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/_index.md"),
+            include_str!("../../resources/project-starters/minimal/project/content/_index.md"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            include_str!("../../resources/project-starters/minimal/project/templates/index.html"),
+        )
+        .unwrap();
     }
 
     fn temp_dir(label: &str) -> PathBuf {

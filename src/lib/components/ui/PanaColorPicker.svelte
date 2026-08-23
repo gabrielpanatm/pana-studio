@@ -85,6 +85,7 @@
       () => {
         if (isOpen) closePicker(true);
       },
+      () => isOpen,
     );
 
     const handlePointerDown = (event: PointerEvent) => {

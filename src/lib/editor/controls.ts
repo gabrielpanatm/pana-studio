@@ -1,4 +1,4 @@
-import type { ScssVariable } from "$lib/types";
+import type { ScssVariable } from "$lib/css/contracts";
 
 const VARIABLE_PREFIX_MAP: Record<string, string> = {
   "color": "color-", "background-color": "color-", "border-color": "color-",
@@ -48,32 +48,9 @@ export const SELECT_OPTIONS: Record<string, string[]> = {
   "object-fit": ["fill", "contain", "cover", "none", "scale-down"],
 };
 
-const COLOR_PROPS = [
-  "color", "background-color", "border-color", "outline-color",
-  "border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
-  "fill", "stroke", "caret-color", "text-decoration-color",
-];
-
 export type ControlType = "color" | "select" | "text";
 
 export function isHexColor(value: string): boolean {
   const t = value.trim();
   return /^#[0-9a-fA-F]{3}$/.test(t) || /^#[0-9a-fA-F]{6}$/.test(t) || /^#[0-9a-fA-F]{8}$/.test(t);
-}
-
-export function controlTypeFor(property: string, value?: string): ControlType {
-  if (COLOR_PROPS.includes(property)) {
-    if (value !== undefined && isHexColor(value)) return "color";
-    return "text";
-  }
-  if (property in SELECT_OPTIONS) return "select";
-  return "text";
-}
-
-export function resolvedColorValue(value: string): string {
-  const trimmed = value.trim();
-  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) return trimmed;
-  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed;
-  if (/^#[0-9a-fA-F]{8}$/.test(trimmed)) return trimmed.slice(0, 7);
-  return "#000000";
 }

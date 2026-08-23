@@ -1,7 +1,7 @@
 import type {
   PageJsCommandReceipt,
   PageJsRequestIdentity,
-} from "$lib/types";
+} from "$lib/js/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export function createPageJsRequestIdentity(

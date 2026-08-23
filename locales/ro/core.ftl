@@ -17,5 +17,3 @@ common-close = Închide
 common-choose = Alege
 common-choose-option = Alege o opțiune
 common-confirm = OK
-common-scrollbar-vertical = Bară de derulare verticală
-common-scrollbar-horizontal = Bară de derulare orizontală

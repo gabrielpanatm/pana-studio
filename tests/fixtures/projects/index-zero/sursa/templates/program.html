@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Program complet | INDEX ZERO{% endblock title %}
+{% block description %}Programul complet generat pentru cele zece zile INDEX ZERO.{% endblock description %}
+{% block content %}
+{% set program = load_data(path="date/program-generat.toml", format="toml") %}
+<section class="pagina-program">
+  <header class="titlu-arhiva container-larg"><p class="eticheta-tehnica">07—16 OCT / 180 INTRĂRI</p><h1>Program</h1><p>O grilă densă, filtrabilă, păstrată intenționat integral în DOM.</p></header>
+  <div class="zile-program container-larg" role="group" aria-label="Filtrează după zi">
+    <button class="filtru activ" type="button" data-day="toate">Toate</button>
+    {% for zi in range(start=1, end=11) %}<button class="filtru" type="button" data-day="{{ zi }}">Ziua {{ zi }}</button>{% endfor %}
+  </div>
+  <div class="tabel-program" data-program-list>
+    {% for item in program.evenimente %}
+    <article data-program-day="{{ item.zi }}">
+      <span>{{ loop.index }}</span>
+      <time>{{ item.ora }}</time>
+      <div><p>Ziua {{ item.zi }} / {{ item.disciplina }} / {{ item.format }}</p><h2><a href="/evenimente/{{ item.id }}/">{{ item.id | replace(from="-", to=" ") | title }}</a></h2></div>
+      <small>{{ item.locatie }}<br>{{ item.artist }}</small>
+      <a href="/evenimente/{{ item.id }}/" aria-label="Deschide {{ item.id }}">↗</a>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock content %}

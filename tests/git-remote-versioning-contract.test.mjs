@@ -7,14 +7,14 @@ function source(relativePath) {
 }
 
 test("Git este o activitate Workbench canonică, nu un overlay local", () => {
-  const types = source("src/lib/types.ts");
+  const types = source("src/lib/workbench/contracts.ts");
   const rustModel = source("src-tauri/src/kernel/workbench/model.rs");
   const rustSearch = source("src-tauri/src/kernel/command_center/search.rs");
   const rail = source("src/lib/components/workbench/ActivityRail.svelte");
   const center = source("src/lib/components/workspace/WorkspaceCenterArea.svelte");
   const workspace = source("src/lib/components/versioning/VersionControlWorkspace.svelte");
   const chrome = source("src/lib/components/workspace/AppChrome.svelte");
-  const state = source("src/lib/state/app.svelte.ts");
+  const state = source("src/lib/components/application/ApplicationWorkspace.svelte");
 
   assert.match(types, /\| "versioning"/);
   assert.match(rustModel, /\bVersioning,/);
@@ -35,8 +35,18 @@ test("Git este o activitate Workbench canonică, nu un overlay local", () => {
 
 test("UI-ul Versiuni expune remote, progres, preview și integrare explicită", () => {
   const panel = source("src/lib/components/VersionsPanel.svelte");
-  const io = source("src/lib/project/io.ts");
-  const types = source("src/lib/types.ts");
+  const io = source("src/lib/versioning/io.ts");
+  const networkController = source(
+    "src/lib/versioning/network-controller.svelte.ts",
+  );
+  const types = source("src/lib/versioning/contracts.ts");
+
+  assert.doesNotMatch(panel, /from "\$lib\/versioning\/io"/);
+  assert.match(panel, /NetworkController/);
+  assert.match(panel, /IntegrationController/);
+  assert.match(panel, /RecoveryController/);
+  assert.match(panel, /SnapshotController/);
+  assert.doesNotMatch(panel, /from "\$lib\/project\/io"/);
 
   for (const command of [
     "configure_version_remote",
@@ -58,7 +68,7 @@ test("UI-ul Versiuni expune remote, progres, preview și integrare explicită", 
   assert.match(panel, /t\("versions-no-pull-hint"\)/);
   assert.match(panel, /t\("versions-target-patch-preview"\)/);
   assert.match(panel, /t\("versions-target-commits"/);
-  assert.match(panel, /pana-versioning-network-progress/);
+  assert.match(networkController, /pana-versioning-network-progress/);
   assert.match(panel, /t\("versions-fast-forward"\)/);
   assert.match(panel, /t\("versions-explicit-merge"\)/);
 });
@@ -83,7 +93,7 @@ test("activitatea Git folosește shell-ul și tema vizuală standard a aplicați
 test("backendul remote folosește refspec-uri explicite și nu oferă force/pull", () => {
   const remote = source("src-tauri/src/versioning/remote.rs");
   const git = source("src-tauri/src/versioning/git.rs");
-  const commands = source("src-tauri/src/commands/versioning.rs");
+  const networkCommands = source("src-tauri/src/commands/versioning/network.rs");
 
   assert.match(remote, /\+refs\/heads\/\*:refs\/remotes\/\{remote\}\/\*/);
   assert.match(remote, /refs\/heads\/\{local_branch\}:refs\/heads\/\{remote_branch\}/);
@@ -95,12 +105,64 @@ test("backendul remote folosește refspec-uri explicite și nu oferă force/pull
   assert.match(git, /credential\.helper/);
   assert.match(git, /GIT_TERMINAL_PROMPT/);
   assert.match(git, /NETWORK_TIMEOUT/);
-  assert.match(commands, /VersionNetworkOperationStatus::Cancelled/);
+  assert.match(networkCommands, /VersionNetworkOperationStatus::Cancelled/);
+});
+
+test("fetch și push separă capturarea, așteptarea fără lock și publicarea revalidată", () => {
+  const networkCommands = source("src-tauri/src/commands/versioning/network.rs");
+  const remote = source("src-tauri/src/versioning/remote.rs");
+  const git = source("src-tauri/src/versioning/git.rs");
+  const networkRuntime = source(
+    "src-tauri/src/versioning/network_operation.rs",
+  );
+  const workspaceRecovery = source(
+    "src-tauri/src/kernel/project_workspace/recovery.rs",
+  );
+  const workspaceSave = source(
+    "src-tauri/src/kernel/project_workspace/save.rs",
+  );
+  const projectTransition = source(
+    "src-tauri/src/commands/project/transition_decisions.rs",
+  );
+  const networkCommand = networkCommands.slice(
+    networkCommands.indexOf("async fn network_mutate_with_repository"),
+    networkCommands.indexOf("fn capture_network_preflight"),
+  );
+  const networkCapture = networkCommands.slice(
+    networkCommands.indexOf("fn capture_network_preflight"),
+    networkCommands.indexOf("fn publish_network_result"),
+  );
+
+  assert.match(networkCommand, /execute_version_network_phases/);
+  assert.match(networkCommand, /spawn_prepared_network/);
+  assert.doesNotMatch(networkCommand, /with_mutation_preflight/);
+  assert.doesNotMatch(networkCommand, /project_workspace\s*\.\s*lock/);
+  assert.ok(
+    networkCapture.indexOf("drop(workspace_guard)") <
+      networkCapture.indexOf("captured.with_repository"),
+    "ProjectWorkspace trebuie eliberat înainte de preflight-ul Git local",
+  );
+  assert.match(networkCommands, /fn validate_network_publication_state/);
+  assert.match(networkCommands, /finish_success\(operation_lease\)/);
+  assert.match(remote, /fn prepare_fetch_remote/);
+  assert.match(remote, /fn prepare_push_branch/);
+  assert.match(remote, /fn finalize_prepared_network/);
+  assert.doesNotMatch(remote, /fn fetch_remote\s*\(/);
+  assert.doesNotMatch(remote, /fn push_branch\s*\(/);
+  assert.match(git, /fn spawn_network/);
+  assert.match(git, /struct RunningGitCommand/);
+  assert.doesNotMatch(git, /fn run_network\s*\(/);
+  assert.match(networkRuntime, /require_source_mutation_allowed/);
+  assert.match(networkRuntime, /require_git_mutation_allowed/);
+  assert.match(networkRuntime, /require_project_transition_allowed/);
+  assert.match(workspaceRecovery, /require_source_mutation_allowed/);
+  assert.match(workspaceSave, /require_source_mutation_allowed/);
+  assert.match(projectTransition, /require_project_transition_allowed/);
 });
 
 test("integrarea păstrează marker durabil, CAS și commit merge cu doi părinți", () => {
   const integration = source("src-tauri/src/versioning/integration.rs");
-  const commands = source("src-tauri/src/commands/versioning.rs");
+  const integrationCommands = source("src-tauri/src/commands/versioning/integration.rs");
 
   assert.match(integration, /refs\/pana-studio\/integrations/);
   assert.match(integration, /"commit-tree"[\s\S]*"-p"[\s\S]*"-p"/);
@@ -108,7 +170,7 @@ test("integrarea păstrează marker durabil, CAS și commit merge cu doi părin�
   assert.match(integration, /VersionIntegrationKind::MergeConflict/);
   assert.match(integration, /promote_conflict_resolution/);
   assert.match(integration, /abort_integration_metadata/);
-  assert.match(commands, /publish_integration_tree/);
-  assert.match(commands, /ProjectWorkspace/);
-  assert.match(commands, /VersionIntegrationRecoveryState::ManualReview/);
+  assert.match(integrationCommands, /publish_integration_tree/);
+  assert.match(integrationCommands, /ProjectWorkspace/);
+  assert.match(integrationCommands, /VersionIntegrationRecoveryState::ManualReview/);
 });

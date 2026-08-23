@@ -1,13 +1,11 @@
+import type { JsonValue } from "$lib/contracts/json-value";
 import type {
-  JsonValue,
   KernelLogLevel,
   KernelObservabilityHealthSnapshot,
-  KernelObservabilityHealthStatus,
-  KernelObservabilityModuleHealthSnapshot,
   KernelObservabilityLogEvent,
   KernelObservabilityLogSnapshot,
   KernelObservabilityLogSourceFilter,
-} from "$lib/types";
+} from "$lib/kernel/observability-contract";
 import { compactKernelPath } from "$lib/kernel/recovery-control";
 import { l10n, t } from "$lib/i18n/runtime.svelte";
 
@@ -84,14 +82,6 @@ export function kernelLogLevelFilterLabel(levels: KernelLogLevel[]): string {
   return unique.map(kernelLogLevelLabel).join(", ");
 }
 
-export function kernelLogLevelTone(level: KernelLogLevel): "info" | "warn" | "error" {
-  return level === "error" ? "error" : level === "warn" ? "warn" : "info";
-}
-
-export function kernelObservabilityEventLimitLabel(limit: number): string {
-  return t("observability-event-limit", { count: limit });
-}
-
 export function formatKernelLogTime(timestampMs: number): string {
   if (!timestampMs) return t("observability-time-unknown");
   return l10n.formatDate(timestampMs, {
@@ -115,12 +105,6 @@ export function kernelLogSourceFilterLabel(sourceFilter: KernelObservabilityLogS
   return t("observability-source-all");
 }
 
-export function observabilityHealthTone(
-  status: KernelObservabilityHealthStatus,
-): "clean" | "warning" | "error" {
-  return status === "error" ? "error" : status === "warning" ? "warning" : "clean";
-}
-
 export function observabilityHealthLabel(health: KernelObservabilityHealthSnapshot): string {
   if (health.status === "warning") return t("observability-health-warning");
   if (health.status === "error") return t("observability-health-error");
@@ -132,19 +116,6 @@ export function observabilityHealthDetail(health: KernelObservabilityHealthSnaps
     events: health.eventCount,
     recovery: health.recoveryCount,
     modules: health.moduleCount,
-  });
-}
-
-export function observabilityHealthProblemLabel(health: KernelObservabilityHealthSnapshot): string {
-  if (!health.latestProblem) return t("observability-no-recent-problem");
-  return `${kernelLogLevelLabel(health.latestProblem.level)} · ${health.latestProblem.owner} · ${health.latestProblem.eventName}`;
-}
-
-export function observabilityModuleHealthLabel(module: KernelObservabilityModuleHealthSnapshot): string {
-  const problemCount = module.levelCounts.error || module.levelCounts.warn;
-  return t("observability-module-detail", {
-    events: module.eventCount,
-    problems: problemCount,
   });
 }
 

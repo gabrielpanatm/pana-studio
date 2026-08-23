@@ -67,9 +67,12 @@ function stageReceipt(taskIdentity, revision = 1) {
 }
 
 test("workspace shell CSS remains a plain Vite module", () => {
-  const page = readFileSync(new URL("../src/routes/+page.svelte", import.meta.url), "utf8");
+  const page = readFileSync(
+    new URL("../src/lib/components/application/ApplicationWorkspace.svelte", import.meta.url),
+    "utf8",
+  );
   const css = readFileSync(new URL("../src/routes/workspace-shell.css", import.meta.url), "utf8");
-  assert.match(page, /import "\.\/workspace-shell\.css";/);
+  assert.match(page, /import "\.\.\/\.\.\/\.\.\/routes\/workspace-shell\.css";/);
   assert.doesNotMatch(page, /<style(?:\s|>)/);
   assert.match(css, /\.center-stack\s*\{[\s\S]*display:\s*grid/);
 });
@@ -94,6 +97,36 @@ test("Save flush reason reaches every registered editor owner", async () => {
     unregisterB();
   }
   assert.deepEqual(reasons.sort(), ["a:save", "b:save"]);
+});
+
+test("edit flush registry skips proven-clean owners and fails closed", async () => {
+  const calls = [];
+  let dirty = false;
+  const unregisterClean = registerEditFlushHandler(
+    "test-clean-owner",
+    async () => calls.push("conditional"),
+    () => dirty,
+  );
+  const unregisterUnknown = registerEditFlushHandler(
+    "test-unknown-owner",
+    async () => calls.push("default"),
+  );
+  const unregisterBrokenHint = registerEditFlushHandler(
+    "test-broken-pending-hint",
+    async () => calls.push("fail-closed"),
+    () => { throw new Error("broken hint"); },
+  );
+  try {
+    await flushRegisteredEditDrafts("manual");
+    assert.deepEqual(calls, ["default", "fail-closed"]);
+    dirty = true;
+    await flushRegisteredEditDrafts("save");
+    assert.deepEqual(calls, ["default", "fail-closed", "conditional", "default", "fail-closed"]);
+  } finally {
+    unregisterClean();
+    unregisterUnknown();
+    unregisterBrokenHint();
+  }
 });
 
 test("latest-wins queue is bounded to the last pending task per key", async () => {
@@ -256,7 +289,7 @@ test("Motion owner is bound once by the rendered template, never by element sour
     "utf8",
   );
   const workspace = readFileSync(
-    new URL("../src/lib/state/motion-workspace.svelte.ts", import.meta.url),
+    new URL("../src/lib/motion/workspace.svelte.ts", import.meta.url),
     "utf8",
   );
   const inspector = readFileSync(
@@ -266,7 +299,7 @@ test("Motion owner is bound once by the rendered template, never by element sour
 
   assert.doesNotMatch(jsPane, /workspace\.bind\(/);
   assert.doesNotMatch(jsPane, /sourceLocation\?\.file/);
-  assert.match(center, /motionWorkspace\.bind\(\s*app\.activeRenderedTemplatePath/);
+  assert.match(center, /motionWorkspace\.bind\(\s*session\.activeRenderedTemplatePath/);
   assert.match(workspace, /owner = \$state<MotionOwner \| null>/);
   assert.match(workspace, /receiptTemplatePath !== context\.templatePath/);
   assert.match(inspector, /triggeredInteractions/);
@@ -274,39 +307,32 @@ test("Motion owner is bound once by the rendered template, never by element sour
   assert.match(inspector, /workspace\.openTimeline/);
 });
 
-test("Motion timeline separates action rows and coalesces pointer drag before one Rust mutation", () => {
+test("Motion timeline delegates pointer lifecycle and keeps timing persistence Rust-first", () => {
   const timeline = readFileSync(
     new URL("../src/lib/components/workspace/MotionTimelinePanel.svelte", import.meta.url),
     "utf8",
   );
+  const controller = readFileSync(
+    new URL("../src/lib/motion/timeline-gesture-controller.ts", import.meta.url),
+    "utf8",
+  );
   assert.match(timeline, /{#each lanes as lane \(lane\.key\)}/);
   assert.match(timeline, /{#each lane\.actions as action \(action\.id\)}[\s\S]*class="track timeline-canvas"/);
-  assert.match(timeline, /requestAnimationFrame\(\(\) => flushDragDraft\(current\)\)/);
-  assert.match(timeline, /event\.pointerId !== current\.pointerId/);
-  assert.match(timeline, /setPointerCapture\(event\.pointerId\)/);
-  assert.match(timeline, /window\.addEventListener\("blur", cancelDrag/);
-  assert.match(timeline, /document\.addEventListener\("visibilitychange", handleDragVisibilityChange\)/);
-  assert.match(timeline, /workspace\.mutate\(\{\s*command: "setActionTiming"/);
-  const moveBody = timeline.slice(
-    timeline.indexOf("function moveDrag"),
-    timeline.indexOf("function finishDrag"),
-  );
-  const finishBody = timeline.slice(
-    timeline.indexOf("function finishDrag"),
-    timeline.indexOf("function cancelDrag"),
-  );
-  assert.doesNotMatch(moveBody, /workspace\.mutate\(/);
-  assert.equal(finishBody.match(/workspace\.mutate\(/g)?.length, 1);
-  assert.match(finishBody, /pendingTimingCommits\.set\(current\.action\.id/);
-  assert.match(finishBody, /setTimingDraft\(current\.action\.id, next\)/);
-  assert.doesNotMatch(finishBody, /removeTimingDraft\(current\.action\.id\)/);
-  assert.match(timeline, /function settleTimingCommit\(actionId: string, serial: number\)/);
-  assert.match(timeline, /pendingTimingCommits\.get\(actionId\)\?\.serial !== serial/);
+  assert.match(timeline, /new MotionTimelineGestureController\(/);
+  assert.match(timeline, /commitTiming: \(commit\) => workspace\.mutate\(\{\s*command: "setActionTiming"/);
+  assert.match(controller, /session\.requestFrame\(\(\) => this\.publishActionDraft\(state\)\)/);
+  assert.match(controller, /this\.pendingTimingCommits\.set\(state\.action\.id/);
+  assert.match(controller, /this\.host\.commitTiming\(\{/);
+  assert.doesNotMatch(timeline, /addEventListener|setPointerCapture|requestAnimationFrame/);
 });
 
 test("Motion playhead is singular and pointer scrubbing is frame-bounded without Rust mutations", () => {
   const timeline = readFileSync(
     new URL("../src/lib/components/workspace/MotionTimelinePanel.svelte", import.meta.url),
+    "utf8",
+  );
+  const controller = readFileSync(
+    new URL("../src/lib/motion/timeline-gesture-controller.ts", import.meta.url),
     "utf8",
   );
 
@@ -324,32 +350,19 @@ test("Motion playhead is singular and pointer scrubbing is frame-bounded without
   assert.match(timeline, /\.timeline-playhead\.at-end::before/);
   assert.equal(timeline.match(/onpointerdown=\{beginSeekDrag\}/g)?.length, 2);
 
-  const publishBody = timeline.slice(
-    timeline.indexOf("function publishSeekDrag"),
-    timeline.indexOf("function beginSeekDrag"),
-  );
   const beginBody = timeline.slice(
     timeline.indexOf("function beginSeekDrag"),
-    timeline.indexOf("function moveSeekDrag"),
-  );
-  const moveBody = timeline.slice(
-    timeline.indexOf("function moveSeekDrag"),
-    timeline.indexOf("function finishSeekDrag"),
-  );
-  const finishBody = timeline.slice(
-    timeline.indexOf("function finishSeekDrag"),
-    timeline.indexOf("function cancelSeekDrag"),
+    timeline.indexOf("function stopPlayback"),
   );
 
-  assert.match(beginBody, /setPointerCapture\(event\.pointerId\)/);
-  assert.match(beginBody, /\|\| drag \|\| seekDrag/);
-  assert.match(beginBody, /window\.addEventListener\("blur", cancelSeekDrag/);
-  assert.match(moveBody, /requestAnimationFrame\(\(\) => publishSeekDrag\(current\)\)/);
-  assert.doesNotMatch(moveBody, /workspace\.requestPreview|workspace\.mutate/);
-  assert.equal(publishBody.match(/workspace\.requestPreview\(/g)?.length, 1);
-  assert.doesNotMatch(publishBody, /workspace\.mutate/);
-  assert.doesNotMatch(finishBody, /workspace\.mutate/);
-  assert.match(timeline, /document\.body\.classList\.remove\("motion-timeline-seeking"\)/);
+  assert.match(beginBody, /timelineGestures\.beginSeek\(\{/);
+  assert.match(controller, /session\.requestFrame\(\(\) => this\.publishSeek\(state\)\)/);
+  assert.match(controller, /this\.host\.requestSeek\(state\.interactionId, next\)/);
+  const publishBody = controller.slice(
+    controller.indexOf("private publishSeek"),
+  );
+  assert.doesNotMatch(publishBody, /commitTiming/);
+  assert.doesNotMatch(timeline, /function moveSeekDrag|function teardownSeekDrag/);
 });
 
 test("preview runtime accepts ACK only for the exact revision and operation", () => {
@@ -571,7 +584,7 @@ test("preview ingress is bounded and reports overflow once per window", () => {
 test("Design Safe has no frontend execution path for raw project JS", () => {
   const jsPane = readFileSync(new URL("../src/lib/components/inspector/JsPane.svelte", import.meta.url), "utf8");
   const timeline = readFileSync(new URL("../src/lib/components/workspace/MotionTimelinePanel.svelte", import.meta.url), "utf8");
-  const workspace = readFileSync(new URL("../src/lib/state/motion-workspace.svelte.ts", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../src/lib/motion/workspace.svelte.ts", import.meta.url), "utf8");
   const bridge = readFileSync(new URL("../src-tauri/src/preview/bridge/12_messages_events.js", import.meta.url), "utf8");
   const backend = readFileSync(new URL("../src-tauri/src/commands/js.rs", import.meta.url), "utf8");
   for (const source of [jsPane, timeline, bridge]) {
@@ -589,7 +602,7 @@ test("HTML persistence stays in ProjectWorkspace while live drafts are explicit 
     "utf8",
   );
   const draft = readFileSync(
-    new URL("../src/lib/state/html-draft-controller.ts", import.meta.url),
+    new URL("../src/lib/state/html-draft-session.svelte.ts", import.meta.url),
     "utf8",
   );
   const messages = readFileSync(
@@ -600,7 +613,10 @@ test("HTML persistence stays in ProjectWorkspace while live drafts are explicit 
     new URL("../src-tauri/src/preview/bridge/10_canvas_patch.js", import.meta.url),
     "utf8",
   );
-  const app = readFileSync(new URL("../src/lib/state/app.svelte.ts", import.meta.url), "utf8");
+  const composition = readFileSync(
+    new URL("../src/lib/application/composition.svelte.ts", import.meta.url),
+    "utf8",
+  );
   const selection = readFileSync(
     new URL("../src/lib/state/selection-controller.ts", import.meta.url),
     "utf8",
@@ -625,14 +641,15 @@ test("HTML persistence stays in ProjectWorkspace while live drafts are explicit 
   assert.match(canvasPatch, /reapplyLiveAttributeDraft/);
   assert.match(canvasPatch, /CANVAS_RENDER_INSTANCE_ATTR/);
   assert.doesNotMatch(canvasPatch, /target\.selector|SESSION_ID_ATTR, String\(target\.sessionId/);
-  assert.match(app, /deferCanonicalProjection:\s*true/);
-  assert.match(app, /HTML_TEXT_HISTORY_IDLE_MS/);
-  assert.match(app, /finishActiveHtmlAttributeEditSession/);
-  assert.doesNotMatch(app, /htmlAttributeDraftCommitQueue/);
-  assert.match(previewSelectionSource, /attr\.name\.startsWith\("data-pana-"\)/);
+  assert.match(draft, /deferCanonicalProjection:\s*true/);
+  assert.match(draft, /HTML_TEXT_HISTORY_IDLE_MS/);
+  assert.match(draft, /finishActiveAttributeSession/);
+  assert.doesNotMatch(composition, /htmlAttributeDraftCommitQueue/);
+  assert.doesNotMatch(composition, /activeHtmlAttributeEditSession|activeHtmlTextEditSession/);
+  assert.doesNotMatch(previewSelectionSource, /collectElementAttributes/);
   assert.match(
     selection,
-    /activeSelectionKey !== null[\s\S]*activeHtmlTextEditKey === activeSelectionKey/,
+    /activeSelectionKey !== null[\s\S]*host\.draft\.activeTextEditKey === activeSelectionKey/,
   );
   assert.match(draft, /if \(!selection\.sourceNodeId\) return null/);
   assert.doesNotMatch(draft, /formatSourceEditLocation|observation\.domPath/);
@@ -685,47 +702,9 @@ test("Canvas document commit waits for styledReady and never replaces head/body 
   assert.match(messages, /phase:\s*["']failed["']/);
 });
 
-test("project startup defers Template Workbench until canonical Preview publication", () => {
-  const controller = readFileSync(
-    new URL("../src/lib/state/project-controller.ts", import.meta.url),
-    "utf8",
-  );
-  const initialSelection = controller.indexOf("activateTemplateWorkbench: false");
-  const previewStart = controller.indexOf("export async function startPreviewAfterOpen");
-  const canonicalPublication = controller.indexOf(
-    "markProjectWorkspacePreviewPublished(",
-    previewStart,
-  );
-  const workbenchActivation = controller.indexOf(
-    "host.updateTemplateWorkbenchContext(",
-    canonicalPublication,
-  );
-
-  assert.ok(initialSelection > 0);
-  assert.ok(previewStart > initialSelection);
-  assert.ok(canonicalPublication > previewStart);
-  assert.ok(workbenchActivation > canonicalPublication);
-});
-
-test("reload-ul proiectului folosește unicul pipeline de atașare și nu pornește Canvas inline", () => {
-  const controller = readFileSync(
-    new URL("../src/lib/state/project-controller.ts", import.meta.url),
-    "utf8",
-  );
-  const reloadStart = controller.indexOf("async function reloadCurrentProjectFromDisk");
-  const reloadEnd = controller.indexOf("function resetProjectSessionState", reloadStart);
-  const reloadBody = controller.slice(reloadStart, reloadEnd);
-
-  assert.ok(reloadStart > 0 && reloadEnd > reloadStart);
-  assert.match(reloadBody, /projectPublishedSessionIntoFrontend\(/);
-  assert.match(reloadBody, /startPreviewAfterOpen\(/);
-  assert.doesNotMatch(reloadBody, /startProjectPreview\(/);
-  assert.doesNotMatch(reloadBody, /prepareCanvasProjectionNavigation\(/);
-});
-
 test("Page JS has one session staging path and no independent Save engine", () => {
   const sync = readFileSync(new URL("../src/lib/session/page-js-draft-sync.ts", import.meta.url), "utf8");
-  const io = readFileSync(new URL("../src/lib/project/io.ts", import.meta.url), "utf8");
+  const io = readFileSync(new URL("../src/lib/js/io.ts", import.meta.url), "utf8");
   assert.match(sync, /stagePageJsDraft/);
   assert.match(sync, /clearPageJsDraft/);
   assert.match(io, /"stage_page_js_draft"/);

@@ -1,49 +1,233 @@
 <script lang="ts">
-  import { onDestroy, type Component } from "svelte";
+  import { onDestroy, type Component, type ComponentProps } from "svelte";
   import type { TerminalPaneProps } from "$lib/components/TerminalPane.svelte";
   import EditorShell from "$lib/components/EditorShell.svelte";
   import WorkbenchBottomPanel from "$lib/components/workbench/WorkbenchBottomPanel.svelte";
   import MotionTimelinePanel from "$lib/components/workspace/MotionTimelinePanel.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
+  import type { TerminalWorkspaceState } from "$lib/terminal/workspace.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { PreviewInsertDropRequest } from "$lib/state/preview-insert-controller";
+  import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
+  import type { CssMutationAuthorityReceipt } from "$lib/css/mutation-contract";
+  import type { ScssVariable } from "$lib/css/contracts";
+  import type { TeraDropRequest } from "$lib/tera/model";
   import type {
+    PageFrontmatterField,
+    PageFrontmatterMutationValue,
+  } from "$lib/markdown/frontmatter";
+  import type { ApplicationPreferencesState } from "$lib/application/preferences.svelte";
+  import type { PublishWorkspaceState } from "$lib/deploy/publish-state.svelte";
+  import type { WorkspaceLayoutState } from "$lib/ui/workspace-layout.svelte";
+  import { startPointerSession } from "$lib/ui/pointer-session";
+  import type { WorkbenchDocumentNavigationService } from "$lib/workbench/document-navigation";
+  import type {
+    ApplicationSurface,
     CenterView,
+  } from "$lib/application/contracts";
+  import type {
+    AuditFinding,
+    AuditRunMode,
+  } from "$lib/audit/contracts";
+  import type { CoordinatedElementSelection } from "$lib/canvas/contracts";
+  import type {
+    FileExplorerOperationPlan,
+    FileExplorerOperationRequest,
+    FileExplorerSnapshot,
+  } from "$lib/project/file-explorer-contract";
+  import type {
+    ProjectFile,
+    ProjectScan,
+  } from "$lib/project/lifecycle-contract";
+  import type { ProjectWorkspaceSnapshot } from "$lib/project/workspace-contract";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
+  import type { SourceRange } from "$lib/source-graph/contracts";
+  import type { VersionPreviewReceipt } from "$lib/versioning/contracts";
+  import type {
     WorkbenchActivity,
-    WorkbenchDocumentSnapshot,
-    WorkbenchGroupId,
-    WorkbenchSurface,
+    WorkbenchDocumentActivationSnapshot,
+    WorkbenchSnapshot,
     WorkspaceSourceOpenOptions,
-  } from "$lib/types";
+  } from "$lib/workbench/contracts";
   import { t } from "$lib/i18n/runtime.svelte";
   import { errorMessage } from "$lib/util";
+  import type { DesignClassInventorySnapshot } from "$lib/css/design-system-contract";
+  import type { MotionPreviewMode } from "$lib/motion/workspace.svelte";
+
+  type ForwardedEditorShellProps = Omit<
+    ComponentProps<typeof EditorShell>,
+    | "surfaceActive"
+    | "responsiveBreakpoints"
+    | "motionPreviewMode"
+    | "motionPreviewRequest"
+    | "onMotionPreviewStatus"
+    | "dirtyWorkbenchPaths"
+    | "documentActivation"
+    | "activateWorkbenchDocument"
+    | "closeWorkbenchDocument"
+    | "setWorkbenchSurface"
+    | "previewFrame"
+    | "codeEditorHost"
+  >;
 
   let {
-    app,
+    session,
+    creation,
+    auxiliary,
+    workspaceCommands,
+    creationCommands,
+    contentCommands,
+    auditCommands,
+    applicationPreferences,
+    globalStatus,
+    motionWorkspace,
+    terminalWorkspace,
+    workspaceMutations,
+    publishWorkspace,
+    workspaceLayout,
+    workbenchDocuments,
     TerminalPaneComponent = null,
     breakpointValue,
     openWorkspaceSource,
+    editorProps,
+    documentActivation,
+    previewFrame = $bindable(),
+    codeEditorHost = $bindable(),
   }: {
-    app: AppState;
+    session: {
+      applicationSurface: ApplicationSurface;
+      workbenchSnapshot: WorkbenchSnapshot | null;
+      centerView: CenterView;
+      sessionId: string;
+      projectRoot: string;
+      project: ProjectScan | null;
+      workspace: ProjectWorkspaceSnapshot | null;
+      interactionLocked: boolean;
+      activeRenderedTemplatePath: string;
+      activeScannedPath: string | null;
+      jsRefreshToken: number;
+      interactivePreviewEnabled: boolean;
+    };
+    creation: {
+      sourceGraph: SourceGraph | null;
+      coordinatedElementSelection: CoordinatedElementSelection | null;
+      activeCanvasPreviewRevision: string;
+      assetPreviewRevision: string | null;
+      templateWorkbenchPreferredPagePath: string | null;
+      designClassInventory: DesignClassInventorySnapshot | null;
+      designClassInventoryLoading: boolean;
+      designClassInventoryError: string;
+      scssVariables: ScssVariable[];
+      fileExplorerSnapshot: FileExplorerSnapshot | null;
+      scannedPages: ProjectFile[];
+      scannedTemplates: ProjectFile[];
+    };
+    auxiliary: {
+      aiContextStatus: import("$lib/ai/contracts").AiContextStatus | null;
+      currentAudit: import("$lib/audit/contracts").AuditRunReceipt | null;
+      projectStatus: string;
+      refreshToken: number;
+      activeVersionPreview: VersionPreviewReceipt | null;
+      externalDiskWatchRevision: number;
+      projectAuditLoading: boolean;
+      projectAuditError: string;
+      validationRunning: boolean;
+      validationMessage: string;
+      currentProjectPath: string;
+      dirtyAreas: string[];
+      canSave: boolean;
+      diskBlockedReason: string | null;
+      auditView: "overview" | "runtime";
+      auditFocusSerial: number;
+      motionSelectionSummary: import("$lib/editor/contracts").InspectorSelectionSummarySnapshot | null;
+      motionDataAnim: string | null;
+    };
+    workspaceCommands: {
+      setInspectorJsPending: (pending: boolean) => void;
+      setPreviewExecutionMode: (mode: MotionPreviewMode) => void;
+      setWorkbenchActivity: (activity: WorkbenchActivity) => Promise<unknown>;
+      openInBrowser: (route?: string | null) => Promise<unknown>;
+      saveActiveFile: () => Promise<unknown>;
+      openAudit: (focusObservability?: boolean) => Promise<unknown>;
+      revealSourceRange: (file: string, range: SourceRange) => void;
+      showVersionPreview: (receipt: VersionPreviewReceipt) => Promise<void>;
+      returnToLivePreview: () => Promise<void>;
+    };
+    creationCommands: {
+      updateTemplateWorkbenchContext: (
+        project: ProjectScan,
+        template: ProjectFile,
+        pageFile: string,
+        options: { preferredRoute: string; strict: true },
+      ) => Promise<unknown>;
+      insertTeraPaletteItemAtTarget: (request: TeraDropRequest) => Promise<unknown>;
+      insertPaletteElementAtTarget: (request: PreviewInsertDropRequest) => Promise<unknown>;
+      refreshClassInventory: () => Promise<unknown>;
+      createVariable: (path: string, name: string, value: string) => Promise<boolean>;
+      createClass: (name: string, path: string) => Promise<boolean>;
+      updateVariable: (variable: ScssVariable, value: string) => Promise<boolean>;
+      renameClass: (oldName: string, newName: string) => Promise<boolean>;
+      refreshFileExplorer: () => Promise<unknown>;
+      planFileExplorer: (request: FileExplorerOperationRequest) => Promise<FileExplorerOperationPlan>;
+      commitFileExplorer: (plan: FileExplorerOperationPlan) => Promise<unknown>;
+      injectRawCss: (id: string, css: string) => void;
+      projectCommittedCssMutation: (
+        authority: CssMutationAuthorityReceipt,
+        liveEpoch: number | null,
+      ) => Promise<unknown>;
+      applyImageSource: (source: string) => Promise<EditorActionOutcome>;
+    };
+    contentCommands: {
+      createPage: (input: { title: string; slug: string; section: string }) => Promise<string | null>;
+      openPageEditor: (relativePath: string) => Promise<unknown>;
+      updateFrontmatterSource: (relativePath: string, source: string) => void;
+      updateFrontmatterField: (
+        relativePath: string,
+        field: PageFrontmatterField,
+        value: PageFrontmatterMutationValue,
+      ) => Promise<string>;
+      readPageSettings: (relativePath: string) => Promise<string>;
+    };
+    auditCommands: {
+      applySafeFix: (finding: AuditFinding, fixId: string) => Promise<unknown>;
+      refresh: (force?: boolean, mode?: AuditRunMode) => Promise<import("$lib/deploy/contracts").AuditRefreshResult>;
+      runValidation: () => Promise<boolean>;
+      setView: (view: "overview" | "runtime") => void;
+    };
+    applicationPreferences: ApplicationPreferencesState;
+    globalStatus: GlobalStatusState;
+    motionWorkspace: MotionWorkspaceState;
+    terminalWorkspace: TerminalWorkspaceState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+    publishWorkspace: PublishWorkspaceState;
+    workspaceLayout: WorkspaceLayoutState;
+    workbenchDocuments: WorkbenchDocumentNavigationService;
     TerminalPaneComponent?: Component<TerminalPaneProps> | null;
     breakpointValue: (name: string, fallback: string) => string;
     openWorkspaceSource: (
       path: string,
       options?: WorkspaceSourceOpenOptions,
     ) => void | Promise<void>;
+    editorProps: ForwardedEditorShellProps;
+    documentActivation: WorkbenchDocumentActivationSnapshot;
+    previewFrame?: HTMLIFrameElement;
+    codeEditorHost?: HTMLDivElement;
   } = $props();
 
   const bottomPanelOpen = $derived(
-    app.applicationSurface === "workbench"
-      && Boolean(app.workbenchSnapshot?.bottomPanel.open)
-      && app.workbenchSnapshot?.bottomPanel.activeView === "terminal",
+    session.applicationSurface === "workbench"
+      && Boolean(session.workbenchSnapshot?.bottomPanel.open)
+      && session.workbenchSnapshot?.bottomPanel.activeView === "terminal",
   );
   const activeWorkbenchActivity = $derived(
-    app.workbenchSnapshot?.activeActivity ?? "editor",
+    session.workbenchSnapshot?.activeActivity ?? "editor",
   );
   const editorSurfaceActive = $derived(
-    app.applicationSurface === "workbench"
+    session.applicationSurface === "workbench"
       && activeWorkbenchActivity === "editor"
-      && app.centerView !== "kernel",
+      && session.centerView !== "kernel",
   );
   type RetainedAuxiliarySurface =
     | Exclude<WorkbenchActivity, "editor">
@@ -63,7 +247,6 @@
   let SettingsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let TaxonomiesWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let TemplatesWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
-  let ThemesWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let VersionControlWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   const auxiliaryWorkspaceLoads = new Map<
     RetainedAuxiliarySurface,
@@ -76,11 +259,6 @@
     settings: async () => {
       SettingsWorkspace = (await import(
         "$lib/components/settings/SettingsWorkspace.svelte"
-      )).default;
-    },
-    themes: async () => {
-      ThemesWorkspace = (await import(
-        "$lib/components/themes/ThemesWorkspace.svelte"
       )).default;
     },
     templates: async () => {
@@ -156,11 +334,11 @@
     if (auxiliaryWorkspaceLoads.has(surface)) return;
     const load = auxiliaryWorkspaceLoaders[surface]()
       .then(() => {
-        app.clearNotification("workbench.activity.lazy-load");
+        globalStatus.clear("workbench.activity.lazy-load");
       })
       .catch((error) => {
         auxiliaryWorkspaceLoads.delete(surface);
-        app.escalateGlobalStatus({
+        globalStatus.escalate({
           id: "workbench.activity.lazy-load",
           level: "error",
           title: t("workbench-activity-open-failed"),
@@ -171,16 +349,16 @@
   }
 
   $effect(() => {
-    const sessionId = app.kernelProjectSessionId;
+    const sessionId = session.sessionId;
     if (retainedAuxiliarySessionId !== sessionId) {
       retainedAuxiliarySessionId = sessionId;
       retainedAuxiliarySurface = null;
     }
-    if (app.applicationSurface === "settings") {
+    if (session.applicationSurface === "settings") {
       retainedAuxiliarySurface = "settings";
     } else if (activeWorkbenchActivity !== "editor") {
       retainedAuxiliarySurface = activeWorkbenchActivity;
-    } else if (app.centerView === "kernel") {
+    } else if (session.centerView === "kernel") {
       retainedAuxiliarySurface = "kernel";
     }
     if (retainedAuxiliarySurface) {
@@ -188,22 +366,22 @@
     }
   });
   const motionTimelineAvailable = $derived(
-    app.applicationSurface === "workbench"
+    session.applicationSurface === "workbench"
       && activeWorkbenchActivity === "editor"
-      && app.centerView === "preview"
-      && Boolean(app.activeRenderedTemplatePath)
-      && Boolean(app.scannedProject),
+      && session.centerView === "preview"
+      && Boolean(session.activeRenderedTemplatePath)
+      && Boolean(session.project),
   );
   const motionTimelineOpen = $derived(
-    motionTimelineAvailable && app.motionWorkspace.timelineOpen,
+    motionTimelineAvailable && motionWorkspace.timelineOpen,
   );
   const motionTimelineHeight = $derived(
-    app.motionWorkspace.timelineCollapsed ? 36 : app.motionWorkspace.timelineHeight,
+    motionWorkspace.timelineCollapsed ? 36 : motionWorkspace.timelineHeight,
   );
   let motionTimelineResizing = $state(false);
   let cancelMotionTimelineResize: (() => void) | null = null;
   const dirtyWorkbenchPaths = $derived(
-    app.projectWorkspaceSnapshot?.documents.files
+    session.workspace?.documents.files
       .filter((file) => file.dirty)
       .map((file) => file.relativePath)
       ?? [],
@@ -220,110 +398,50 @@
       widthPx: Number.parseFloat(breakpointValue("bp-tableta", "1024px")) || 1_024,
     },
   ]);
-  function centerViewForSurface(surface: WorkbenchSurface): CenterView {
-    if (surface === "code") return "code";
-    return "preview";
-  }
-
-  async function showWorkbenchDocument(document: WorkbenchDocumentSnapshot) {
-    const file = await app.resolveWorkspaceProjectFile(document.relativePath);
-    if (!file) {
-      app.setGlobalStatus(
-        t("workbench-document-missing", { path: document.relativePath }),
-        "error",
-      );
-      return;
-    }
-    await app.loadScannedProjectFile(file);
-    await app.setCenterView(centerViewForSurface(document.surface));
-  }
-
-  async function activateWorkbenchDocument(
-    groupId: WorkbenchGroupId,
-    document: WorkbenchDocumentSnapshot,
-  ) {
-    try {
-      await app.applyWorkbenchIntent({
-        kind: "activate_document",
-        documentId: document.documentId,
-        groupId,
-      });
-      await showWorkbenchDocument(document);
-    } catch (error) {
-      app.setGlobalStatus(
-        t("workbench-document-activate-failed", { detail: errorMessage(error) }),
-        "error",
-      );
-    }
-  }
-
-  async function closeWorkbenchDocument(
-    groupId: WorkbenchGroupId,
-    document: WorkbenchDocumentSnapshot,
-  ) {
-    const wasActive = app.workbenchSnapshot?.groups
-      .find((group) => group.groupId === groupId)
-      ?.activeDocumentId === document.documentId;
-    try {
-      const receipt = await app.applyWorkbenchIntent({
-        kind: "close_document",
-        documentId: document.documentId,
-        groupId,
-      });
-      if (!wasActive) return;
-      const nextGroup = receipt.snapshot.groups.find((group) => group.groupId === groupId);
-      const nextDocument = nextGroup?.documents.find(
-        (candidate) => candidate.documentId === nextGroup.activeDocumentId,
-      );
-      if (nextDocument) await showWorkbenchDocument(nextDocument);
-    } catch (error) {
-      app.setGlobalStatus(
-        t("workbench-document-close-failed", { detail: errorMessage(error) }),
-        "error",
-      );
-    }
-  }
-
-  async function setWorkbenchSurface(surface: WorkbenchSurface) {
-    await app.setCenterView(centerViewForSurface(surface));
-  }
+  const activateWorkbenchDocument: ComponentProps<typeof EditorShell>["activateWorkbenchDocument"] = (
+    groupId,
+    document,
+  ) => workbenchDocuments.activate(groupId, document);
+  const closeWorkbenchDocument: ComponentProps<typeof EditorShell>["closeWorkbenchDocument"] = (
+    groupId,
+    document,
+  ) => workbenchDocuments.close(groupId, document);
+  const setWorkbenchSurface: ComponentProps<typeof EditorShell>["setWorkbenchSurface"] = (
+    surface,
+  ) => workbenchDocuments.setSurface(surface);
+  const onMotionPreviewStatus: ComponentProps<typeof EditorShell>["onMotionPreviewStatus"] = (
+    status,
+  ) => motionWorkspace.acceptPreviewStatus(status);
 
   $effect(() => {
-    app.motionWorkspace.bind(
-      app.activeRenderedTemplatePath,
-      app.sessionProjectRoot,
-      app.kernelProjectSessionId,
-      app.jsRefreshToken,
+    motionWorkspace.bind(
+      session.activeRenderedTemplatePath,
+      session.projectRoot,
+      session.sessionId,
+      session.jsRefreshToken,
     );
   });
 
   $effect(() => {
-    app.setInspectorPending(
-      "js",
-      app.motionWorkspace.pendingCount > 0,
-      "motion-timeline",
-    );
+    workspaceCommands.setInspectorJsPending(motionWorkspace.pendingCount > 0);
   });
 
   $effect(() => {
-    const mode = app.motionWorkspace.previewMode;
+    const mode = motionWorkspace.previewMode;
     const shouldExecute = mode !== "design";
-    if (app.interactivePreviewEnabled !== shouldExecute) {
-      app.setPreviewExecutionMode(mode);
+    if (session.interactivePreviewEnabled !== shouldExecute) {
+      workspaceCommands.setPreviewExecutionMode(mode);
     }
   });
 
-  function resizeMotionTimeline(event: MouseEvent) {
+  function resizeMotionTimeline(event: PointerEvent) {
     if (event.button !== 0) return;
     cancelMotionTimelineResize?.();
     event.preventDefault();
 
     const startY = event.clientY;
-    const startHeight = app.motionWorkspace.timelineHeight;
+    const startHeight = motionWorkspace.timelineHeight;
     let latestY = startY;
-    let animationFrame: number | null = null;
-    let safetyTimer: number | null = null;
-    let stopped = false;
 
     motionTimelineResizing = true;
     document.body.classList.add("is-resizing", "is-row-resizing");
@@ -333,64 +451,37 @@
       Math.min(560, startHeight - (clientY - startY)),
     );
 
-    const flushResize = () => {
-      animationFrame = null;
-      app.motionWorkspace.timelineHeight = heightAt(latestY);
+    const publishLiveResize = () => {
+      motionWorkspace.timelineHeight = heightAt(latestY);
     };
 
-    const move = (moveEvent: MouseEvent) => {
-      moveEvent.preventDefault();
-      latestY = moveEvent.clientY;
-      if (animationFrame !== null) return;
-      animationFrame = window.requestAnimationFrame(flushResize);
-    };
-
-    const cleanup = () => {
-      if (animationFrame !== null) {
-        window.cancelAnimationFrame(animationFrame);
-        animationFrame = null;
-      }
-      if (safetyTimer !== null) {
-        window.clearTimeout(safetyTimer);
-        safetyTimer = null;
-      }
+    const finish = () => {
       document.body.classList.remove("is-resizing", "is-row-resizing");
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", commit);
-      window.removeEventListener("blur", cancel);
-      window.removeEventListener("keydown", handleKeydown);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
       cancelMotionTimelineResize = null;
       motionTimelineResizing = false;
     };
 
-    const stop = (shouldCommit: boolean) => {
-      if (stopped) return;
-      stopped = true;
-      if (shouldCommit) {
-        app.motionWorkspace.timelineHeight = heightAt(latestY);
-      } else {
-        app.motionWorkspace.timelineHeight = startHeight;
-      }
-      cleanup();
-    };
-
-    const commit = () => stop(true);
-    const cancel = () => stop(false);
-    const handleKeydown = (keyEvent: KeyboardEvent) => {
-      if (keyEvent.key === "Escape") cancel();
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") cancel();
-    };
-
-    cancelMotionTimelineResize = cancel;
-    safetyTimer = window.setTimeout(cancel, 8_000);
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", commit, { once: true });
-    window.addEventListener("blur", cancel, { once: true });
-    window.addEventListener("keydown", handleKeydown);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const session = startPointerSession({
+      pointerId: event.pointerId,
+      captureTarget: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+      safetyTimeoutMs: 8_000,
+      onMove: (moveEvent, currentSession) => {
+        moveEvent.preventDefault();
+        latestY = moveEvent.clientY;
+        currentSession.requestFrame(publishLiveResize);
+      },
+      onCommit: (upEvent, currentSession) => {
+        if (upEvent) latestY = upEvent.clientY;
+        currentSession.flushFrame();
+        motionWorkspace.timelineHeight = heightAt(latestY);
+        finish();
+      },
+      onCancel: () => {
+        motionWorkspace.timelineHeight = startHeight;
+        finish();
+      },
+    });
+    cancelMotionTimelineResize = () => session.cancel("programmatic");
   }
 
   onDestroy(() => cancelMotionTimelineResize?.());
@@ -400,22 +491,16 @@
   class:bottom-panel-open={bottomPanelOpen}
   class:motion-timeline-open={motionTimelineOpen}
   class="center-stack"
-  style={`--terminal-pane-height: ${app.terminalPaneHeight}px; --motion-timeline-height: ${motionTimelineHeight}px;`}
+  style={`--terminal-pane-height: ${workspaceLayout.terminalPaneHeight}px; --motion-timeline-height: ${motionTimelineHeight}px;`}
   aria-label={t("workbench-center-area")}
 >
   <div
     class="editor-shell-shell"
-    inert={app.aiEditLeaseFrontendLockActive
-      || app.kernelUndoRedoFrontendQuiesceActive
-      || app.kernelUndoRedoFrontendLeaseActive
-      ? true
-      : undefined}
-    aria-busy={app.aiEditLeaseFrontendLockActive
-      || app.kernelUndoRedoFrontendQuiesceActive
-      || app.kernelUndoRedoFrontendLeaseActive}
+    inert={session.interactionLocked ? true : undefined}
+    aria-busy={session.interactionLocked}
   >
-    {#if app.scannedProject && app.kernelProjectSessionId}
-      {#key app.kernelProjectSessionId}
+    {#if session.project && session.sessionId}
+      {#key session.sessionId}
         <div
           class="stable-editor-surface"
           class:surface-inactive={!editorSurfaceActive}
@@ -423,66 +508,19 @@
           aria-hidden={!editorSurfaceActive}
         >
           <EditorShell
-            bind:previewFrame={app.previewFrame}
-            bind:codeEditorHost={app.codeEditorHost}
+            {...editorProps}
+            {documentActivation}
+            bind:previewFrame
+            bind:codeEditorHost
             surfaceActive={editorSurfaceActive}
-            centerView={app.centerView}
-            previewZoom={app.previewZoom}
-            previewCanvasMode={app.previewCanvasMode}
-            previewCanvasPreset={app.previewCanvasPreset}
-            previewWidthPx={app.previewWidthPx}
-            previewRulers={app.previewRulers}
             {responsiveBreakpoints}
-            previewDocumentMarkup={app.previewDocumentMarkup}
-            previewSrc={app.previewSrc}
-            previewNavigationGuardActive={app.previewNavigationGuardActive}
-            interactivePreviewEnabled={app.interactivePreviewEnabled
-              && !app.aiEditLeaseFrontendLockActive
-              && !app.kernelUndoRedoFrontendQuiesceActive
-              && !app.kernelUndoRedoFrontendLeaseActive}
-            interactivePreviewUrl={app.interactivePreviewUrl}
-            motionPreviewMode={app.motionWorkspace.previewMode}
-            motionPreviewRequest={app.motionWorkspace.previewRequest}
-            workbenchSnapshot={app.workbenchSnapshot}
-            {dirtyWorkbenchPaths}
+            motionPreviewMode={motionWorkspace.previewMode}
+            motionPreviewRequest={motionWorkspace.previewRequest}
+            dirtyWorkbenchPaths={dirtyWorkbenchPaths}
             {activateWorkbenchDocument}
             {closeWorkbenchDocument}
             {setWorkbenchSurface}
-            setWorkbenchSplit={async (split) => { await app.setSynchronizedWorkbenchSplit(split); }}
-            setWorkbenchSplitRatio={async (ratioBasisPoints) => { await app.setWorkbenchSplitRatio(ratioBasisPoints); }}
-            setCanvasViewport={async (viewport) => { await app.setWorkbenchCanvasViewport(viewport); }}
-            setPreviewZoom={(value) => app.setPreviewZoom(value)}
-            commitPreviewZoom={async (value) => { await app.commitPreviewZoom(value); }}
-            resetPreviewZoom={() => app.resetPreviewZoom()}
-            attachPreviewInspector={() => app.attachPreviewInspector()}
-            mountPreviewSurface={(frame) => app.mountCanvasProjectionSurface(frame)}
-            unmountPreviewSurface={(frame) => app.unmountCanvasProjectionSurface(frame)}
-            previewSurfaceLoaded={(frame) => app.onCanvasProjectionSurfaceLoaded(frame)}
-            setPreviewExecutionMode={(mode) => app.setPreviewExecutionMode(mode)}
-            onInteractiveLifecycleError={(message) => app.setGlobalStatus(
-              t("workbench-interactive-error", { detail: message }),
-              "error",
-            )}
-            onInteractiveDomSnapshot={(nodes) => app.acceptInteractivePreviewDomSnapshot(nodes)}
-            onInteractiveRealmRestarted={(previewRevision, durationMs) => {
-              void app.recordInteractivePreviewRealmEvent(
-                "interactive_js_restarted",
-                previewRevision,
-                durationMs,
-              );
-            }}
-            onInteractiveRealmFailed={(previewRevision, durationMs, diagnostic) => {
-              void app.recordInteractivePreviewRealmEvent(
-                "interactive_js_failed",
-                previewRevision,
-                durationMs,
-                diagnostic,
-              );
-            }}
-            onMotionPreviewStatus={(status) => app.motionWorkspace.acceptPreviewStatus(status)}
-            currentSourcePath={app.currentSourcePath}
-            source={app.source}
-            sourceLanguage={app.sourceLanguage}
+            {onMotionPreviewStatus}
           />
         </div>
       {/key}
@@ -491,34 +529,34 @@
   </div>
 
   {#if motionTimelineOpen}
-    {#if !app.motionWorkspace.timelineCollapsed}
+    {#if !motionWorkspace.timelineCollapsed}
       <WorkspaceResizeHandle
         kind="timeline"
         active={motionTimelineResizing}
         withBottomPanel={bottomPanelOpen}
         ariaLabel={t("workbench-resize-motion-timeline")}
         onDrag={resizeMotionTimeline}
-        onReset={() => { app.motionWorkspace.timelineHeight = 300; }}
+        onReset={() => { motionWorkspace.timelineHeight = 300; }}
       />
     {/if}
     <MotionTimelinePanel
-      workspace={app.motionWorkspace}
-      selectionSummary={app.inspectorSelectionSummary}
-      dataAnim={app.coordinatedElementSelection?.observation.attributes["data-anim"] ?? null}
+      workspace={motionWorkspace}
+      selectionSummary={auxiliary.motionSelectionSummary}
+      dataAnim={auxiliary.motionDataAnim}
     />
   {/if}
 
   {#if bottomPanelOpen}
     <WorkspaceResizeHandle
       kind="terminal"
-      active={app.activeResizeKind === "terminal"}
+      active={workspaceLayout.activeResizeKind === "terminal"}
       ariaLabel={t("workbench-resize-bottom-panel")}
-      onDrag={(event) => app.startResizeDrag("terminal", event)}
-      onReset={() => app.resetResize("terminal")}
+      onDrag={(event) => workspaceLayout.startResizeDrag("terminal", event)}
+      onReset={() => workspaceLayout.resetResize("terminal")}
     />
 
     <WorkbenchBottomPanel
-      {app}
+      workspace={terminalWorkspace}
       {TerminalPaneComponent}
     />
   {/if}
@@ -532,52 +570,198 @@
     aria-hidden={editorSurfaceActive}
   >
     {#if retainedAuxiliarySurface === "settings" && SettingsWorkspace}
-      <SettingsWorkspace {app} />
-    {:else if retainedAuxiliarySurface === "themes" && ThemesWorkspace}
-      <ThemesWorkspace {app} />
+      <SettingsWorkspace
+        aiContextStatus={auxiliary.aiContextStatus}
+        {applicationPreferences}
+        {globalStatus}
+        {workspaceLayout}
+      />
     {:else if retainedAuxiliarySurface === "templates" && TemplatesWorkspace}
-      <TemplatesWorkspace {app} {openWorkspaceSource} />
+      <TemplatesWorkspace
+        {globalStatus}
+        {workspaceMutations}
+        sourceGraph={creation.sourceGraph}
+        activeScannedPath={session.activeScannedPath}
+        openEditor={() => workspaceCommands.setWorkbenchActivity("editor")}
+        {openWorkspaceSource}
+      />
     {:else if retainedAuxiliarySurface === "components" && ComponentsWorkspace}
-      <ComponentsWorkspace {app} {openWorkspaceSource} />
+      <ComponentsWorkspace
+        {globalStatus}
+        {workspaceMutations}
+        sourceGraph={creation.sourceGraph}
+        {openWorkspaceSource}
+      />
     {:else if retainedAuxiliarySurface === "blocks" && BlocksWorkspace}
-      <BlocksWorkspace {app} />
+      <BlocksWorkspace
+        sourceGraph={creation.sourceGraph}
+        coordinatedElementSelection={creation.coordinatedElementSelection}
+        activeScannedPath={session.activeScannedPath}
+        activeCanvasPreviewRevision={creation.activeCanvasPreviewRevision}
+        {workspaceMutations}
+        scannedProject={session.project}
+        templateWorkbenchPreferredPagePath={creation.templateWorkbenchPreferredPagePath}
+        updateTemplateWorkbenchContext={(
+          project: ProjectScan,
+          template: ProjectFile,
+          pageFile: string,
+          options: { preferredRoute: string; strict: true },
+        ) => (
+          creationCommands.updateTemplateWorkbenchContext(project, template, pageFile, options)
+        )}
+        insertTeraPaletteItemAtTarget={creationCommands.insertTeraPaletteItemAtTarget}
+        insertPaletteElementAtTarget={creationCommands.insertPaletteElementAtTarget}
+        openEditor={() => workspaceCommands.setWorkbenchActivity("editor")}
+      />
     {:else if retainedAuxiliarySurface === "design_system" && DesignSystemWorkspace}
-      <DesignSystemWorkspace {app} {openWorkspaceSource} />
+      <DesignSystemWorkspace
+        sourceGraph={creation.sourceGraph}
+        designClassInventory={creation.designClassInventory}
+        designClassInventoryLoading={creation.designClassInventoryLoading}
+        designClassInventoryError={creation.designClassInventoryError}
+        scssVariables={creation.scssVariables}
+        fileExplorerSnapshot={creation.fileExplorerSnapshot}
+        commands={{
+          refreshClassInventory: creationCommands.refreshClassInventory,
+          createVariable: creationCommands.createVariable,
+          createClass: creationCommands.createClass,
+          updateVariable: creationCommands.updateVariable,
+          renameClass: creationCommands.renameClass,
+          refreshFileExplorer: creationCommands.refreshFileExplorer,
+          planFileExplorer: creationCommands.planFileExplorer,
+          commitFileExplorer: creationCommands.commitFileExplorer,
+          injectRawCss: creationCommands.injectRawCss,
+          projectCommittedCssMutation: creationCommands.projectCommittedCssMutation,
+        }}
+        {globalStatus}
+        {workspaceMutations}
+        {openWorkspaceSource}
+      />
     {:else if retainedAuxiliarySurface === "assets" && AssetsWorkspace}
-      <AssetsWorkspace {app} />
+      <AssetsWorkspace
+        sourceGraph={creation.sourceGraph}
+        previewRevision={creation.assetPreviewRevision}
+        coordinatedElementSelection={creation.coordinatedElementSelection}
+        previewBaseUrl={session.project?.previewBaseUrl ?? null}
+        fileExplorerSnapshot={creation.fileExplorerSnapshot}
+        commands={{
+          refreshFileExplorer: creationCommands.refreshFileExplorer,
+          planFileExplorer: creationCommands.planFileExplorer,
+          commitFileExplorer: creationCommands.commitFileExplorer,
+          applyImageSource: creationCommands.applyImageSource,
+          openEditor: () => workspaceCommands.setWorkbenchActivity("editor"),
+          openInBrowser: (route: string) => workspaceCommands.openInBrowser(route),
+        }}
+        {globalStatus}
+        {workspaceMutations}
+      />
     {:else if retainedAuxiliarySurface === "content" && ContentWorkspace}
-      <ContentWorkspace {app} {openWorkspaceSource} />
+      <ContentWorkspace
+        sourceGraph={creation.sourceGraph}
+        contentWorkspace={session.workbenchSnapshot?.contentWorkspace ?? null}
+        currentAudit={auxiliary.currentAudit}
+        projectStatus={auxiliary.projectStatus}
+        refreshToken={auxiliary.refreshToken}
+        scannedPages={creation.scannedPages}
+        scannedTemplates={creation.scannedTemplates}
+        activeTheme={session.project?.activeTheme ?? null}
+        commands={{
+          ...contentCommands,
+          openTaxonomies: () => workspaceCommands.setWorkbenchActivity("taxonomies"),
+          openContentModels: () => workspaceCommands.setWorkbenchActivity("content_models"),
+          openInBrowser: (route: string) => workspaceCommands.openInBrowser(route),
+        }}
+        {globalStatus}
+        {workspaceMutations}
+        {openWorkspaceSource}
+      />
     {:else if retainedAuxiliarySurface === "content_models" && ContentModelsWorkspace}
-      <ContentModelsWorkspace {app} {openWorkspaceSource} />
+      <ContentModelsWorkspace
+        {globalStatus}
+        {workspaceMutations}
+        sourceGraph={creation.sourceGraph}
+        {openWorkspaceSource}
+      />
     {:else if retainedAuxiliarySurface === "taxonomies" && TaxonomiesWorkspace}
-      <TaxonomiesWorkspace {app} {openWorkspaceSource} />
+      <TaxonomiesWorkspace
+        {globalStatus}
+        {workspaceMutations}
+        openTemplates={() => workspaceCommands.setWorkbenchActivity("templates")}
+        openInBrowser={(route: string) => workspaceCommands.openInBrowser(route)}
+        {openWorkspaceSource}
+      />
     {:else if retainedAuxiliarySurface === "data" && DataWorkspace}
-      <DataWorkspace {app} {openWorkspaceSource} />
+      <DataWorkspace
+        {globalStatus}
+        {workspaceMutations}
+        sourceGraph={creation.sourceGraph}
+        uiLocale={applicationPreferences.locale}
+        openEditor={() => workspaceCommands.setWorkbenchActivity("editor")}
+        {openWorkspaceSource}
+      />
     {:else if retainedAuxiliarySurface === "versioning" && VersionControlWorkspace}
-      <VersionControlWorkspace {app} />
+      <VersionControlWorkspace
+        {globalStatus}
+        {workspaceMutations}
+        activeScannedPath={session.activeScannedPath}
+        activeVersionPreview={auxiliary.activeVersionPreview}
+        showVersionPreview={workspaceCommands.showVersionPreview}
+        returnToLivePreview={workspaceCommands.returnToLivePreview}
+      />
     {:else if retainedAuxiliarySurface === "publish" && PublishWorkspace}
-      <PublishWorkspace {app} {openWorkspaceSource} />
+      <PublishWorkspace
+        {publishWorkspace}
+        {workspaceMutations}
+        {globalStatus}
+        scannedProject={Boolean(session.project)}
+        externalDiskWatchRevision={auxiliary.externalDiskWatchRevision}
+        saveActiveFile={workspaceCommands.saveActiveFile}
+        openAudit={workspaceCommands.openAudit}
+        revealSourceRange={workspaceCommands.revealSourceRange}
+        {openWorkspaceSource}
+      />
     {:else if retainedAuxiliarySurface === "audit" && AuditWorkspace}
       <AuditWorkspace
-        {app}
+        snapshot={auxiliary.currentAudit}
+        {workspaceMutations}
+        projectAuditLoading={auxiliary.projectAuditLoading}
+        projectAuditError={auxiliary.projectAuditError}
+        validationRunningState={{
+          running: auxiliary.validationRunning,
+          message: auxiliary.validationMessage,
+        }}
+        projectHealth={{
+          currentProjectPath: auxiliary.currentProjectPath,
+          projectFileCount: session.project?.files.length ?? 0,
+          sourceNodeCount: creation.sourceGraph?.nodes.length ?? 0,
+          dirtyAreas: auxiliary.dirtyAreas,
+          canSave: auxiliary.canSave,
+          diskBlockedReason: auxiliary.diskBlockedReason,
+          projectStatus: auxiliary.projectStatus,
+        }}
+        applySafeAuditFix={auditCommands.applySafeFix}
+        refreshProjectAudit={auditCommands.refresh}
+        runZolaValidation={auditCommands.runValidation}
+        revealSourceRange={workspaceCommands.revealSourceRange}
+        {globalStatus}
         {openWorkspaceSource}
-        requestedView={app.auditWorkspaceView}
-        observabilityFocusSerial={app.auditObservabilityFocusSerial}
-        onViewChange={(view: "overview" | "runtime") => { app.auditWorkspaceView = view; }}
+        requestedView={auxiliary.auditView}
+        observabilityFocusSerial={auxiliary.auditFocusSerial}
+        onViewChange={auditCommands.setView}
       />
     {:else if retainedAuxiliarySurface === "kernel" && KernelWorkspace}
       <KernelWorkspace
-        currentProjectPath={app.currentProjectPath}
-        projectFileCount={app.scannedProject?.files.length ?? 0}
-        sourceNodeCount={app.sourceGraph?.nodes.length ?? 0}
-        dirtyAreas={app.globalDirtyState.areas}
-        canSave={app.globalDirtyState.canSave}
-        diskBlockedReason={app.immediateDiskOperationBlockedReason}
-        projectStatus={app.projectStatus}
+        currentProjectPath={auxiliary.currentProjectPath}
+        projectFileCount={session.project?.files.length ?? 0}
+        sourceNodeCount={creation.sourceGraph?.nodes.length ?? 0}
+        dirtyAreas={auxiliary.dirtyAreas}
+        canSave={auxiliary.canSave}
+        diskBlockedReason={auxiliary.diskBlockedReason}
+        projectStatus={auxiliary.projectStatus}
         onStatusUpdate={(
           text: string,
           kind: "restored" | "saving" | "error",
-        ) => app.setGlobalStatus(text, kind)}
+        ) => globalStatus.set(text, kind)}
       />
     {:else}
       <div class="workspace-lazy-loading" role="status" aria-live="polite">

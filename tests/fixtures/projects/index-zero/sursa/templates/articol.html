@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} | Jurnal INDEX ZERO{% endblock title %}
+{% block description %}{{ page.description }}{% endblock description %}
+{% block content %}
+<article class="articol-editorial">
+  <header><p class="eticheta-tehnica">JURNAL / {{ page.date | date(format="%d.%m.%Y") }}</p><h1>{{ page.title }}</h1><p>{{ page.description }}</p><div><span>{{ page.extra.autor }}</span><span>{{ page.extra.durata_lectura }}</span></div></header>
+  <figure><img src="{{ get_url(path=page.extra.imagine) }}" alt="" width="1536" height="1024"></figure>
+  <div class="proza">{{ page.content | safe }}</div>
+</article>
+{% endblock content %}

@@ -1,19 +1,28 @@
 <script lang="ts">
+  import {
+    IconBolt,
+    IconBox,
+    IconCode,
+    IconFileCode,
+    IconMarkdown,
+  } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import type {
     InspectorSelectionSummarySnapshot,
     InspectorSelectionSummaryState,
     SelectionSnapshot,
-  } from "$lib/types";
+  } from "$lib/editor/contracts";
 
   let {
     summary = null,
     selection = null,
+    initializing = false,
     authoringDocumentPath = null,
     selectClass,
   }: {
     summary?: InspectorSelectionSummarySnapshot | null;
     selection?: SelectionSnapshot | null;
+    initializing?: boolean;
     authoringDocumentPath?: string | null;
     selectClass: (className: string) => Promise<"allowed" | "blocked">;
   } = $props();
@@ -36,7 +45,9 @@
   }
 
   function summaryLabel(value: InspectorSelectionSummarySnapshot | null) {
-    if (!value) return t("inspector-summary-loading");
+    if (!value) {
+      return initializing ? t("inspector-summary-loading") : t("inspector-no-selection");
+    }
     if (value.state !== "resolved") return summaryStateLabel(value.state);
     if (authoringDocumentPath) return fileName(authoringDocumentPath);
     return value.selector
@@ -63,21 +74,35 @@
   }
 
   function summaryStateDescription(value: InspectorSelectionSummarySnapshot | null) {
-    if (!value) return t("inspector-summary-loading");
+    if (!value) {
+      return initializing ? t("inspector-summary-loading") : t("inspector-no-selection");
+    }
     const localized = summaryStateLabel(value.state);
     const diagnostic = value.diagnostics[0]?.message;
     return diagnostic ? `${localized} ${diagnostic}` : localized;
   }
 
   function subjectLabel(value: InspectorSelectionSummarySnapshot) {
-    if (value.subjectKind === "teraBoundary" && authoringDocumentPath) {
+    if (value.subjectKind === "boundary" && authoringDocumentPath) {
       return t("inspector-summary-kind-document");
     }
-    if (value.subjectKind === "teraBoundary") return t("inspector-summary-kind-tera");
-    if (value.subjectKind === "markdownBoundary") return t("markdown-boundary");
+    if (value.subjectKind === "boundary" && value.boundaryKind === "markdown") {
+      return t("markdown-boundary");
+    }
+    if (value.subjectKind === "boundary" && value.boundaryKind === "component") {
+      return t("inspector-summary-kind-component");
+    }
+    if (value.subjectKind === "boundary") return t("inspector-summary-kind-template");
     if (value.subjectKind === "runtimeElement") return t("inspector-summary-kind-runtime");
     if (value.subjectKind === "cssRule") return t("inspector-summary-kind-css");
     return t("inspector-summary-kind-html");
+  }
+
+  function entityKind(value: InspectorSelectionSummarySnapshot) {
+    if (value.subjectKind === "boundary") return value.boundaryKind ?? "template";
+    if (value.subjectKind === "runtimeElement") return "runtime";
+    if (value.subjectKind === "htmlElement") return "html";
+    return "readonly";
   }
 
   function fileName(path: string) {
@@ -109,8 +134,8 @@
   class="selection-card"
   aria-labelledby="inspector-selection-summary-title"
   aria-describedby="inspector-selection-summary-state"
-  aria-busy={!summary || summary.state === "resolving"}
-  data-summary-state={summary?.state ?? "loading"}
+  aria-busy={(initializing && !summary) || summary?.state === "resolving"}
+  data-summary-state={summary?.state ?? (initializing ? "loading" : "empty")}
 >
   <h2 id="inspector-selection-summary-title" class="sr-only">
     {t("inspector-summary-label")}
@@ -207,7 +232,20 @@
           <span class="subtle-chip">{t("inspector-without-classes")}</span>
         {/if}
       {:else if summary.subjectKind}
-        <span class="subtle-chip">{subjectLabel(summary)}</span>
+        <span class="entity-chip" data-entity-kind={entityKind(summary)}>
+          {#if summary.subjectKind === "boundary" && summary.boundaryKind === "component"}
+            <IconBox size={12} stroke={2} />
+          {:else if summary.subjectKind === "boundary" && summary.boundaryKind === "markdown"}
+            <IconMarkdown size={12} stroke={2} />
+          {:else if summary.subjectKind === "boundary"}
+            <IconFileCode size={12} stroke={2} />
+          {:else if summary.subjectKind === "runtimeElement"}
+            <IconBolt size={12} stroke={2} />
+          {:else}
+            <IconCode size={12} stroke={2} />
+          {/if}
+          {subjectLabel(summary)}
+        </span>
       {/if}
     </div>
   {:else if summary && summary.state !== "empty"}
@@ -227,6 +265,26 @@
     background: var(--material-inset);
     box-shadow: var(--shadow-inset);
   }
+
+  .entity-chip {
+    --selection-entity-color: var(--entity-readonly);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    border: 1px solid color-mix(in srgb, var(--selection-entity-color) 38%, var(--border));
+    border-radius: var(--radius-control);
+    color: var(--selection-entity-color);
+    background: color-mix(in srgb, var(--selection-entity-color) 11%, transparent);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .entity-chip[data-entity-kind="html"] { --selection-entity-color: var(--entity-html); }
+  .entity-chip[data-entity-kind="template"] { --selection-entity-color: var(--entity-template); }
+  .entity-chip[data-entity-kind="component"] { --selection-entity-color: var(--entity-component); }
+  .entity-chip[data-entity-kind="markdown"] { --selection-entity-color: var(--entity-markdown); }
+  .entity-chip[data-entity-kind="runtime"] { --selection-entity-color: var(--entity-runtime); }
 
   .selection-heading {
     display: flex;

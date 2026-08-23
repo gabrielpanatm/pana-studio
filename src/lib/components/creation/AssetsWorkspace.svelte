@@ -14,17 +14,51 @@
     IconX,
   } from "@tabler/icons-svelte";
   import {
-    chooseAssetFile,
-    importProjectAsset,
-  } from "$lib/project/io";
+  chooseAssetFile,
+  importProjectAsset,
+} from "$lib/page-assets/io";
   import { projectPreviewResourceUrl } from "$lib/project/assets";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
-  import type { AppState } from "$lib/state/app.svelte";
-  import type { SourceGraphAsset } from "$lib/types";
+  import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
+  import type { GlobalStatusState } from "$lib/status/state.svelte";
+  import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
+  import type { CoordinatedElementSelection } from "$lib/canvas/contracts";
+  import type {
+    FileExplorerCommitReceipt,
+    FileExplorerOperationPlan,
+    FileExplorerOperationRequest,
+    FileExplorerSnapshot,
+  } from "$lib/project/file-explorer-contract";
+  import type { SourceGraph } from "$lib/source-graph/graph-contract";
+  import type { SourceGraphAsset } from "$lib/source-graph/contracts";
   import { errorMessage } from "$lib/util";
 
-  let { app }: { app: AppState } = $props();
+  let {
+    sourceGraph,
+    previewRevision,
+    coordinatedElementSelection,
+    previewBaseUrl,
+    fileExplorerSnapshot,
+    commands,
+    globalStatus,
+    workspaceMutations,
+  }: {
+    sourceGraph: SourceGraph | null;
+    previewRevision: string | null;
+    coordinatedElementSelection: CoordinatedElementSelection | null;
+    previewBaseUrl: string | null;
+    fileExplorerSnapshot: FileExplorerSnapshot | null;
+    commands: {
+      refreshFileExplorer: () => Promise<FileExplorerSnapshot | null>;
+      planFileExplorer: (request: FileExplorerOperationRequest) => Promise<FileExplorerOperationPlan>;
+      commitFileExplorer: (plan: FileExplorerOperationPlan) => Promise<FileExplorerCommitReceipt>;
+      applyImageSource: (source: string) => Promise<EditorActionOutcome>;
+      openEditor: () => Promise<unknown>;
+      openInBrowser: (route: string) => Promise<unknown>;
+    };
+    globalStatus: GlobalStatusState;
+    workspaceMutations: ProjectWorkspaceMutationService;
+  } = $props();
 
   type UsageFilter = "all" | "used" | "unused";
   type AssetView = "all" | "images" | "fonts" | "other";
@@ -53,15 +87,15 @@
   let fileName = $state("");
   let destinationDirectory = $state("static/images");
 
-  const graphAssets = $derived(app.sourceGraph?.assets ?? []);
+  const graphAssets = $derived(sourceGraph?.assets ?? []);
   const assets = $derived.by(() => {
     const deleted = new Set([
-      ...(app.projectWorkspaceSnapshot?.deletedDocuments ?? []),
-      ...(app.projectWorkspaceSnapshot?.deletedBinaryResources ?? []),
+      ...(workspaceMutations.snapshot?.deletedDocuments ?? []),
+      ...(workspaceMutations.snapshot?.deletedBinaryResources ?? []),
     ]);
     const visibleGraphAssets = graphAssets.filter((asset) => !deleted.has(asset.file));
     const existing = new Set(visibleGraphAssets.map((asset) => asset.file));
-    const staged = (app.projectWorkspaceSnapshot?.stagedBinaryResources ?? [])
+    const staged = (workspaceMutations.snapshot?.stagedBinaryResources ?? [])
       .filter((path) => path.startsWith("static/") && !deleted.has(path) && !existing.has(path))
       .map((path): SourceGraphAsset => ({
         id: `staged:${path}`,
@@ -88,21 +122,16 @@
     assets.find((asset) => asset.id === selectedAssetId) ?? filteredAssets[0] ?? null,
   );
   const unusedCount = $derived(assets.filter((asset) => usageCount(asset) === 0).length);
-  const assetPreviewRevision = $derived(
-    app.previewWorkspaceRevision
-      ?? app.pendingCanvasProjection?.identity.previewRevision
-      ?? app.activeCanvasIdentity?.previewRevision
-      ?? null,
-  );
+  const assetPreviewRevision = $derived(previewRevision);
   const selectedImageTarget = $derived(
-    app.coordinatedElementSelection?.observation.tag === "img"
-      ? app.coordinatedElementSelection
+    coordinatedElementSelection?.observation.tag === "img"
+      ? coordinatedElementSelection
       : null,
   );
   const pendingDeleteUsages = $derived.by(() => {
     if (!pendingDeleteAsset) return [];
-    const nodes = new Map((app.sourceGraph?.nodes ?? []).map((node) => [node.id, node]));
-    return (app.sourceGraph?.relations ?? [])
+    const nodes = new Map((sourceGraph?.nodes ?? []).map((node) => [node.id, node]));
+    return (sourceGraph?.relations ?? [])
       .filter((relation) => relation.to === pendingDeleteAsset?.nodeId)
       .map((relation) => ({
         id: relation.id,
@@ -111,7 +140,7 @@
   });
 
   function usageCount(asset: SourceGraphAsset) {
-    return (app.sourceGraph?.relations ?? []).filter((relation) => relation.to === asset.nodeId).length;
+    return (sourceGraph?.relations ?? []).filter((relation) => relation.to === asset.nodeId).length;
   }
 
   function fileExtension(value: string) {
@@ -146,7 +175,7 @@
 
   function assetUrl(asset: SourceGraphAsset) {
     return projectPreviewResourceUrl(
-      app.scannedProject?.previewBaseUrl,
+      previewBaseUrl,
       asset.logicalPath,
       assetPreviewRevision,
     );
@@ -197,8 +226,8 @@
   }
 
   async function resolveAssetExplorerEntry(asset: SourceGraphAsset) {
-    const workspace = app.projectWorkspaceSnapshot;
-    let explorer = app.fileExplorerSnapshot;
+    const workspace = workspaceMutations.snapshot;
+    let explorer = fileExplorerSnapshot;
     if (
       !workspace
       || !explorer
@@ -207,7 +236,7 @@
       || explorer.workspaceRevision !== workspace.revision
       || !explorer.entries.some((entry) => entry.relativePath === asset.file)
     ) {
-      explorer = await app.refreshFileExplorerSnapshot();
+      explorer = await commands.refreshFileExplorer();
     }
     return explorer?.entries.find((entry) => entry.relativePath === asset.file) ?? null;
   }
@@ -221,18 +250,18 @@
     try {
       const entry = await resolveAssetExplorerEntry(asset);
       if (!entry) throw new Error(t("assets-delete-entry-unavailable", { path: asset.file }));
-      const plan = await app.planFileExplorerOperation({ kind: "delete", entryId: entry.id });
+      const plan = await commands.planFileExplorer({ kind: "delete", entryId: entry.id });
       if (!plan.allowed) {
         throw new Error(plan.diagnostic ?? t("assets-delete-plan-blocked"));
       }
-      await app.commitFileExplorerOperation(plan);
+      await commands.commitFileExplorer(plan);
       selectedAssetId = "";
       pendingDeleteAsset = null;
-      app.setGlobalStatus(
+      globalStatus.set(
         stagedOnly
           ? t("assets-delete-staged-success", { path: asset.file })
           : t("assets-delete-success", { path: asset.file }),
-        app.projectWorkspaceSnapshot?.dirty ? "unsaved" : "idle",
+        workspaceMutations.snapshot?.dirty ? "unsaved" : "idle",
       );
     } catch (error) {
       deleteError = errorMessage(error);
@@ -274,17 +303,17 @@
         destinationDirectory,
         fileName,
         {
-          expectedProjectRoot: app.sessionProjectRoot,
-          expectedSessionId: app.kernelProjectSessionId,
+          expectedProjectRoot: workspaceMutations.identity?.expectedProjectRoot ?? "",
+          expectedSessionId: workspaceMutations.identity?.expectedSessionId ?? "",
         },
       );
-      const settlement = await settleProjectWorkspaceMutation(app, receipt, {
+      const settlement = await workspaceMutations.settle(receipt, {
         preferredRelativePath: receipt.relativePath,
         warningLabel: t("assets-import-operation"),
       });
       if (receipt.relativePath) selectedAssetId = `staged:${receipt.relativePath}`;
       resetPanel();
-      app.setGlobalStatus(
+      globalStatus.set(
         settlement.warnings.length > 0
           ? t("assets-import-warning", { path: receipt.relativePath ?? fileName })
           : t("assets-import-success", { path: receipt.relativePath ?? fileName }),
@@ -302,10 +331,10 @@
     applying = true;
     formError = "";
     try {
-      const outcome = await app.applyImageSourceToHtml(sourceValue(asset));
+      const outcome = await commands.applyImageSource(sourceValue(asset));
       if (outcome.status === "committed" || outcome.status === "noop") {
         resetPanel();
-        await app.setWorkbenchActivity("editor");
+        await commands.openEditor();
       }
     } catch (error) {
       formError = errorMessage(error);
@@ -502,7 +531,7 @@
               <IconEdit size={14} /> {t("assets-edit-usage-action")}
             </button>
           {/if}
-          <button class="ui-button secondary-action" type="button" onclick={() => { void app.openCurrentProjectInBrowser(sourceValue(selectedAsset)); }}>
+          <button class="ui-button secondary-action" type="button" onclick={() => { void commands.openInBrowser(sourceValue(selectedAsset)); }}>
             {t("assets-open")} <IconExternalLink size={13} stroke={1.9} />
           </button>
           <button class="ui-button delete-action" type="button" onclick={() => requestDelete(selectedAsset)}>

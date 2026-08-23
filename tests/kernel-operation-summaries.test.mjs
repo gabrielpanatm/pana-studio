@@ -27,8 +27,8 @@ function filesUnder(relativeRoot, extensions = new Set([".ts", ".svelte", ".rs"]
 test("Save is the single ProjectWorkspace disk boundary", () => {
   const controller = source("src/lib/state/save-controller.ts");
   const coordinator = source("src/lib/session/workspace-mutation-coordinator.ts");
-  const projectIo = source("src/lib/project/io.ts");
-  const saveCommand = source("src-tauri/src/commands/project.rs");
+  const projectIo = source("src/lib/project/io/workspace.ts");
+  const saveCommand = source("src-tauri/src/commands/project/workspace_history_recovery.rs");
   const diskEngine = source("src-tauri/src/kernel/project_workspace/disk_boundary/engine.rs");
 
   assert.match(controller, /await saveProjectWorkspace\(/);
@@ -36,6 +36,9 @@ test("Save is the single ProjectWorkspace disk boundary", () => {
   assert.match(coordinator, /await flushRegisteredEditDrafts\(reason\)/);
   assert.match(coordinator, /await flushPageJsDraftSync/);
   assert.match(coordinator, /await flushFileBufferDraftSync/);
+  assert.match(coordinator, /if \(hasPendingRegisteredEditDrafts\(\)\)/);
+  assert.match(coordinator, /if \(hasPendingPageJsDraftSync\(\)\)/);
+  assert.match(coordinator, /if \(hasPendingFileBufferDraftSync\(\)\)/);
   assert.match(controller, /await readProjectWorkspaceState\(\)/);
   const acceptedBaselineIndex = controller.indexOf("host.acceptProjectWorkspaceSaveBaseline(");
   assert.ok(
@@ -81,10 +84,10 @@ test("session commands publish only after recovery persistence succeeds", () => 
 
   assert.deepEqual(directRecoveryWriters, [
     "src-tauri/src/commands/deploy.rs",
-    "src-tauri/src/commands/project.rs",
+    "src-tauri/src/commands/project/workspace_history_recovery.rs",
   ]);
 
-  const projectCommands = source("src-tauri/src/commands/project.rs");
+  const projectCommands = source("src-tauri/src/commands/project/workspace_history_recovery.rs");
   assert.equal(projectCommands.match(/persist_project_workspace_recovery\(/g)?.length, 1);
   assert.match(
     projectCommands,
@@ -138,7 +141,7 @@ test("Preview stages exact ProjectWorkspace revisions and promotes only an exact
   assert.match(server, /requested_preview_revision/);
   assert.match(commands, /workspace\.require_current_projection\(projection\)/);
   assert.match(commands, /engine\.stage_candidate/);
-  assert.match(commands, /pub fn acknowledge_canvas_projection_phase/);
+  assert.doesNotMatch(commands, /pub fn acknowledge_canvas_projection_phase\(/);
   assert.match(commands, /pub fn acknowledge_canvas_projection_phases/);
   assert.match(commands, /require_canvas_phase_batch/);
   assert.match(commands, /append_events\(&app, events\)/);
@@ -161,7 +164,7 @@ test("Preview stages exact ProjectWorkspace revisions and promotes only an exact
     .filter((path) => readFileSync(path, "utf8").includes("projectProjectWorkspacePreview"));
   assert.deepEqual(
     consumers.map((path) => path.slice(repoRoot.length + 1)),
-    ["src/lib/kernel/project-workspace-preview-coordinator.ts", "src/lib/project/io.ts"],
+    ["src/lib/kernel/project-workspace-preview-coordinator.ts", "src/lib/preview/io.ts"],
   );
 });
 
@@ -171,7 +174,7 @@ test("Source Browser renders AcceptedDisk with embedded Zola on one stable Rust 
   const process = source("src-tauri/src/preview/process.rs");
   const state = source("src-tauri/src/state.rs");
   const previewCommands = source("src-tauri/src/commands/preview.rs");
-  const projectCommands = source("src-tauri/src/commands/project.rs");
+  const projectCommands = source("src-tauri/src/commands/project/workspace_history_recovery.rs");
   const externalDisk = source("src-tauri/src/commands/external_disk.rs");
   const materializer = source("src-tauri/src/preview/preprocess/workspace.rs");
 
@@ -213,7 +216,7 @@ test("Source Browser renders AcceptedDisk with embedded Zola on one stable Rust 
 
 test("Files panel is projected from one exact ProjectWorkspace revision", () => {
   const scan = source("src-tauri/src/project/scan.rs");
-  const projectCommands = source("src-tauri/src/commands/project.rs");
+  const projectCommands = source("src-tauri/src/commands/project/lifecycle.rs");
 
   assert.match(scan, /pub fn scan_project_workspace_projection/);
   assert.match(scan, /projection\s*\.accepted_disk\s*\.manifest\s*\.files/);
@@ -226,20 +229,20 @@ test("Files panel is projected from one exact ProjectWorkspace revision", () => 
 });
 
 test("Rust mutation events drive a separate authority epoch, not UI concurrency", () => {
-  const effects = source("src/lib/state/app-effects.svelte.ts");
-  const app = source("src/lib/state/app.svelte.ts");
+  const effects = source("src/lib/kernel/project-workspace-lifecycle.svelte.ts");
+  const project = source("src/lib/project/session-state.svelte.ts");
   const recovery = source("src-tauri/src/kernel/project_workspace/recovery.rs");
 
   assert.match(recovery, /pana-project-workspace-mutated/);
-  assert.match(effects, /app\.markProjectWorkspaceMutation\(\)/);
-  assert.doesNotMatch(effects, /notice[\s\S]{0,300}markEditorMutation\(\)/);
-  assert.match(effects, /app\.projectWorkspaceMutationEpoch;/);
-  assert.match(app, /projectWorkspaceMutationEpoch = \$state\(0\)/);
+  assert.match(effects, /project\.workspaceMutationEpoch \+= 1/);
+  assert.doesNotMatch(effects, /notice[\s\S]{0,300}editorMutationEpoch/);
+  assert.match(effects, /project\.workspaceMutationEpoch;/);
+  assert.match(project, /workspaceMutationEpoch = \$state\(0\)/);
 });
 
 test("Undo and Redo operate only on ProjectWorkspace history", () => {
-  const projectCommands = source("src-tauri/src/commands/project.rs");
-  const frontend = source("src/routes/+page.svelte");
+  const projectCommands = source("src-tauri/src/commands/project/workspace_history_recovery.rs");
+  const frontend = source("src/lib/versioning/workspace-history-service.svelte.ts");
   const codeEditor = source("src/lib/editor/controller.ts");
   const shortcuts = source("src/lib/ui/app-shortcuts.ts");
   assert.match(projectCommands, /candidate\.undo\(/);
@@ -252,24 +255,24 @@ test("Undo and Redo operate only on ProjectWorkspace history", () => {
   assert.match(frontend, /rebaseFileBufferDraftSyncProjection/);
   assert.match(
     frontend,
-    /canvasPatchApplied[\s\S]*settleKernelUndoRedoCanonicalProjection[\s\S]*rollbackCanvasPatchInPreview/,
+    /canvasPatchApplied[\s\S]*settleCanonicalProjection[\s\S]*preview\.rollbackCanvasPatch/,
   );
   assert.doesNotMatch(frontend, /readFileBufferText/);
   assert.doesNotMatch(codeEditor, /historyKeymap|\bhistory\(\)/);
   assert.match(codeEditor, /Transaction\.addToHistory\.of\(false\)/);
   assert.match(shortcuts, /isManagedWorkspaceEditorTarget/);
-  assert.match(frontend, /const nextKey = \[[\s\S]*app\.projectWorkspaceMutationEpoch,[\s\S]*\]\.join\(":"\)/);
-  assert.doesNotMatch(frontend, /const nextKey = \[[\s\S]{0,180}app\.editorMutationEpoch/);
+  assert.match(frontend, /const nextKey = `\$\{project\.root\}[\s\S]*\$\{project\.workspace\?\.revision \?\? -1\}`/);
+  assert.doesNotMatch(frontend, /editorMutationEpoch/);
   assert.doesNotMatch(frontend, /InternalWriteEvidence|acceptedDiskGeneration/);
 });
 
 test("CSS and Page JS receipts expose workspace revisions, not disk acknowledgements", () => {
-  const types = source("src/lib/types.ts");
-  const projectIo = source("src/lib/project/io.ts");
+  const contract = source("src/lib/css/mutation-contract.ts");
+  const cssIo = source("src/lib/css/io.ts");
   const pageJsSync = source("src/lib/session/page-js-draft-sync.ts");
 
-  assert.match(types, /export type CssMutationAuthorityReceipt[\s\S]*revisionBefore[\s\S]*workspaceMutation/);
-  assert.match(projectIo, /authority\.workspaceMutation\.revisionAfter/);
+  assert.match(contract, /export type CssMutationAuthorityReceipt[\s\S]*revisionBefore[\s\S]*workspaceMutation/);
+  assert.match(cssIo, /authority\.workspaceMutation\.revisionAfter/);
   assert.match(pageJsSync, /stagePageJsDraft/);
   assert.doesNotMatch(pageJsSync, /save_page_js|acceptedManifest|InternalWriteEvidence/);
 });
@@ -337,7 +340,7 @@ test("Canvas observability covers cache, stale, fallback, rollback, FOUC and JS 
   const observability = source("src-tauri/src/kernel/observability/mod.rs");
   const previewCommands = source("src-tauri/src/commands/preview.rs");
   const previewController = source("src/lib/state/preview-controller.ts");
-  const appState = source("src/lib/state/app.svelte.ts");
+  const previewWorkspace = source("src/lib/preview/workspace-state.svelte.ts");
 
   for (const event of [
     "PreviewCanvasStaleDiscarded",
@@ -353,12 +356,12 @@ test("Canvas observability covers cache, stale, fallback, rollback, FOUC and JS 
     assert.match(observability, new RegExp(event));
     assert.match(previewCommands, new RegExp(event));
   }
-  assert.match(previewController, /recordCanvasProjectionRuntimeEvent[\s\S]*canvas_fallback/);
+  assert.match(previewController, /recordRuntimeEvent\?\.[\s\S]*canvas_fallback/);
   assert.match(
     previewController,
     /canvas_stylesheets_promoted[\s\S]*activationToStyledMs/,
   );
-  assert.match(appState, /rollbackCanvasPatchInPreview[\s\S]*canvas_patch_rolled_back/);
+  assert.match(previewWorkspace, /rollbackCanvasPatch[\s\S]*canvas_patch_rolled_back/);
 });
 
 test("project entry create, delete and rename are session mutations", () => {
@@ -374,7 +377,7 @@ test("project entry create, delete and rename are session mutations", () => {
 });
 
 test("external disk reconciliation remains a conflict gate, never an internal edit authority", () => {
-  const external = source("src/lib/state/external-disk-controller.ts");
+  const external = source("src/lib/session/external-disk/reconcile.ts");
   const projectState = source("src-tauri/src/kernel/project_state/assessment/evaluator.rs");
   assert.match(external, /workspaceProjectionRecoveryRequired/);
   assert.match(external, /reconcileCleanExternalProjectFiles/);

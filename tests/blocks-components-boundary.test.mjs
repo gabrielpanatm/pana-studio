@@ -6,12 +6,19 @@ function source(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
 }
 
+function editorNavigationSource() {
+  return ["contracts", "snapshot", "view"]
+    .map((module) => source(`../src-tauri/src/kernel/editor_navigation/${module}.rs`))
+    .join("\n");
+}
+
 test("ComponentGraph rămâne exclusiv semantic Zola/Tera", () => {
   const model = source("../src-tauri/src/source_graph/model.rs");
   const graph = source("../src-tauri/src/source_graph/component_graph.rs");
   const productionGraph = graph.split("#[cfg(test)]", 1)[0];
   const workspace = source("../src/lib/components/creation/ComponentsWorkspace.svelte");
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/source-graph/contracts.ts")
+    + source("../src/lib/blocks/contracts.ts");
 
   assert.match(model, /pub struct ComponentGraph/);
   assert.match(graph, /ComponentDefinitionKind::Shortcode/);
@@ -47,7 +54,9 @@ test("registrul Rust este autoritatea unică pentru cei opt provideri nativi", (
   const native = source("../src-tauri/src/blocks/native.rs");
   const commands = source("../src-tauri/src/commands/blocks.rs");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
-  const io = source("../src/lib/project/io.ts");
+  const blockIo = source("../src/lib/blocks/io.ts");
+  const iconIo = source("../src/lib/creation/icon-io.ts");
+  const io = `${blockIo}\n${iconIo}`;
 
   for (const blockId of ["icon", "counter", "accordion", "tabs", "slider", "dialog", "offcanvas", "nav-menu"]) {
     assert.match(native, new RegExp(`id: "${blockId}"`));
@@ -56,17 +65,23 @@ test("registrul Rust este autoritatea unică pentru cei opt provideri nativi", (
   assert.doesNotMatch(native, /#[0-9a-fA-F]{3,8}|rgba?\(/);
   for (const command of [
     "read_native_block_registry",
-    "plan_native_block_contract",
-    "apply_native_block_contract",
-    "read_block_runtime_snapshot",
     "read_ui_block_graph",
     "read_icon_catalog",
     "search_icon_catalog",
   ]) {
     assert.match(commands, new RegExp(command));
     assert.match(registry, new RegExp(command));
-    assert.match(io, new RegExp(`"${command}"`));
   }
+  for (const activeFrontendCommand of [
+    "read_native_block_registry",
+    "read_ui_block_graph",
+    "read_icon_catalog",
+    "search_icon_catalog",
+  ]) assert.match(io, new RegExp(`"${activeFrontendCommand}"`));
+  assert.doesNotMatch(
+    `${commands}\n${registry}\n${io}`,
+    /\b(?:plan_native_block_contract|apply_native_block_contract|read_block_runtime_snapshot)\b/,
+  );
 });
 
 test("taxonomia separă elementele, compozițiile și secțiunile page-level", () => {
@@ -117,7 +132,7 @@ test("Icon este bloc static Rust-first, iar editorul lui există exclusiv în pa
   const blockPane = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
   const iconEditor = source("../src/lib/components/inspector/IconBlockPropertiesEditor.svelte");
   const htmlPane = source("../src/lib/components/inspector/HtmlPane.svelte");
-  const io = source("../src/lib/project/io.ts");
+  const io = source("../src/lib/creation/icon-io.ts");
 
   assert.match(native, /enum NativeBlockKind[\s\S]*Static/);
   assert.match(native, /id: "icon"[\s\S]*kind: NativeBlockKind::Static/);
@@ -161,14 +176,14 @@ test("proprietățile blocurilor sunt definite și validate exclusiv în Rust", 
 test("selecția unui descendent alege rădăcina celui mai apropiat bloc imbricat", () => {
   const embeddedBridge = source("../src-tauri/src/preview/bridge/02_css_inspection.js");
   const canvasAgent = source("../src-tauri/src/preview/bridge/03_canvas_agent.js");
-  const app = source("../src/lib/state/app.svelte.ts");
+  const selection = source("../src/lib/editor/selection-workspace.svelte.ts");
   const inspector = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
   const registry = source("../src/lib/blocks/registry.ts");
-  const types = source("../src/lib/types.ts");
-  const navigation = source("../src-tauri/src/kernel/editor_navigation.rs");
+  const types = source("../src/lib/editor/contracts.ts");
+  const navigation = editorNavigationSource();
   const navigationNodeType = types.slice(
     types.indexOf("export type EditorNavigationNode ="),
-    types.indexOf("export type EditorNavigationRelation ="),
+    types.indexOf("type EditorNavigationRelation ="),
   );
   const navigationNodeStruct = navigation.slice(
     navigation.indexOf("pub struct EditorNavigationNode"),
@@ -179,15 +194,15 @@ test("selecția unui descendent alege rădăcina celui mai apropiat bloc imbrica
   assert.doesNotMatch(embeddedBridge, /data-pana-component|markerKind/);
   assert.match(canvasAgent, /physicalBlockContext/);
   assert.doesNotMatch(canvasAgent, /rootSourceId|rootTemplateSourceId|rootSessionId/);
-  assert.match(app, /bounded\.providerId !== physical\.providerId/);
-  assert.match(app, /navigationNode\?\.renderInstanceId === coordinated\.renderInstanceId/);
-  assert.match(app, /rootSourceId: navigationOwnsSelection/);
-  assert.match(app, /\? \[\.\.\.navigationNode\.blockSourceInstanceIds\]/);
+  assert.match(selection, /bounded\.providerId !== physical\.providerId/);
+  assert.match(selection, /node\?\.renderInstanceId === coordinated\.renderInstanceId/);
+  assert.match(selection, /rootSourceId: ownsSelection/);
+  assert.match(selection, /\? \[\.\.\.node\.blockSourceInstanceIds\]/);
   assert.match(navigationNodeType, /renderInstanceId: string \| null/);
   assert.doesNotMatch(navigationNodeType, /renderInstanceIds/);
   assert.match(navigationNodeStruct, /pub render_instance_id: Option<String>/);
   assert.doesNotMatch(navigationNodeStruct, /render_instance_ids/);
-  assert.match(app, /rootSessionId: coordinated\.snapshot\.runtimeSessionId/);
+  assert.match(selection, /rootSessionId: coordinated\.snapshot\.runtimeSessionId/);
   assert.match(inspector, /resolveUiBlockSourceInstanceForSelection\(graph, blockContext\)/);
   assert.match(registry, /Array\.isArray\(selection\.sourceInstanceIds\)/);
   assert.match(registry, /sourceInstanceIds\.length - 1/);
@@ -231,7 +246,10 @@ test("preview și site folosesc același runtime canonic de blocuri", () => {
 test("scrierea structurală reconciliază markup și SCSS, iar runtime-ul rămâne derivat", () => {
   const structural = source("../src-tauri/src/kernel/preview_projection/structural_write.rs");
   const workspaceSave = source("../src-tauri/src/kernel/project_workspace/save.rs");
-  const frontend = source("../src/lib/state/html-actions-controller.ts");
+  const frontend = [
+    source("../src/lib/editor/html-actions/media.ts"),
+    source("../src/lib/editor/html-actions/structure.ts"),
+  ].join("\n");
 
   assert.match(structural, /stage_structural_write_with_native_block_contract/);
   assert.match(structural, /plan_native_block_contract/);
@@ -243,8 +261,8 @@ test("scrierea structurală reconciliază markup și SCSS, iar runtime-ul rămâ
 });
 
 test("activitatea Blocuri părăsește inserarea numai după confirmarea commitului", () => {
-  const controller = source("../src/lib/state/html-actions-controller.ts");
-  const app = source("../src/lib/state/app.svelte.ts");
+  const controller = source("../src/lib/editor/html-actions/insertion.ts");
+  const service = source("../src/lib/editor/html-editing-service.ts");
   const workspace = source("../src/lib/components/creation/BlocksWorkspace.svelte");
 
   assert.match(
@@ -253,16 +271,16 @@ test("activitatea Blocuri părăsește inserarea numai după confirmarea commitu
   );
   assert.match(controller, /return committedAction\(\);/);
   assert.match(
-    app,
-    /return await insertPaletteElementAtTargetFromController\(/,
+    service,
+    /return insertPaletteElementAtTarget\(this\.actions, request\)/,
   );
   assert.match(
     workspace,
-    /const outcome = await app\.insertPaletteElementAtTarget\([\s\S]*?if \(outcome\.status !== "committed"\)/,
+    /const outcome = await insertPaletteElementAtTarget\([\s\S]*?if \(outcome\.status !== "committed"\)/,
   );
   assert.ok(
     workspace.indexOf('if (outcome.status !== "committed")')
-      < workspace.indexOf('await app.setWorkbenchActivity("editor")'),
+      < workspace.indexOf("await openEditor()"),
   );
 });
 
@@ -298,7 +316,7 @@ test("contractul blocurilor are o singură cale canonică", () => {
 test("blocurile livrează exclusiv CSS funcțional, fără punte de temă", () => {
   const native = source("../src-tauri/src/blocks/native.rs");
   const productionNative = native.slice(0, native.indexOf("#[cfg(test)]"));
-  const base = source("../src-tauri/resources/theme-packs/pana-studio/theme/sass/css-framework/_baza.scss");
+  const base = source("../src-tauri/resources/project-starters/pana-studio/project/sass/css-framework/_baza.scss");
 
   assert.match(productionNative, /functional_scss/);
   assert.match(productionNative, /pana-block-functional-styles/);

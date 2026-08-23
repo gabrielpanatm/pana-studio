@@ -74,7 +74,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("<main>Base</main>"),
-            baseline_text: "<main>Base</main>".to_string(),
+            baseline_text: "<main>Base</main>".into(),
             draft: None,
             revision: 1,
         });
@@ -104,7 +104,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("a😀b"),
-            baseline_text: "a😀b".to_string(),
+            baseline_text: "a😀b".into(),
             draft: None,
             revision: 1,
         });
@@ -143,7 +143,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("abcdef"),
-            baseline_text: "abcdef".to_string(),
+            baseline_text: "abcdef".into(),
             draft: None,
             revision: 1,
         });
@@ -185,7 +185,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("base"),
-            baseline_text: "base".to_string(),
+            baseline_text: "base".into(),
             draft: None,
             revision: 4,
         });
@@ -221,7 +221,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("base"),
-            baseline_text: "base".to_string(),
+            baseline_text: "base".into(),
             draft: None,
             revision: 1,
         });
@@ -384,7 +384,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("base"),
-            baseline_text: "base".to_string(),
+            baseline_text: "base".into(),
             draft: None,
             revision: 1,
         });
@@ -433,7 +433,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("<main>New</main>"),
-            baseline_text: "<main>New</main>".to_string(),
+            baseline_text: "<main>New</main>".into(),
             draft: None,
             revision: 1,
         });
@@ -453,7 +453,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("<main>Base</main>"),
-            baseline_text: "<main>Base</main>".to_string(),
+            baseline_text: "<main>Base</main>".into(),
             draft: None,
             revision: 1,
         });
@@ -490,7 +490,7 @@ mod tests {
                 language: TextBufferLanguage::Html,
                 role: TextBufferRole::Template,
                 baseline: clean_baseline_for_test("<main>Base</main>"),
-                baseline_text: "<main>Base</main>".to_string(),
+                baseline_text: "<main>Base</main>".into(),
                 draft: None,
                 revision: 1,
             });
@@ -516,7 +516,7 @@ mod tests {
                 language: TextBufferLanguage::Html,
                 role: TextBufferRole::Template,
                 baseline: clean_baseline_for_test("<section></section>"),
-                baseline_text: "<section></section>".to_string(),
+                baseline_text: "<section></section>".into(),
                 draft: None,
                 revision: 1,
             });
@@ -547,7 +547,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("<main>Base</main>"),
-            baseline_text: "<main>Base</main>".to_string(),
+            baseline_text: "<main>Base</main>".into(),
             draft: None,
             revision: 1,
         };
@@ -575,7 +575,7 @@ mod tests {
             language: TextBufferLanguage::Plain,
             role: TextBufferRole::Config,
             baseline: clean_baseline_for_test("PANA_DEPLOY_TEST__TOKEN=secret\n"),
-            baseline_text: "PANA_DEPLOY_TEST__TOKEN=secret\n".to_string(),
+            baseline_text: "PANA_DEPLOY_TEST__TOKEN=secret\n".into(),
             draft: None,
             revision: 1,
         };
@@ -586,6 +586,30 @@ mod tests {
 
         assert!(error.contains("ProjectEnvStore"));
         assert!(store.files.is_empty());
+    }
+
+    #[test]
+    fn clear_draft_read_only_validation_never_clones_or_mutates_the_store() {
+        let mut store = store_with_index_baseline("base");
+        store
+            .set_draft("templates/index.html", "draft".to_string(), 2)
+            .unwrap();
+        let expectation = FileBufferMutationExpectation {
+            expected_revision: 2,
+            expected_hash: hash_text("draft"),
+        };
+        let before = store.snapshot();
+
+        let validated = store
+            .validate_clear_draft_if_current("templates/index.html", &expectation)
+            .unwrap();
+
+        assert!(validated.has_draft);
+        assert_eq!(validated.revision, 2);
+        assert_eq!(
+            serde_json::to_vec(&store.snapshot()).unwrap(),
+            serde_json::to_vec(&before).unwrap(),
+        );
     }
 
     fn test_store() -> FileBufferStore {
@@ -609,7 +633,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test(baseline),
-            baseline_text: baseline.to_string(),
+            baseline_text: baseline.to_string().into(),
             draft: None,
             revision: 1,
         });

@@ -1,7 +1,10 @@
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
     blocks::NativeBlockSlotMutationContext,
@@ -12,7 +15,7 @@ use crate::{
         CANVAS_INTERACTION_SCHEMA_VERSION,
     },
     kernel::editor_navigation::{
-        build_editor_navigation_snapshot, editor_navigation_node,
+        build_editor_navigation_snapshot, editor_navigation_access_node, editor_navigation_node,
         plan_editor_move as build_editor_move_plan,
         plan_editor_move_with_slot as build_editor_move_plan_with_slot, EditScopeGrant,
         EditScopeOperation, EditorMoveExecutionReceipt, EditorMoveExecutionStatus, EditorMovePlan,
@@ -152,10 +155,21 @@ pub struct CanvasHoverProjection {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CanvasHoverTimings {
+    pub emitted_at_ms: u64,
+    pub rust_received_at_ms: u64,
+    pub rust_completed_at_ms: u64,
+    pub input_to_projection_duration_ms: u64,
+    pub rust_duration_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasHoverReceipt {
     pub schema_version: u32,
     pub interaction: CanvasInteractionReceipt,
     pub projection: Option<CanvasHoverProjection>,
+    pub timings: CanvasHoverTimings,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -168,6 +182,8 @@ pub struct SelectionCoordinatorRequest {
     pub active_document_path: Option<String>,
     #[serde(default)]
     pub preview_context_render_instance_id: Option<String>,
+    #[serde(default)]
+    pub edit_scope_grant: Option<EditScopeGrant>,
     pub intent: SelectionIntent,
 }
 
@@ -185,8 +201,8 @@ pub struct SelectionCoordinatorReadRequest {
 
 struct EditorNavigationContext {
     build_context: ProjectModelBuildContext,
-    model: ProjectModel,
-    snapshot: EditorNavigationSnapshot,
+    model: Arc<ProjectModel>,
+    snapshot: Arc<EditorNavigationSnapshot>,
     active_document_path: Option<String>,
 }
 
@@ -210,8 +226,8 @@ pub async fn bind_canvas_interaction_agent(
         };
         let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
         let receipt = state.canvas_interaction.bind_agent_with_model(
-            &context.snapshot,
-            &context.model,
+            Arc::clone(&context.snapshot),
+            Arc::clone(&context.model),
             context.active_document_path.as_deref(),
             input.identity,
         )?;
@@ -348,6 +364,8 @@ pub fn resolve_canvas_hover_intent(
     input: CanvasInteractionResolveRequest,
     state: State<AppState>,
 ) -> Result<CanvasHoverReceipt, String> {
+    let rust_started = Instant::now();
+    let rust_received_at_ms = wall_clock_ms();
     let authorized_scope_id = authorize_canvas_edit_scope(
         &input.request,
         input.edit_scope_grant.as_ref(),
@@ -371,10 +389,23 @@ pub fn resolve_canvas_hover_intent(
             Ok(CanvasHoverProjection { changed, hover })
         },
     )?;
+    let rust_completed_at_ms = wall_clock_ms();
+    let emitted_at_ms = input.request.emitted_at_ms;
     Ok(CanvasHoverReceipt {
         schema_version: CANVAS_INTERACTION_SCHEMA_VERSION,
         interaction,
         projection,
+        timings: CanvasHoverTimings {
+            emitted_at_ms,
+            rust_received_at_ms,
+            rust_completed_at_ms,
+            input_to_projection_duration_ms: if emitted_at_ms == 0 {
+                0
+            } else {
+                rust_completed_at_ms.saturating_sub(emitted_at_ms)
+            },
+            rust_duration_ms: rust_started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        },
     })
 }
 
@@ -402,11 +433,23 @@ pub fn apply_selection_intent(
             .canvas_interaction
             .selection_context(&input.identity, &input.route)?
         {
+            let authorized_scope_id = authorize_selection_edit_scope(
+                &context.snapshot,
+                context.active_document_path.as_deref(),
+                &input.route,
+                input.edit_scope_grant.as_ref(),
+                state.inner(),
+            )?;
+            let intent = selection_intent_with_access(
+                &context.snapshot,
+                input.intent,
+                authorized_scope_id.as_deref(),
+            );
             return state.selection_coordinator.apply(
                 &context.snapshot,
                 context.active_document_path.as_deref(),
                 None,
-                input.intent,
+                intent,
             );
         }
     }
@@ -418,6 +461,15 @@ pub fn apply_selection_intent(
     };
     let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
     let intent = selection_intent_from_project_model(&context.model, input.intent)?;
+    let authorized_scope_id = authorize_selection_edit_scope(
+        &context.snapshot,
+        context.active_document_path.as_deref(),
+        &context.snapshot.route,
+        input.edit_scope_grant.as_ref(),
+        state.inner(),
+    )?;
+    let intent =
+        selection_intent_with_access(&context.snapshot, intent, authorized_scope_id.as_deref());
     let receipt = state.selection_coordinator.apply(
         &context.snapshot,
         context.active_document_path.as_deref(),
@@ -426,6 +478,69 @@ pub fn apply_selection_intent(
     )?;
     publish_project_model_if_current(state.inner(), &context.build_context, context.model)?;
     Ok(receipt)
+}
+
+fn authorize_selection_edit_scope(
+    snapshot: &EditorNavigationSnapshot,
+    active_document_path: Option<&str>,
+    route: &str,
+    edit_scope_grant: Option<&EditScopeGrant>,
+    state: &AppState,
+) -> Result<Option<String>, String> {
+    let Some(grant) = edit_scope_grant else {
+        return Ok(None);
+    };
+    let active_document_path = active_document_path.ok_or_else(|| {
+        "SelectionCoordinator cere un document activ pentru EditScopeGrant.".to_string()
+    })?;
+    state.editor_navigation.require_edit_scope_grant(
+        grant,
+        &snapshot.identity,
+        &snapshot.model_revision,
+        route,
+        active_document_path,
+        &grant.scope_id,
+        EditScopeOperation::InspectSharedDefinition,
+    )?;
+    Ok(Some(grant.scope_id.clone()))
+}
+
+fn selection_intent_with_access(
+    snapshot: &EditorNavigationSnapshot,
+    intent: SelectionIntent,
+    authorized_edit_scope_id: Option<&str>,
+) -> SelectionIntent {
+    let resolve = |editor_node_id: String| {
+        editor_navigation_access_node(snapshot, &editor_node_id, authorized_edit_scope_id)
+            .map(|node| node.id.clone())
+            .unwrap_or(editor_node_id)
+    };
+    match intent {
+        SelectionIntent::SelectEditorNode { editor_node_id } => SelectionIntent::SelectEditorNode {
+            editor_node_id: resolve(editor_node_id),
+        },
+        SelectionIntent::ToggleEditorNode { editor_node_id } => SelectionIntent::ToggleEditorNode {
+            editor_node_id: resolve(editor_node_id),
+        },
+        SelectionIntent::ExtendRangeToEditorNode { editor_node_id } => {
+            SelectionIntent::ExtendRangeToEditorNode {
+                editor_node_id: resolve(editor_node_id),
+            }
+        }
+        SelectionIntent::SetPrimaryEditorNode { editor_node_id } => {
+            SelectionIntent::SetPrimaryEditorNode {
+                editor_node_id: resolve(editor_node_id),
+            }
+        }
+        SelectionIntent::SetHover {
+            editor_node_id,
+            document_epoch,
+        } => SelectionIntent::SetHover {
+            editor_node_id: resolve(editor_node_id),
+            document_epoch,
+        },
+        other => other,
+    }
 }
 
 #[tauri::command]
@@ -464,7 +579,7 @@ pub fn read_editor_navigation_snapshot(
     input: EditorNavigationSnapshotRequest,
     app: AppHandle,
     state: State<AppState>,
-) -> Result<EditorNavigationSnapshot, String> {
+) -> Result<Arc<EditorNavigationSnapshot>, String> {
     let context = resolve_editor_navigation_context(&input, state.inner())?;
     publish_project_model_if_current(state.inner(), &context.build_context, context.model.clone())?;
     finalize_initial_frontend_surface(&app, state.inner(), &input, &context)?;
@@ -511,7 +626,7 @@ fn finalize_initial_frontend_surface(
             );
         }
     }
-    state.project_lifecycle.set_readiness(
+    let lifecycle = state.project_lifecycle.set_readiness(
         &active.project_root,
         &active.runtime_session_id,
         ActiveProjectReadiness::Ready,
@@ -537,6 +652,7 @@ fn finalize_initial_frontend_surface(
             context.active_document_path.as_deref().unwrap_or("-"),
         ),
     );
+    let _ = app.emit("project-lifecycle-changed", lifecycle);
     Ok(())
 }
 
@@ -899,10 +1015,17 @@ pub fn commit_editor_move(
         project_model_reused_nodes: receipt.internal_timings.project_model_reused_nodes,
         project_model_reused_relations: receipt.internal_timings.project_model_reused_relations,
         project_model_clone_ms: receipt.internal_timings.project_model_clone_ms,
-        project_model_template_parse_ms: receipt.internal_timings.project_model_template_parse_ms,
-        project_model_component_graph_ms: receipt.internal_timings.project_model_component_graph_ms,
-        project_model_block_graph_ms: receipt.internal_timings.project_model_block_graph_ms,
-        project_model_tera_graph_ms: receipt.internal_timings.project_model_tera_graph_ms,
+        project_model_template_parse_us: receipt.internal_timings.project_model_template_parse_us,
+        project_model_component_graph_us: receipt.internal_timings.project_model_component_graph_us,
+        project_model_block_graph_us: receipt.internal_timings.project_model_block_graph_us,
+        project_model_content_model_us: receipt.internal_timings.project_model_content_model_us,
+        project_model_listing_items_us: receipt.internal_timings.project_model_listing_items_us,
+        project_model_listing_items_reused: receipt
+            .internal_timings
+            .project_model_listing_items_reused,
+        project_model_dynamic_widget_us: receipt.internal_timings.project_model_dynamic_widget_us,
+        project_model_markdown_us: receipt.internal_timings.project_model_markdown_us,
+        project_model_node_index_us: receipt.internal_timings.project_model_node_index_us,
     });
     append_editor_move_timing_event(&app, &receipt);
     if receipt.status == EditorMoveExecutionStatus::Committed {
@@ -985,20 +1108,37 @@ fn append_editor_move_timing_event(app: &AppHandle, receipt: &EditorMoveExecutio
     )
     .with_attribute("projectModelCloneMs", timings.project_model_clone_ms)
     .with_attribute(
-        "projectModelTemplateParseMs",
-        timings.project_model_template_parse_ms,
+        "projectModelTemplateParseUs",
+        timings.project_model_template_parse_us,
     )
     .with_attribute(
-        "projectModelComponentGraphMs",
-        timings.project_model_component_graph_ms,
+        "projectModelComponentGraphUs",
+        timings.project_model_component_graph_us,
     )
     .with_attribute(
-        "projectModelBlockGraphMs",
-        timings.project_model_block_graph_ms,
+        "projectModelBlockGraphUs",
+        timings.project_model_block_graph_us,
     )
     .with_attribute(
-        "projectModelTeraGraphMs",
-        timings.project_model_tera_graph_ms,
+        "projectModelContentModelUs",
+        timings.project_model_content_model_us,
+    )
+    .with_attribute(
+        "projectModelListingItemsUs",
+        timings.project_model_listing_items_us,
+    )
+    .with_attribute(
+        "projectModelListingItemsReused",
+        timings.project_model_listing_items_reused,
+    )
+    .with_attribute(
+        "projectModelDynamicWidgetUs",
+        timings.project_model_dynamic_widget_us,
+    )
+    .with_attribute("projectModelMarkdownUs", timings.project_model_markdown_us)
+    .with_attribute(
+        "projectModelNodeIndexUs",
+        timings.project_model_node_index_us,
     )
     .with_attribute("patchIssuedToReceiptMs", timings.patch_issued_to_receipt_ms)
     .with_attribute("canvasPatchIssued", receipt.canvas_patch.is_some());
@@ -1098,18 +1238,18 @@ fn resolve_editor_navigation_context(
     let snapshot = match cached_snapshot {
         Some(snapshot) => snapshot,
         None => {
-            let snapshot = build_editor_navigation_snapshot(
+            let snapshot = Arc::new(build_editor_navigation_snapshot(
                 input.identity.clone(),
                 &route,
                 &model,
                 &graph,
                 active_document_path.as_deref(),
                 input.preview_context_render_instance_id.as_deref(),
-            )?;
+            )?);
             state.editor_navigation.cache_snapshot(
                 active_document_path.as_deref(),
                 input.preview_context_render_instance_id.as_deref(),
-                &snapshot,
+                Arc::clone(&snapshot),
             )?;
             snapshot
         }

@@ -1,20 +1,20 @@
 <script lang="ts">
   import { IconAlertTriangle, IconCircleCheck, IconRefresh, IconRoute } from "@tabler/icons-svelte";
   import {
-    acknowledgeProjectTransitionDecisionRecoveryPlan,
-    executeProjectTransitionDecisionRetention,
-    readKernelProjectTransitionBlockedAudit,
-    readKernelProjectTransitionDecisionJournal,
-    readKernelProjectTransitionDecisionRecoveryAckJournal,
-    readKernelProjectTransitionPolicyMatrix,
-  } from "$lib/project/io";
+  acknowledgeProjectTransitionDecisionRecoveryPlan,
+  executeProjectTransitionDecisionRetention,
+  readKernelProjectTransitionBlockedAudit,
+  readKernelProjectTransitionDecisionJournal,
+  readKernelProjectTransitionDecisionRecoveryAckJournal,
+  readKernelProjectTransitionPolicyMatrix,
+} from "$lib/kernel/recovery-io";
   import type {
-    KernelProjectTransitionDecisionJournalHealthStatus,
     KernelProjectTransitionBlockedAuditSnapshot,
+    KernelProjectTransitionDecisionJournalHealthStatus,
     KernelProjectTransitionDecisionJournalSnapshot,
     KernelProjectTransitionDecisionRecoveryAckJournalSnapshot,
     KernelProjectTransitionPolicyMatrixSnapshot,
-  } from "$lib/types";
+  } from "$lib/project/transition-contract";
   import { compactKernelPath, formatRecoveryTime } from "$lib/kernel/recovery-control";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import {

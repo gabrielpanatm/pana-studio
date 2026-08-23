@@ -10,7 +10,8 @@ test("Date este o activitate distinctă cu modelul catalog și panou contextual"
   const rail = source("../src/lib/components/workbench/ActivityRail.svelte");
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
   const workspace = source("../src/lib/components/data/DataWorkspace.svelte");
-  const types = source("../src/lib/types.ts");
+  const types = source("../src/lib/workbench/contracts.ts");
+  const sourceGraphTypes = source("../src/lib/source-graph/contracts.ts");
   const workbench = source("../src-tauri/src/kernel/workbench/model.rs");
   const commandCenter = source("../src-tauri/src/kernel/command_center/search.rs");
 
@@ -34,7 +35,7 @@ test("Date este o activitate distinctă cu modelul catalog și panou contextual"
   assert.match(workspace, /<span class="sr-only">\{t\("data-search-files"\)\}<\/span>/);
   assert.doesNotMatch(workspace, /^\s*label\s*\{/m);
   assert.doesNotMatch(workspace, /^\s*input,\s*select\s*\{/m);
-  assert.match(types, /export type SourceDataLocation/);
+  assert.match(sourceGraphTypes, /type SourceDataLocation/);
   assert.doesNotMatch(workspace, /window\.(?:prompt|confirm)/);
 });
 
@@ -43,7 +44,7 @@ test("editorul vizual TOML păstrează Rust și ProjectWorkspace ca autoritate u
   const kernel = source("../src-tauri/src/kernel/data_mutation.rs");
   const commands = source("../src-tauri/src/commands/data.rs");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
-  const io = source("../src/lib/project/io.ts");
+  const io = source("../src/lib/data/io.ts");
 
   assert.match(workspace, /applyDataMutation/);
   assert.match(workspace, /readDataNodeEditor/);

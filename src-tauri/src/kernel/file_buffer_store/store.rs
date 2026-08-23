@@ -1,4 +1,4 @@
-use std::{path::Path, time::UNIX_EPOCH};
+use std::{collections::BTreeMap, path::Path, sync::Arc, time::UNIX_EPOCH};
 
 use crate::kernel::project_session::ProjectSessionSnapshot;
 
@@ -23,6 +23,14 @@ pub const FILE_BUFFER_CHANGESET_CONFLICT_CODE: &str = "file_buffer_changeset_con
 pub const FILE_BUFFER_CHANGESET_INVALID_CODE: &str = "file_buffer_changeset_invalid";
 
 impl FileBufferStore {
+    pub(crate) fn files_mut(&mut self) -> &mut BTreeMap<String, Arc<FileBufferEntry>> {
+        Arc::make_mut(&mut self.files)
+    }
+
+    pub(crate) fn entry_mut(&mut self, relative_path: &str) -> Option<&mut FileBufferEntry> {
+        self.files_mut().get_mut(relative_path).map(Arc::make_mut)
+    }
+
     pub fn new(
         session_id: impl Into<String>,
         project_root: impl Into<String>,
@@ -60,7 +68,8 @@ impl FileBufferStore {
     }
 
     pub fn insert_loaded_file(&mut self, entry: FileBufferEntry) {
-        self.files.insert(entry.relative_path.clone(), entry);
+        self.files_mut()
+            .insert(entry.relative_path.clone(), Arc::new(entry));
     }
 
     /// Adds a text resource that exists only in the current editor session.
@@ -102,7 +111,7 @@ impl FileBufferStore {
         let total_bytes = self
             .files
             .values()
-            .map(FileBufferEntry::current_bytes)
+            .map(|entry| entry.current_bytes())
             .sum::<u64>()
             .saturating_add(contents.len() as u64);
         if total_bytes > self.limits.max_total_bytes {
@@ -134,12 +143,13 @@ impl FileBufferStore {
             language,
             role: role_for_session_resource(relative_path, language),
             baseline,
-            baseline_text,
+            baseline_text: baseline_text.into(),
             draft,
             revision: 1,
         };
         let snapshot = entry.snapshot();
-        self.files.insert(relative_path.to_string(), entry);
+        self.files_mut()
+            .insert(relative_path.to_string(), Arc::new(entry));
         Ok(snapshot)
     }
 
@@ -169,7 +179,7 @@ impl FileBufferStore {
     pub fn save_stamp_for(&self, relative_path: &str) -> Option<FileBufferSaveStamp> {
         self.files
             .get(relative_path)
-            .map(FileBufferEntry::save_stamp)
+            .map(|entry| entry.save_stamp())
     }
 
     pub fn capture_save_snapshot(&self, relative_path: &str) -> Option<FileBufferSaveSnapshot> {
@@ -218,7 +228,7 @@ impl FileBufferStore {
     pub fn baseline_text_for(&self, relative_path: &str) -> Option<String> {
         self.files
             .get(relative_path)
-            .map(|entry| entry.baseline_text.clone())
+            .map(|entry| entry.baseline_text.to_string())
     }
 
     pub fn set_draft(
@@ -228,8 +238,7 @@ impl FileBufferStore {
         updated_at_ms: u128,
     ) -> Result<FileBufferFileSnapshot, String> {
         let entry = self
-            .files
-            .get_mut(relative_path)
+            .entry_mut(relative_path)
             .ok_or_else(|| format!("FileBufferStore nu are baseline pentru {relative_path}."))?;
         let hash = hash_text(&contents);
         entry.draft = Some(FileBufferDraft {
@@ -244,8 +253,7 @@ impl FileBufferStore {
 
     pub fn clear_draft(&mut self, relative_path: &str) -> Result<FileBufferFileSnapshot, String> {
         let entry = self
-            .files
-            .get_mut(relative_path)
+            .entry_mut(relative_path)
             .ok_or_else(|| format!("FileBufferStore nu are baseline pentru {relative_path}."))?;
         entry.draft = None;
         entry.revision = entry.revision.saturating_add(1);
@@ -268,8 +276,7 @@ impl FileBufferStore {
         }
 
         let entry = self
-            .files
-            .get_mut(relative_path)
+            .entry_mut(relative_path)
             .ok_or_else(|| format!("FileBufferStore nu are baseline pentru {relative_path}."))?;
         require_valid_file_buffer_mutation_expectation(relative_path, expectation)?;
 
@@ -296,20 +303,33 @@ impl FileBufferStore {
         relative_path: &str,
         expectation: &FileBufferMutationExpectation,
     ) -> Result<FileBufferFileSnapshot, String> {
-        let entry = self
-            .files
-            .get_mut(relative_path)
-            .ok_or_else(|| format!("FileBufferStore nu are baseline pentru {relative_path}."))?;
-        require_valid_file_buffer_mutation_expectation(relative_path, expectation)?;
-
-        // Clearing an already clean entry is an idempotent retry, not a mutation.
-        if entry.draft.is_none() {
-            return Ok(entry.snapshot());
+        let current = self.validate_clear_draft_if_current(relative_path, expectation)?;
+        if !current.has_draft {
+            return Ok(current);
         }
-
-        require_file_buffer_mutation_expectation(entry, relative_path, expectation)?;
+        let entry = self
+            .entry_mut(relative_path)
+            .ok_or_else(|| format!("FileBufferStore nu are baseline pentru {relative_path}."))?;
         entry.draft = None;
         entry.revision = entry.revision.saturating_add(1);
+        Ok(entry.snapshot())
+    }
+
+    /// Validates a clear-draft request without cloning or mutating the store.
+    /// Clearing an already clean entry remains an idempotent retry.
+    pub fn validate_clear_draft_if_current(
+        &self,
+        relative_path: &str,
+        expectation: &FileBufferMutationExpectation,
+    ) -> Result<FileBufferFileSnapshot, String> {
+        let entry = self
+            .files
+            .get(relative_path)
+            .ok_or_else(|| format!("FileBufferStore nu are baseline pentru {relative_path}."))?;
+        require_valid_file_buffer_mutation_expectation(relative_path, expectation)?;
+        if entry.draft.is_some() {
+            require_file_buffer_mutation_expectation(entry, relative_path, expectation)?;
+        }
         Ok(entry.snapshot())
     }
 
@@ -327,8 +347,7 @@ impl FileBufferStore {
         let max_file_bytes = self.limits.max_file_bytes;
 
         let entry = self
-            .files
-            .get_mut(&relative_path)
+            .entry_mut(&relative_path)
             .ok_or_else(|| format!("FileBufferStore nu are baseline pentru {relative_path}."))?;
 
         if let Some(base_revision) = input.base_revision {
@@ -395,7 +414,7 @@ impl FileBufferStore {
         contents: String,
     ) -> Result<(), String> {
         if contents.len() as u64 > self.limits.max_file_bytes {
-            self.files.remove(relative_path);
+            self.files_mut().remove(relative_path);
             self.add_diagnostic(FileBufferDiagnostic::warning(
                 "saved_file_too_large",
                 Some(relative_path.to_string()),
@@ -410,9 +429,9 @@ impl FileBufferStore {
 
         let path = project_path(Path::new(&self.project_root), relative_path)?;
         let baseline = baseline_from_text_path(&path, &contents)?;
-        if let Some(entry) = self.files.get_mut(relative_path) {
+        if let Some(entry) = self.entry_mut(relative_path) {
             entry.baseline = baseline;
-            entry.baseline_text = contents;
+            entry.baseline_text = contents.into();
             entry.draft = None;
             entry.revision = entry.revision.saturating_add(1);
             return Ok(());
@@ -420,18 +439,18 @@ impl FileBufferStore {
 
         let language =
             language_for_relative_path(relative_path).unwrap_or(TextBufferLanguage::Plain);
-        self.files.insert(
+        self.files_mut().insert(
             relative_path.to_string(),
-            FileBufferEntry {
+            Arc::new(FileBufferEntry {
                 relative_path: relative_path.to_string(),
                 absolute_path: path.to_string_lossy().to_string(),
                 language,
                 role: TextBufferRole::Other,
                 baseline,
-                baseline_text: contents,
+                baseline_text: contents.into(),
                 draft: None,
                 revision: 1,
-            },
+            }),
         );
         Ok(())
     }
@@ -461,10 +480,10 @@ impl FileBufferStore {
         let before = self.save_stamp_for(relative_path);
 
         if let Some(expected) = expected {
-            match self.files.get_mut(relative_path) {
+            match self.entry_mut(relative_path) {
                 Some(entry) if entry.save_stamp() == *expected => {
                     entry.baseline = baseline;
-                    entry.baseline_text = contents;
+                    entry.baseline_text = contents.into();
                     entry.draft = None;
                     entry.revision = entry.revision.saturating_add(1);
                     return Ok(FileBufferSaveProjection {
@@ -483,7 +502,7 @@ impl FileBufferStore {
                         .take()
                         .expect("guarded newer FileBuffer draft must exist");
                     entry.baseline = baseline;
-                    entry.baseline_text = contents;
+                    entry.baseline_text = contents.into();
                     entry.draft = if newer_draft.hash == entry.baseline.hash {
                         None
                     } else {
@@ -518,9 +537,9 @@ impl FileBufferStore {
             }
         }
 
-        if let Some(entry) = self.files.get_mut(relative_path) {
+        if let Some(entry) = self.entry_mut(relative_path) {
             entry.baseline = baseline;
-            entry.baseline_text = contents;
+            entry.baseline_text = contents.into();
             entry.draft = None;
             entry.revision = entry.revision.saturating_add(1);
             return Ok(FileBufferSaveProjection {
@@ -532,18 +551,18 @@ impl FileBufferStore {
 
         let language =
             language_for_relative_path(relative_path).unwrap_or(TextBufferLanguage::Plain);
-        self.files.insert(
+        self.files_mut().insert(
             relative_path.to_string(),
-            FileBufferEntry {
+            Arc::new(FileBufferEntry {
                 relative_path: relative_path.to_string(),
                 absolute_path: path.to_string_lossy().to_string(),
                 language,
                 role: TextBufferRole::Other,
                 baseline,
-                baseline_text: contents,
+                baseline_text: contents.into(),
                 draft: None,
                 revision: 1,
-            },
+            }),
         );
         let after = self
             .save_stamp_for(relative_path)
@@ -556,7 +575,7 @@ impl FileBufferStore {
     }
 
     pub fn record_removed_file(&mut self, relative_path: &str) -> Result<(), String> {
-        self.files
+        self.files_mut()
             .remove(relative_path)
             .map(|_| ())
             .ok_or_else(|| format!("FileBufferStore nu are baseline pentru {relative_path}."))
@@ -586,8 +605,8 @@ impl FileBufferStore {
         let paths = self.tracked_paths_for_entry(source_relative_path);
         let mut removed = Vec::new();
         for path in paths {
-            if let Some(entry) = self.files.remove(&path) {
-                removed.push(entry);
+            if let Some(entry) = self.files_mut().remove(&path) {
+                removed.push(Arc::unwrap_or_clone(entry));
             }
         }
         removed
@@ -623,7 +642,7 @@ impl FileBufferStore {
                 .to_string_lossy()
                 .to_string();
             restored.revision = restored.revision.saturating_add(1);
-            self.files.insert(restored.relative_path.clone(), restored);
+            self.insert_loaded_file(restored);
         }
 
         Ok(())
@@ -663,10 +682,10 @@ impl FileBufferStore {
         let mut moved_entries = Vec::new();
         for (from, to) in mappings {
             let entry = self
-                .files
+                .files_mut()
                 .remove(&from)
                 .ok_or_else(|| format!("FileBufferStore nu are baseline pentru mutarea {from}."))?;
-            moved_entries.push((to, entry));
+            moved_entries.push((to, Arc::unwrap_or_clone(entry)));
         }
         for (to, mut entry) in moved_entries {
             entry.relative_path = to.clone();
@@ -674,7 +693,7 @@ impl FileBufferStore {
                 .to_string_lossy()
                 .to_string();
             entry.revision = entry.revision.saturating_add(1);
-            self.files.insert(to, entry);
+            self.files_mut().insert(to, Arc::new(entry));
         }
 
         Ok(moved_paths)
@@ -718,7 +737,7 @@ impl FileBufferStore {
         let files = self
             .files
             .values()
-            .map(FileBufferEntry::snapshot)
+            .map(|entry| entry.snapshot())
             .collect::<Vec<_>>();
         let dirty_file_count = files.iter().filter(|file| file.dirty).count();
         let total_loaded_bytes = self
@@ -853,13 +872,6 @@ impl FileBufferEntry {
             current_bytes: self.current_bytes(),
             revision: self.revision,
         }
-    }
-}
-
-impl FileBufferDraft {
-    #[allow(dead_code)]
-    pub fn updated_at_ms(&self) -> u128 {
-        self.updated_at_ms
     }
 }
 
@@ -1031,7 +1043,7 @@ mod save_cas_tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test(baseline),
-            baseline_text: baseline.to_string(),
+            baseline_text: baseline.to_string().into(),
             draft: None,
             revision: 1,
         });

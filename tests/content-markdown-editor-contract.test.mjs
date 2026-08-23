@@ -11,8 +11,8 @@ test("TipTap belongs only to Content page editing and shares one canonical sourc
   const editorShell = source("../src/lib/components/EditorShell.svelte");
 
   assert.match(content, /import MarkdownEditor from "\$lib\/components\/markdown\/MarkdownEditor\.svelte"/);
-  assert.match(content, /app\.workbenchSnapshot\?\.contentWorkspace\.mode === "edit"/);
-  assert.match(content, /await app\.openContentPageEditor\(page\.file\)/);
+  assert.match(content, /contentWorkspace\?\.mode === "edit"/);
+  assert.match(content, /await commands\.openPageEditor\(page\.file\)/);
   assert.match(content, /<MarkdownEditor[\s\S]*source=\{metadataSource\}[\s\S]*onChange=/);
   assert.match(content, /<ProjectPageSettingsTab[\s\S]*pageSource=\{metadataSource\}/);
   assert.match(content, /<ProjectPageSettingsTab[\s\S]*pageKind=\{editingPage\.pageKind\}/);
@@ -60,7 +60,8 @@ test("Markdown boundaries expose distinct semantic and raw-source actions", () =
   assert.match(card, /markdown-boundary-edit-content/);
   assert.match(card, /markdown-boundary-open-source/);
   assert.match(inspector, /editSelectedContent=\{openSelectedMarkdownContent\}/);
-  assert.match(selection, /navigationNode\?\.kind !== "markdownBoundary"/);
+  assert.match(selection, /navigationNode\?\.kind !== "boundary"/);
+  assert.match(selection, /navigationNode\.boundary\?\.kind !== "markdown"/);
   assert.match(selection, /await app\.openContentPageEditor\(relativePath\)/);
 });
 

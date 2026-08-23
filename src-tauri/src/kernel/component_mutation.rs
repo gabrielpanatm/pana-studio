@@ -574,7 +574,7 @@ pub fn stage_validated_component_mutation(
     now_ms: u128,
 ) -> Result<(ComponentMutationPlan, ProjectWorkspaceMutationReceipt), String> {
     let plan = plan_component_mutation(project_root, workspace, input)?;
-    let mut candidate = workspace.clone();
+    let mut candidate = workspace.fork_candidate();
     let candidate_identity = current_identity(&candidate);
     candidate.stage_composite_changes(
         &candidate_identity,
@@ -1327,7 +1327,7 @@ fn plan_shortcode_reference_rewrites(
     new_name: &str,
 ) -> Result<Vec<ComponentPlannedWrite>, String> {
     let mut writes = Vec::new();
-    for (relative_path, entry) in &workspace.documents.files {
+    for (relative_path, entry) in workspace.documents.files.iter() {
         if !relative_path.starts_with("content/") || !relative_path.ends_with(".md") {
             continue;
         }
@@ -2196,7 +2196,7 @@ mod tests {
                     size: source.len() as u64,
                     readonly: false,
                 },
-                baseline_text: source.clone(),
+                baseline_text: source.clone().into(),
                 draft: None,
                 revision: 1,
             });

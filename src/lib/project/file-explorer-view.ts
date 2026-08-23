@@ -1,4 +1,4 @@
-import type { FileExplorerEntry } from "$lib/types";
+import type { FileExplorerEntry } from "$lib/project/file-explorer-contract";
 
 export type FileExplorerViewRow = {
   type: "dir" | "file";

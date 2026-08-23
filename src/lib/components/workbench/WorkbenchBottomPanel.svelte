@@ -1,34 +1,34 @@
 <script lang="ts">
   import type { Component } from "svelte";
   import type { TerminalPaneProps } from "$lib/components/TerminalPane.svelte";
-  import type { AppState } from "$lib/state/app.svelte";
+  import type { TerminalWorkspaceState } from "$lib/terminal/workspace.svelte";
   import type { TerminalQuickTask } from "$lib/terminal/runtime";
   import { t } from "$lib/i18n/runtime.svelte";
 
   let {
-    app,
+    workspace,
     TerminalPaneComponent = null,
   }: {
-    app: AppState;
+    workspace: TerminalWorkspaceState;
     TerminalPaneComponent?: Component<TerminalPaneProps> | null;
   } = $props();
 
   async function closePanel() {
-    await app.setWorkbenchBottomPanel(false, "terminal");
+    await workspace.closePane();
   }
 </script>
 
 {#if TerminalPaneComponent}
   <TerminalPaneComponent
-    bind:terminalHost={app.terminalHost}
-    terminalTabs={app.terminalTabs}
-    activeTerminalTabId={app.activeTerminalTabId}
-    quickTasks={app.terminalQuickTasks}
-    openTab={() => app.openTerminalTab()}
-    selectTab={(id: string) => app.selectTerminalTab(id)}
-    closeTab={(id: string) => app.closeTerminalTab(id)}
-    runQuickTask={(task: TerminalQuickTask) => app.runTerminalQuickTask(task)}
-    clearActiveTerminal={() => app.clearActiveTerminal()}
+    bind:terminalHost={workspace.terminalHost}
+    terminalTabs={workspace.terminalTabs}
+    activeTerminalTabId={workspace.activeTerminalTabId}
+    quickTasks={workspace.terminalQuickTasks}
+    openTab={() => workspace.openTab()}
+    selectTab={(id: string) => workspace.selectTab(id)}
+    closeTab={(id: string) => workspace.closeTab(id)}
+    runQuickTask={(task: TerminalQuickTask) => workspace.runQuickTask(task)}
+    clearActiveTerminal={() => workspace.clearActive()}
     closePane={closePanel}
   />
 {:else}

@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    thread,
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -22,6 +22,7 @@ pub const NETWORK_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 pub const NETWORK_CANCELLED_ERROR: &str = "Operația Git de rețea a fost anulată.";
 
 pub(crate) type ProgressCallback = Arc<dyn Fn(&[u8]) + Send + Sync + 'static>;
+type GitOutputReader = JoinHandle<Result<(Vec<u8>, bool), String>>;
 
 #[derive(Debug)]
 pub struct GitCommandOutput {
@@ -133,18 +134,20 @@ impl GitRunner {
         )
     }
 
-    pub fn run_network<I, S>(
+    pub(crate) fn spawn_network<I, S>(
         &self,
         args: I,
         cancellation: Arc<AtomicBool>,
         progress: ProgressCallback,
-    ) -> Result<GitCommandOutput, String>
+    ) -> Result<RunningGitCommand, String>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
+        require_not_cancelled(&cancellation)?;
         let credential_helpers = self.global_credential_helpers()?;
-        self.run_bounded(
+        require_not_cancelled(&cancellation)?;
+        self.spawn_bounded(
             args,
             None,
             NETWORK_TIMEOUT,
@@ -238,6 +241,40 @@ impl GitRunner {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
+        self.spawn_bounded(
+            args,
+            input,
+            timeout,
+            output_limit,
+            allow_user_config,
+            inspect_global_config,
+            credential_helpers,
+            cancellation,
+            progress,
+        )?
+        .wait()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_bounded<I, S>(
+        &self,
+        args: I,
+        input: Option<&[u8]>,
+        timeout: Duration,
+        output_limit: usize,
+        allow_user_config: bool,
+        inspect_global_config: bool,
+        credential_helpers: &[(String, String)],
+        cancellation: Option<Arc<AtomicBool>>,
+        progress: Option<ProgressCallback>,
+    ) -> Result<RunningGitCommand, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        if let Some(cancellation) = cancellation.as_ref() {
+            require_not_cancelled(cancellation)?;
+        }
         let mut command = Command::new("git");
         command
             .arg("-c")
@@ -398,44 +435,69 @@ impl GitRunner {
                 .map_err(|error| format!("Nu am putut trimite input către Git: {error}"))?;
         }
 
-        let started = Instant::now();
+        Ok(RunningGitCommand {
+            child,
+            stdout_reader: Some(stdout_reader),
+            stderr_reader: Some(stderr_reader),
+            started: Instant::now(),
+            timeout,
+            cancellation,
+            network_process_group: allow_user_config,
+            reaped: false,
+        })
+    }
+}
+
+pub(crate) struct RunningGitCommand {
+    child: std::process::Child,
+    stdout_reader: Option<GitOutputReader>,
+    stderr_reader: Option<GitOutputReader>,
+    started: Instant,
+    timeout: Duration,
+    cancellation: Option<Arc<AtomicBool>>,
+    network_process_group: bool,
+    reaped: bool,
+}
+
+impl RunningGitCommand {
+    pub(crate) fn wait(mut self) -> Result<GitCommandOutput, String> {
         let status = loop {
-            match child
+            match self
+                .child
                 .try_wait()
                 .map_err(|error| format!("Nu am putut verifica procesul Git: {error}"))?
             {
-                Some(status) => break status,
-                None if cancellation
+                Some(status) => {
+                    self.reaped = true;
+                    break status;
+                }
+                None if self
+                    .cancellation
                     .as_ref()
                     .is_some_and(|token| token.load(Ordering::SeqCst)) =>
                 {
-                    terminate_git_process(&mut child, allow_user_config);
-                    let _ = child.wait();
-                    let _ = stdout_reader.join();
-                    let _ = stderr_reader.join();
+                    self.terminate_and_reap();
+                    self.join_readers_discard();
                     return Err(NETWORK_CANCELLED_ERROR.to_string());
                 }
-                None if started.elapsed() < timeout => thread::sleep(Duration::from_millis(10)),
+                None if self.started.elapsed() < self.timeout => {
+                    thread::sleep(Duration::from_millis(10));
+                }
                 None => {
-                    terminate_git_process(&mut child, allow_user_config);
-                    let _ = child.wait();
-                    let _ = stdout_reader.join();
-                    let _ = stderr_reader.join();
+                    self.terminate_and_reap();
+                    self.join_readers_discard();
                     return Err(format!(
                         "Procesul Git a depășit limita de {} secunde și a fost oprit.",
-                        timeout.as_secs()
+                        self.timeout.as_secs()
                     ));
                 }
             }
         };
 
-        let (stdout, stdout_truncated) = stdout_reader
-            .join()
-            .map_err(|_| "Thread-ul stdout Git a eșuat.".to_string())??;
-        let (stderr, stderr_truncated) = stderr_reader
-            .join()
-            .map_err(|_| "Thread-ul stderr Git a eșuat.".to_string())??;
-
+        let (stdout, stdout_truncated) =
+            join_output_reader(self.stdout_reader.take(), "Thread-ul stdout Git a eșuat.")?;
+        let (stderr, stderr_truncated) =
+            join_output_reader(self.stderr_reader.take(), "Thread-ul stderr Git a eșuat.")?;
         Ok(GitCommandOutput {
             status,
             stdout,
@@ -444,6 +506,48 @@ impl GitRunner {
             stderr_truncated,
         })
     }
+
+    fn terminate_and_reap(&mut self) {
+        if self.reaped {
+            return;
+        }
+        terminate_git_process(&mut self.child, self.network_process_group);
+        let _ = self.child.wait();
+        self.reaped = true;
+    }
+
+    fn join_readers_discard(&mut self) {
+        if let Some(reader) = self.stdout_reader.take() {
+            let _ = reader.join();
+        }
+        if let Some(reader) = self.stderr_reader.take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+impl Drop for RunningGitCommand {
+    fn drop(&mut self) {
+        self.terminate_and_reap();
+        self.join_readers_discard();
+    }
+}
+
+fn join_output_reader(
+    reader: Option<GitOutputReader>,
+    panic_diagnostic: &str,
+) -> Result<(Vec<u8>, bool), String> {
+    reader
+        .ok_or_else(|| "Procesul Git nu mai deține reader-ul de output.".to_string())?
+        .join()
+        .map_err(|_| panic_diagnostic.to_string())?
+}
+
+fn require_not_cancelled(cancellation: &AtomicBool) -> Result<(), String> {
+    if cancellation.load(Ordering::SeqCst) {
+        return Err(NETWORK_CANCELLED_ERROR.to_string());
+    }
+    Ok(())
 }
 
 fn terminate_git_process(child: &mut std::process::Child, network_process_group: bool) {
@@ -504,6 +608,21 @@ pub fn canonical_git_root(output: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[test]
+    fn pre_cancelled_network_command_is_rejected_before_spawn() {
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let error = super::GitRunner::new(std::env::temp_dir())
+            .spawn_network(["status"], cancellation, Arc::new(|_| {}))
+            .err()
+            .expect("pre-cancelled network command must not spawn");
+        assert_eq!(error, super::NETWORK_CANCELLED_ERROR);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn network_termination_kills_the_complete_process_group() {
@@ -528,6 +647,31 @@ mod tests {
         super::terminate_git_process(&mut child, true);
         let status = child.wait().unwrap();
         assert!(!status.success());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn running_network_command_observes_cancellation_token() {
+        use std::{thread, time::Duration};
+
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let running = super::GitRunner::new(std::env::temp_dir())
+            .spawn_network(
+                ["-c", "alias.pana-slow=!sleep 30", "pana-slow"],
+                Arc::clone(&cancellation),
+                Arc::new(|_| {}),
+            )
+            .unwrap();
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            cancellation.store(true, Ordering::SeqCst);
+        });
+
+        let started = std::time::Instant::now();
+        let error = running.wait().unwrap_err();
+        canceller.join().unwrap();
+        assert_eq!(error, super::NETWORK_CANCELLED_ERROR);
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

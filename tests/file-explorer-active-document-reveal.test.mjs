@@ -4,6 +4,10 @@ import {
   planFileExplorerEntryReveal,
   projectFileExplorerRows,
 } from "$lib/project/file-explorer-view";
+import {
+  projectFileExplorerScrollTopForIndex,
+  projectFileExplorerVirtualWindow,
+} from "$lib/project/file-explorer-virtualization";
 
 function directory(id, relativePath, parentId = null) {
   return {
@@ -109,4 +113,34 @@ test("collapsed and empty folders cannot advertise a false open state", () => {
   );
   assert.equal(emptyRows[0]?.hasChildren, false);
   assert.equal(emptyRows[0]?.expanded, false);
+});
+
+test("large Explorer trees materialize a bounded viewport and preserve total height", () => {
+  const first = projectFileExplorerVirtualWindow(991, 0, 500, 25, 10);
+  assert.deepEqual(first, {
+    start: 0,
+    end: 30,
+    topSpacerPx: 0,
+    bottomSpacerPx: 24_025,
+  });
+
+  const middle = projectFileExplorerVirtualWindow(991, 12_000, 500, 25, 10);
+  assert.equal(middle.end - middle.start, 40);
+  assert.equal(
+    middle.topSpacerPx
+      + (middle.end - middle.start) * 25
+      + middle.bottomSpacerPx,
+    991 * 25,
+  );
+
+  const last = projectFileExplorerVirtualWindow(991, 24_700, 500, 25, 10);
+  assert.equal(last.end, 991);
+  assert.equal(last.bottomSpacerPx, 0);
+});
+
+test("Explorer reveal computes a local no-op or the smallest bounded scroll", () => {
+  assert.equal(projectFileExplorerScrollTopForIndex(4, 0, 500, 25), 0);
+  assert.equal(projectFileExplorerScrollTopForIndex(22, 0, 500, 25), 75);
+  assert.equal(projectFileExplorerScrollTopForIndex(10, 500, 500, 25), 250);
+  assert.equal(projectFileExplorerScrollTopForIndex(400, 0, 0, 25), 10_000);
 });

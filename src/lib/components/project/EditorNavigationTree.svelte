@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     IconArrowBackUp,
     IconArrowUpRight,
@@ -17,7 +18,6 @@
     IconFunction,
     IconGitBranch,
     IconHeading,
-    IconLayout,
     IconLayoutBottombar,
     IconLayoutDashboard,
     IconLayoutNavbar,
@@ -44,13 +44,13 @@
     IconVolume,
   } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
+  import type { EditorMovePlan } from "$lib/editor/contracts";
   import type {
-    EditorMovePlan,
     EditorNavigationNode,
     EditorNavigationSnapshot,
     EditorNavigationViewNode,
-    ProjectMovePosition,
-  } from "$lib/types";
+  } from "$lib/editor/contracts";
+  import type { ProjectMovePosition } from "$lib/preview/contracts";
 
   type NavigationRow = {
     node: EditorNavigationViewNode;
@@ -126,6 +126,7 @@
   let viewportHeight = $state(500);
   let treeViewport = $state<HTMLDivElement>();
   let snapshotKey = $state("");
+  let revealedPrimaryKey = $state("");
   let dragSourceId = $state<string | null>(null);
   let dragTargetId = $state<string | null>(null);
   let dragPosition = $state<ProjectMovePosition | null>(null);
@@ -211,6 +212,40 @@
     if (treeViewport) treeViewport.scrollTop = 0;
     clearDrag();
   });
+
+  $effect(() => {
+    const key = `${snapshot?.identity.transactionId ?? ""}:${openScopeId ?? ""}:${primaryNodeId ?? ""}`;
+    if (!primaryNodeId || key === revealedPrimaryKey) return;
+    revealedPrimaryKey = key;
+    void revealPrimaryNode(primaryNodeId);
+  });
+
+  async function revealPrimaryNode(editorNodeId: string) {
+    const target = focusedView?.nodes.find((node) => (
+      node.editorNodeId === editorNodeId
+      || node.renderInstanceIds.some(
+        (renderInstanceId) => `editor_render:${renderInstanceId}` === editorNodeId,
+      )
+    )) ?? null;
+    if (!target) return;
+    const nextCollapsed = new Set(collapsed);
+    let parentId = target.parentId;
+    while (parentId) {
+      nextCollapsed.delete(parentId);
+      parentId = viewNodesById.get(parentId)?.parentId ?? null;
+    }
+    if (nextCollapsed.size !== collapsed.size) collapsed = nextCollapsed;
+    await tick();
+    const index = rows.findIndex((row) => row.node.id === target.id);
+    if (index < 0 || !treeViewport) return;
+    const top = index * rowHeight;
+    const bottom = top + rowHeight;
+    if (top < treeViewport.scrollTop) {
+      treeViewport.scrollTop = top;
+    } else if (bottom > treeViewport.scrollTop + treeViewport.clientHeight) {
+      treeViewport.scrollTop = Math.max(0, bottom - treeViewport.clientHeight);
+    }
+  }
 
   function editorNode(node: EditorNavigationViewNode) {
     if (node.editorNodeId) {
@@ -346,7 +381,7 @@
     }
   }
 
-  function teraBoundaryIcon(node: EditorNavigationViewNode) {
+  function semanticBoundaryIcon(node: EditorNavigationViewNode) {
     switch (node.sourceKind) {
       case "include": return IconFileImport;
       case "macro": return IconFunction;
@@ -362,7 +397,7 @@
     if (isMarkdownBoundary(node)) return IconMarkdown;
     switch (node.kind) {
       case "htmlElement": return htmlElementIcon(node.tag);
-      case "boundary": return teraBoundaryIcon(node);
+      case "boundary": return semanticBoundaryIcon(node);
       case "relation": return IconLink;
       case "slot": return IconFileCode;
       case "source": return IconFileCode;
@@ -370,7 +405,22 @@
   }
 
   function isMarkdownBoundary(node: EditorNavigationViewNode) {
-    return editorNode(node)?.kind === "markdownBoundary";
+    const resolved = editorNode(node);
+    return resolved?.kind === "boundary" && resolved.boundary?.kind === "markdown";
+  }
+
+  function isTemplateBoundary(node: EditorNavigationViewNode) {
+    const resolved = editorNode(node);
+    return resolved?.kind === "boundary" && resolved.boundary?.kind === "template";
+  }
+
+  function isComponentBoundary(node: EditorNavigationViewNode) {
+    const resolved = editorNode(node);
+    return resolved?.kind === "boundary" && resolved.boundary?.kind === "component";
+  }
+
+  function isRuntimeNode(node: EditorNavigationViewNode) {
+    return editorNode(node)?.kind === "runtimeElement";
   }
 
   function canDelete(node: EditorNavigationViewNode) {
@@ -384,7 +434,8 @@
     if (resolved.kind === "htmlElement") {
       return Boolean(resolved.sourceNodeId && resolved.tag);
     }
-    return resolved.kind === "teraBoundary"
+    return resolved.kind === "boundary"
+      && resolved.boundary?.kind !== "markdown"
       && Boolean(resolved.sourceNodeId && resolved.boundary)
       && node.capabilities.canMoveAtomic;
   }
@@ -618,6 +669,8 @@
     <div class="tree-state">{t("project-navigation-loading")}</div>
   {:else if error}
     <div class="tree-state error">{error}</div>
+  {:else if !snapshot}
+    <div class="tree-state">{t("project-navigation-resuming")}</div>
   {:else if !focusedView || rows.length === 0}
     <div class="tree-state">
       {openScope
@@ -648,7 +701,10 @@
           data-ui-selected={isSelected(row.node) ? "true" : undefined}
           data-ui-hovered={isCoordinatorHovered(row.node) ? "true" : undefined}
           class:boundary={row.node.kind === "boundary"}
+          class:template={isTemplateBoundary(row.node)}
+          class:component={isComponentBoundary(row.node)}
           class:markdown={isMarkdownBoundary(row.node)}
+          class:runtime={isRuntimeNode(row.node)}
           class:relation={row.node.kind === "relation"}
           class:slot={row.node.kind === "slot"}
           class:scope-open={isScopeOpen(row.node)}
@@ -819,7 +875,7 @@
   }
 
   .current-crumb {
-    color: var(--brand-strong);
+    color: var(--entity-template);
   }
 
   .crumb-separator {
@@ -891,6 +947,8 @@
 
   .navigation-row {
     --indent: calc(var(--tree-depth) * 13px);
+    --node-entity-color: var(--entity-html);
+    --node-entity-soft: var(--entity-html-soft);
     position: relative;
     display: flex;
     height: 30px;
@@ -905,13 +963,37 @@
   }
 
   .navigation-row.primary {
-    border-color: var(--brand);
+    border-color: var(--node-entity-color);
+  }
+
+  .navigation-row.template {
+    --node-entity-color: var(--entity-template);
+    --node-entity-soft: var(--entity-template-soft);
+  }
+
+  .navigation-row.component {
+    --node-entity-color: var(--entity-component);
+    --node-entity-soft: var(--entity-component-soft);
+  }
+
+  .navigation-row.markdown {
+    --node-entity-color: var(--entity-markdown);
+    --node-entity-soft: var(--entity-markdown-soft);
+  }
+
+  .navigation-row.runtime {
+    --node-entity-color: var(--entity-runtime);
+    --node-entity-soft: var(--entity-runtime-soft);
+  }
+
+  .navigation-row.readonly {
+    --node-entity-color: var(--entity-readonly);
   }
 
   .navigation-row.boundary,
   .navigation-row.relation,
   .navigation-row.slot {
-    color: color-mix(in srgb, var(--text) 88%, var(--brand));
+    color: color-mix(in srgb, var(--text) 88%, var(--node-entity-color));
   }
 
   .navigation-row.boundary:not(.scope-open)::before {
@@ -919,21 +1001,21 @@
     inset: 4px auto 4px calc(var(--indent) + 1px);
     width: 2px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--brand) 65%, var(--border));
+    background: color-mix(in srgb, var(--node-entity-color) 65%, var(--border));
     content: "";
   }
 
   .navigation-row.markdown {
-    color: color-mix(in srgb, var(--text) 76%, var(--markdown));
-    background: var(--markdown-soft);
+    color: color-mix(in srgb, var(--text) 76%, var(--entity-markdown));
+    background: var(--entity-markdown-soft);
   }
 
   .navigation-row.markdown:not(.scope-open)::before {
-    background: color-mix(in srgb, var(--markdown) 76%, var(--border));
+    background: color-mix(in srgb, var(--entity-markdown) 76%, var(--border));
   }
 
   .navigation-row.scope-open {
-    background: color-mix(in srgb, var(--brand-soft) 60%, var(--surface-panel));
+    background: color-mix(in srgb, var(--node-entity-soft) 60%, var(--surface-panel));
   }
 
   .navigation-row.scope-open:hover,
@@ -1025,12 +1107,12 @@
   .relation .node-icon,
   .slot .node-icon,
   .selected .node-icon {
-    color: var(--brand);
+    color: var(--node-entity-color);
   }
 
   .markdown .node-icon,
   .markdown.selected .node-icon {
-    color: var(--markdown);
+    color: var(--entity-markdown);
   }
 
   .node-copy {

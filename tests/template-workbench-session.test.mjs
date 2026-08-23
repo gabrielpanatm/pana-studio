@@ -3,9 +3,9 @@ import { afterEach, test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import {
   exitTemplateWorkbench,
-  loadScannedProjectFile,
   updateTemplateWorkbenchContext,
-} from "$lib/state/project-controller";
+} from "$lib/state/project-template-workbench-controller";
+import { loadScannedProjectFile } from "$lib/state/project-document-controller";
 
 if (!globalThis.window) globalThis.window = globalThis;
 
@@ -75,6 +75,7 @@ function receipt(input, overrides = {}) {
     },
     route: "/__pana_workbench/template-active/",
     previewUrl: "http://127.0.0.1:41000/__pana_workbench/template-active/",
+    reuseToken: `sha256:workbench-${input.expectedWorkspaceRevision}`,
     workspaceRevision: input.expectedWorkspaceRevision,
     previewRevision,
     canvasProjection: {
@@ -90,6 +91,37 @@ function receipt(input, overrides = {}) {
       phase: "canonicalVerified",
       impact: { kinds: ["htmlStructure"], paths: [input.templatePath], requiresFullDocument: false },
       resources: { schemaVersion: 1, previewRevision, totalBytes: 0, entries: [] },
+    },
+    publicationStatus: "materialized",
+    performance: {
+      totalUs: 1,
+      operationLockWaitUs: 0,
+      projectModelUs: 0,
+      planUs: 0,
+      engineLockWaitUs: 0,
+      publishUs: 1,
+      renderUs: 0,
+      graphUs: 0,
+      prepareUs: 0,
+      modelCacheHit: true,
+    },
+    ...overrides,
+  };
+}
+
+function reuseConfirmation(input, overrides = {}) {
+  return {
+    status: "confirmed",
+    route: "/__pana_workbench/template-active/",
+    previewUrl: "http://127.0.0.1:41000/__pana_workbench/template-active/",
+    reuseToken: input.reuseToken,
+    workspaceRevision: input.expectedWorkspaceRevision,
+    previewRevision: input.expectedPreviewRevision,
+    canvasTransactionId: input.expectedCanvasTransactionId,
+    performance: {
+      totalUs: 1,
+      operationLockWaitUs: 0,
+      engineLockWaitUs: 0,
     },
     ...overrides,
   };
@@ -119,6 +151,15 @@ function workbenchHost(activePath = "templates/partials/header.html") {
   const template = templateFile(activePath);
   const page = pageFile("content/_index.md");
   const host = {
+    projectLifecycle: {
+      schemaVersion: 1,
+      revision: 1,
+      activeSession: null,
+      transition: "idle",
+      operationId: null,
+      transitionStartedAtMs: null,
+      reason: "test",
+    },
     scannedProject: {
       root: "/project-a",
       previewBaseUrl: "http://127.0.0.1:41000",
@@ -141,17 +182,36 @@ function workbenchHost(activePath = "templates/partials/header.html") {
     templateWorkbenchTarget: null,
     templateWorkbenchReturnPreviewPath: null,
     templateWorkbenchRequestSerial: 0,
+    templateWorkbenchReuseToken: null,
+    editorSelection: {
+      selectionSnapshot: null,
+      reset() {},
+      async refreshNavigationSnapshot(identity, previewUrl) {
+        navigationRefreshes.push({ identity, previewUrl });
+      },
+    },
     async refreshRenderedPreviewDocument() {
       refreshes.push(this.previewSrc);
       return true;
     },
-    async reconcileTemplateWorkbenchPreviewDocument(previewUrl, canvasProjection) {
-      reconciliations.push({ previewUrl, canvasProjection });
-      this.activeCanvasIdentity = canvasProjection.identity;
-      return true;
-    },
-    async refreshEditorNavigationSnapshot(identity, previewUrl) {
-      navigationRefreshes.push({ identity, previewUrl });
+    templateWorkbenchCanvas: {
+      async reconcile(previewUrl, canvasProjection) {
+        reconciliations.push({ previewUrl, canvasProjection });
+        host.activeCanvasIdentity = canvasProjection.identity;
+        return true;
+      },
+      canReuse() {
+        return false;
+      },
+      getReuseToken() {
+        return host.templateWorkbenchReuseToken;
+      },
+      setReuseToken(token) {
+        host.templateWorkbenchReuseToken = token;
+      },
+      setPublicationStatus(status) {
+        host.templatePublicationStatus = status;
+      },
     },
     previewUrlForScannedFile(file) {
       return `http://127.0.0.1:41000/${file.relativePath}`;
@@ -266,6 +326,256 @@ test("Template Workbench binds Canvas interaction to the mounted Workbench graph
     identity: expectedReceipt.canvasProjection.identity,
     previewUrl: expectedReceipt.previewUrl,
   }]);
+});
+
+test("an exact Rust cache hit reuses the mounted canonical Workbench surface without navigation", async () => {
+  const { host, refreshes, navigationRefreshes, template } = workbenchHost();
+  const input = {
+    expectedProjectRoot: host.sessionProjectRoot,
+    expectedSessionId: host.kernelProjectSessionId,
+    expectedWorkspaceRevision: 12,
+    templatePath: template.relativePath,
+  };
+  const cached = receipt(input, { publicationStatus: "reused" });
+  host.projectWorkspaceSnapshot = {
+    projectRoot: input.expectedProjectRoot,
+    runtimeSessionId: input.expectedSessionId,
+    revision: input.expectedWorkspaceRevision,
+  };
+  host.templateWorkbenchActive = true;
+  host.templateWorkbenchTarget = template.relativePath;
+  host.templateWorkbenchPlan = cached.plan;
+  host.templateWorkbenchPreferredPagePath = null;
+  host.templateWorkbenchPreferredRoute = null;
+  host.templateWorkbenchReuseToken = cached.reuseToken;
+  host.activePreviewPath = template.relativePath;
+  host.activeCanvasIdentity = cached.canvasProjection.identity;
+  host.activeCanvasUrl = `${cached.previewUrl}?mounted=1`;
+  host.previewSrc = `${cached.previewUrl}?__pana_reload=9`;
+  host.previewDocumentMarkup = null;
+  host.templateWorkbenchCanvas.canReuse = (identity, previewUrl) => (
+    identity === cached.canvasProjection.identity && previewUrl === cached.previewUrl
+  );
+
+  let fullPreviewRequests = 0;
+  mockIPC((command, payload) => {
+    if (command === "project_template_workbench_preview") {
+      fullPreviewRequests += 1;
+      return cached;
+    }
+    assert.equal(command, "confirm_template_workbench_reuse");
+    assert.deepEqual(payload.input, {
+      ...input,
+      preferredPagePath: null,
+      preferredRoute: null,
+      reuseToken: cached.reuseToken,
+      expectedPreviewRevision: cached.previewRevision,
+      expectedCanvasTransactionId: cached.canvasProjection.identity.transactionId,
+    });
+    return reuseConfirmation(payload.input);
+  });
+
+  await updateTemplateWorkbenchContext(host, host.scannedProject, template, null, {
+    strict: true,
+  });
+
+  assert.deepEqual(refreshes, []);
+  assert.equal(fullPreviewRequests, 0);
+  assert.equal(host.previewSrc, `${cached.previewUrl}?__pana_reload=9`);
+  assert.equal(host.activeCanvasUrl, cached.previewUrl);
+  assert.equal(navigationRefreshes.length, 0);
+});
+
+test("a compact Rust reuse miss falls back to full authoritative publication", async () => {
+  const { host, template } = workbenchHost();
+  const input = {
+    expectedProjectRoot: host.sessionProjectRoot,
+    expectedSessionId: host.kernelProjectSessionId,
+    expectedWorkspaceRevision: 12,
+    templatePath: template.relativePath,
+  };
+  const cached = receipt(input, { publicationStatus: "reused" });
+  const replacement = receipt(input, {
+    publicationStatus: "reused",
+    reuseToken: "sha256:replacement",
+  });
+  host.projectWorkspaceSnapshot = {
+    projectRoot: input.expectedProjectRoot,
+    runtimeSessionId: input.expectedSessionId,
+    revision: input.expectedWorkspaceRevision,
+  };
+  host.templateWorkbenchActive = true;
+  host.templateWorkbenchTarget = template.relativePath;
+  host.templateWorkbenchPlan = cached.plan;
+  host.templateWorkbenchPreferredPagePath = null;
+  host.templateWorkbenchPreferredRoute = null;
+  host.templateWorkbenchReuseToken = cached.reuseToken;
+  host.activePreviewPath = template.relativePath;
+  host.activeCanvasIdentity = cached.canvasProjection.identity;
+  host.activeCanvasUrl = cached.previewUrl;
+  host.previewSrc = cached.previewUrl;
+  host.previewDocumentMarkup = null;
+  host.templateWorkbenchCanvas.canReuse = () => true;
+
+  const calls = [];
+  mockIPC((command, payload) => {
+    calls.push(command);
+    if (command === "confirm_template_workbench_reuse") {
+      return reuseConfirmation(payload.input, {
+        status: "miss",
+        route: null,
+        previewUrl: null,
+        reuseToken: null,
+        previewRevision: null,
+        canvasTransactionId: null,
+      });
+    }
+    assert.equal(command, "project_template_workbench_preview");
+    return replacement;
+  });
+
+  await updateTemplateWorkbenchContext(host, host.scannedProject, template, null, {
+    strict: true,
+  });
+
+  assert.deepEqual(calls, [
+    "confirm_template_workbench_reuse",
+    "project_template_workbench_preview",
+  ]);
+  assert.equal(host.templateWorkbenchReuseToken, "sha256:replacement");
+});
+
+test("a late compact reuse confirmation has zero UI effects after rapid switching", async () => {
+  const gate = deferred();
+  const { host, statuses, template } = workbenchHost();
+  const input = {
+    expectedProjectRoot: host.sessionProjectRoot,
+    expectedSessionId: host.kernelProjectSessionId,
+    expectedWorkspaceRevision: 12,
+    templatePath: template.relativePath,
+  };
+  const cached = receipt(input, { publicationStatus: "reused" });
+  host.projectWorkspaceSnapshot = {
+    projectRoot: input.expectedProjectRoot,
+    runtimeSessionId: input.expectedSessionId,
+    revision: input.expectedWorkspaceRevision,
+  };
+  host.templateWorkbenchActive = true;
+  host.templateWorkbenchTarget = template.relativePath;
+  host.templateWorkbenchPlan = cached.plan;
+  host.templateWorkbenchPreferredPagePath = null;
+  host.templateWorkbenchPreferredRoute = null;
+  host.templateWorkbenchReuseToken = cached.reuseToken;
+  host.activePreviewPath = template.relativePath;
+  host.activeCanvasIdentity = cached.canvasProjection.identity;
+  host.activeCanvasUrl = cached.previewUrl;
+  host.previewSrc = cached.previewUrl;
+  host.previewDocumentMarkup = null;
+  host.templateWorkbenchCanvas.canReuse = () => true;
+
+  let fullPreviewRequests = 0;
+  let reuseRequest = null;
+  mockIPC((command, payload) => {
+    if (command === "project_template_workbench_preview") {
+      fullPreviewRequests += 1;
+      return cached;
+    }
+    assert.equal(command, "confirm_template_workbench_reuse");
+    reuseRequest = payload.input;
+    return gate.promise;
+  });
+
+  const opening = updateTemplateWorkbenchContext(host, host.scannedProject, template, null, {
+    strict: true,
+  });
+  await nextTurn();
+  host.activeScannedPath = "sass/site.scss";
+  gate.resolve(reuseConfirmation(reuseRequest));
+
+  assert.equal(await opening, null);
+  assert.equal(fullPreviewRequests, 0);
+  assert.deepEqual(statuses, []);
+});
+
+test("a Rust cache hit still refreshes when the mounted Canvas generation is not reusable", async () => {
+  const { host, refreshes, template } = workbenchHost();
+  const input = {
+    expectedProjectRoot: host.sessionProjectRoot,
+    expectedSessionId: host.kernelProjectSessionId,
+    expectedWorkspaceRevision: 12,
+    templatePath: template.relativePath,
+  };
+  const cached = receipt(input, { publicationStatus: "reused" });
+  host.projectWorkspaceSnapshot = {
+    projectRoot: input.expectedProjectRoot,
+    runtimeSessionId: input.expectedSessionId,
+    revision: input.expectedWorkspaceRevision,
+  };
+  host.templateWorkbenchActive = true;
+  host.templateWorkbenchTarget = template.relativePath;
+  host.templateWorkbenchPlan = cached.plan;
+  host.activePreviewPath = template.relativePath;
+  host.previewDocumentMarkup = null;
+  host.templateWorkbenchCanvas.canReuse = () => false;
+
+  mockIPC((command) => command === "read_project_workspace_state"
+    ? {
+        projectRoot: input.expectedProjectRoot,
+        runtimeSessionId: input.expectedSessionId,
+        revision: input.expectedWorkspaceRevision,
+      }
+    : cached);
+
+  await updateTemplateWorkbenchContext(host, host.scannedProject, template, null, {
+    strict: true,
+  });
+
+  assert.deepEqual(refreshes, [cached.previewUrl]);
+});
+
+test("a Rust cache hit is invalidated when the confirmed template route context changes", async () => {
+  const { host, refreshes, template } = workbenchHost();
+  const input = {
+    expectedProjectRoot: host.sessionProjectRoot,
+    expectedSessionId: host.kernelProjectSessionId,
+    expectedWorkspaceRevision: 12,
+    templatePath: template.relativePath,
+  };
+  const previous = receipt(input, { publicationStatus: "reused" });
+  const changed = {
+    ...previous,
+    plan: {
+      ...previous.plan,
+      renderMode: "canonicalRoute",
+      selectedRoute: { kind: "taxonomy_list", label: "Tags", url: "/tags/" },
+    },
+  };
+  host.projectWorkspaceSnapshot = {
+    projectRoot: input.expectedProjectRoot,
+    runtimeSessionId: input.expectedSessionId,
+    revision: input.expectedWorkspaceRevision,
+  };
+  host.templateWorkbenchActive = true;
+  host.templateWorkbenchTarget = template.relativePath;
+  host.templateWorkbenchPlan = previous.plan;
+  host.activePreviewPath = template.relativePath;
+  host.previewDocumentMarkup = null;
+  host.templateWorkbenchCanvas.canReuse = () => true;
+
+  mockIPC((command) => command === "read_project_workspace_state"
+    ? {
+        projectRoot: input.expectedProjectRoot,
+        runtimeSessionId: input.expectedSessionId,
+        revision: input.expectedWorkspaceRevision,
+      }
+    : changed);
+
+  await updateTemplateWorkbenchContext(host, host.scannedProject, template, null, {
+    strict: true,
+  });
+
+  assert.deepEqual(refreshes, [changed.previewUrl]);
+  assert.equal(host.templateWorkbenchPreferredRoute, "/tags/");
 });
 
 test("Template Workbench opens a collection template with the exact Rust-confirmed page context", async () => {

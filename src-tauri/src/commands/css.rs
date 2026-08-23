@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
+    time::Instant,
 };
 use tauri::{AppHandle, State};
 
@@ -14,7 +15,7 @@ use crate::{
             remove_page_stylesheet_link, reusable_scss_relative_path, PageCssTarget,
             PageCssWriteResult, ReusableCssWriteResult, WrittenProjectFile,
         },
-        rules::{selector_source_target, upsert_css_rule_desktop},
+        rules::selector_source_target,
         validation::{
             normalize_panel_rule_input, validate_panel_rule_input, validate_panel_variable_value,
         },
@@ -30,10 +31,16 @@ use crate::{
             FileBufferCommandReceipt, FileBufferRequestIdentity, FileBufferStore,
             ProjectDiskTextReadOutcome,
         },
+        observability::append_events,
+        performance::{
+            elapsed_us, performance_event, project_model_performance_event,
+            with_project_model_sample,
+        },
         project_session::ProjectSessionSnapshot,
         project_workspace::{
-            commit_project_workspace_session_mutation, ProjectWorkspace, ProjectWorkspaceIdentity,
-            ProjectWorkspaceMutationReceipt, WorkspaceDocumentProjection,
+            commit_project_workspace_session_mutation_with_projection_measured, ProjectWorkspace,
+            ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt,
+            ProjectWorkspacePreviewProjection, WorkspaceDocumentProjection,
             WorkspaceMutationMetadata, WorkspaceResourceDelete, WorkspaceResourceMutation,
             WorkspaceTextChange, WorkspaceTextDelete, WorkspaceTextResourceMutationInput,
         },
@@ -487,7 +494,7 @@ fn with_bound_css_file_buffer_revision_internal<T>(
         &session,
         &store,
         workspace_revision,
-        project_model.as_ref(),
+        project_model.as_deref(),
     )?;
     accepted_disk.require_live_complete(
         &session.runtime_instance_id(),
@@ -550,19 +557,26 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
         Option<&ProjectModel>,
     ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
 ) -> Result<CssMutationCommandReceipt<R>, String> {
+    let performance_started = Instant::now();
+    let current_root_lock_wait_started = Instant::now();
     let current_root = state
         .current_root
         .lock()
         .map_err(|_| "Nu am putut bloca root-ul curent pentru CSS/SCSS.".to_string())?;
+    let current_root_lock_wait_us = elapsed_us(current_root_lock_wait_started);
+    let current_root_lock_held_started = Instant::now();
     let project_root = current_root
         .as_ref()
         .ok_or_else(|| "Nu există proiect curent pentru CSS/SCSS.".to_string())?;
     let current_root_string = project_root.to_string_lossy().into_owned();
     let zola_root = zola_project_root(project_root);
+    let project_workspace_lock_wait_started = Instant::now();
     let mut slot = state
         .project_workspace
         .lock()
         .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru CSS/SCSS.".to_string())?;
+    let project_workspace_lock_wait_us = elapsed_us(project_workspace_lock_wait_started);
+    let project_workspace_lock_held_started = Instant::now();
     let workspace = slot
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru CSS/SCSS.".to_string())?;
@@ -592,7 +606,7 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
         project_root,
         &zola_root,
         &workspace.documents,
-        current_model,
+        current_model.map(|model| model.as_ref()),
     )?;
     let Some(input) = input else {
         let session = workspace.session.clone();
@@ -611,89 +625,99 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
         })
         .collect::<Vec<_>>();
     let coalesce_key = coalesce_prefix.map(|prefix| format!("{prefix}:{}", input.target));
-    let (mutation, removed_files) =
-        commit_project_workspace_session_mutation(app, workspace, |candidate| {
-            let previous_model = candidate.project_model.clone();
-            let previous_model_source_revision = candidate.project_model_source_revision;
-            let workspace_identity = ProjectWorkspaceIdentity {
-                expected_project_root: candidate.session.project_root.clone(),
-                expected_session_id: candidate.runtime_session_id(),
-                expected_revision: candidate.revision,
-            };
-            let mutation = candidate.stage_resource_changes(
-                &workspace_identity,
-                WorkspaceMutationMetadata {
-                    label: input.label,
-                    source: source.to_string(),
-                    coalesce_key,
-                    transaction_id: None,
-                },
-                input
-                    .changes
-                    .into_iter()
-                    .map(|change| WorkspaceResourceMutation {
-                        relative_path: change.relative_path,
-                        contents: change.new_text,
-                        create_only: false,
-                    })
-                    .collect(),
-                input
-                    .deletes
-                    .into_iter()
-                    .map(|delete| WorkspaceResourceDelete {
-                        relative_path: delete.relative_path,
-                    })
-                    .collect(),
-                crate::kernel::file_buffer_store::now_ms(),
-            )?;
-            if mutation.changed
-                && previous_model_source_revision == Some(mutation.revision_before)
-                && previous_model.is_some()
-                && !mutation.touched_files.is_empty()
-            {
-                let style_only = mutation.touched_files.iter().all(|relative_path| {
-                    let extension = Path::new(relative_path)
-                        .extension()
-                        .and_then(|extension| extension.to_str());
-                    matches!(extension, Some("css" | "scss" | "sass"))
-                        || previous_model.as_ref().is_some_and(|model| {
-                            matches!(model
+    let ((mutation, removed_files), commit_timings) =
+        commit_project_workspace_session_mutation_with_projection_measured(
+            app,
+            workspace,
+            ProjectWorkspacePreviewProjection::Required,
+            |candidate| {
+                let previous_model = candidate.project_model.clone();
+                let previous_model_source_revision = candidate.project_model_source_revision;
+                let workspace_identity = ProjectWorkspaceIdentity {
+                    expected_project_root: candidate.session.project_root.clone(),
+                    expected_session_id: candidate.runtime_session_id(),
+                    expected_revision: candidate.revision,
+                };
+                let mut mutation = candidate.stage_resource_changes(
+                    &workspace_identity,
+                    WorkspaceMutationMetadata {
+                        label: input.label,
+                        source: source.to_string(),
+                        coalesce_key,
+                        transaction_id: None,
+                    },
+                    input
+                        .changes
+                        .into_iter()
+                        .map(|change| WorkspaceResourceMutation {
+                            relative_path: change.relative_path,
+                            contents: change.new_text,
+                            create_only: false,
+                        })
+                        .collect(),
+                    input
+                        .deletes
+                        .into_iter()
+                        .map(|delete| WorkspaceResourceDelete {
+                            relative_path: delete.relative_path,
+                        })
+                        .collect(),
+                    crate::kernel::file_buffer_store::now_ms(),
+                )?;
+                if mutation.changed
+                    && previous_model_source_revision == Some(mutation.revision_before)
+                    && previous_model.is_some()
+                    && !mutation.touched_files.is_empty()
+                {
+                    let style_only = mutation.touched_files.iter().all(|relative_path| {
+                        let extension = Path::new(relative_path)
+                            .extension()
+                            .and_then(|extension| extension.to_str());
+                        matches!(extension, Some("css" | "scss" | "sass"))
+                            || previous_model.as_ref().is_some_and(|model| {
+                                matches!(model
                                 .files
                                 .iter()
                                 .filter(|file| file.relative_path == *relative_path)
                                 .collect::<Vec<_>>()
                                 .as_slice(), [file] if file.kind == ProjectModelFileKind::Style)
-                        })
-                });
-                let projection = candidate.capture_projection_snapshot()?;
-                let outcome = rebuild_project_model_after_workspace_change(
-                    project_root,
-                    previous_model.as_ref(),
-                    previous_model_source_revision,
-                    &projection,
-                    &mutation.touched_files,
-                    if style_only {
-                        ProjectModelIncrementalIntent::StyleDeclaration
-                    } else {
-                        ProjectModelIncrementalIntent::Unsupported
-                    },
-                )?;
-                candidate.publish_project_model(&projection, outcome.model)?;
-            }
-            let removed_files = mutation
-                .entry
-                .as_ref()
-                .map(|entry| {
-                    entry
-                        .document_paths
-                        .iter()
-                        .filter(|path| !candidate.documents.files.contains_key(*path))
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default();
-            Ok((mutation, removed_files))
-        })?;
+                            })
+                    });
+                    let projection = candidate.capture_projection_snapshot()?;
+                    let outcome = rebuild_project_model_after_workspace_change(
+                        project_root,
+                        previous_model.as_deref(),
+                        previous_model_source_revision,
+                        &projection,
+                        &mutation.touched_files,
+                        if style_only {
+                            ProjectModelIncrementalIntent::StyleDeclaration
+                        } else {
+                            ProjectModelIncrementalIntent::Unsupported
+                        },
+                    )?;
+                    mutation.project_model_performance = Some(
+                        crate::kernel::performance::ProjectModelPerformanceSample::from(
+                            &outcome.report,
+                        ),
+                    );
+                    candidate.publish_project_model(&projection, outcome.model)?;
+                }
+                let removed_files = mutation
+                    .entry
+                    .as_ref()
+                    .map(|entry| {
+                        entry
+                            .document_paths
+                            .iter()
+                            .filter(|path| !candidate.documents.files.contains_key(*path))
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok((mutation, removed_files))
+            },
+        )?;
     let session = workspace.session.clone();
     let documents = mutation
         .touched_files
@@ -703,15 +727,48 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
             snapshot: workspace.documents.text_snapshot(relative_path),
         })
         .collect();
-    let _ = app;
-    Ok(CssMutationCommandReceipt::staged(
+    let project_model_sample = mutation.project_model_performance.clone();
+    let receipt = CssMutationCommandReceipt::staged(
         &session,
         result_value,
         written_files,
         removed_files,
         documents,
         mutation,
-    ))
+    );
+    let project_workspace_lock_held_us = elapsed_us(project_workspace_lock_held_started);
+    let current_root_lock_held_us = elapsed_us(current_root_lock_held_started);
+    drop(slot);
+    drop(current_root);
+    let event = performance_event(
+        "css",
+        "performance",
+        "css_edit",
+        source,
+        Some(receipt.authority.operation_id.clone()),
+        elapsed_us(performance_started),
+    )
+    .with_attribute("currentRootLockWaitUs", current_root_lock_wait_us)
+    .with_attribute("currentRootLockHeldUs", current_root_lock_held_us)
+    .with_attribute("projectWorkspaceLockWaitUs", project_workspace_lock_wait_us)
+    .with_attribute("projectWorkspaceLockHeldUs", project_workspace_lock_held_us)
+    .with_attribute("candidateCloneUs", commit_timings.candidate_clone_us)
+    .with_attribute("mutationUs", commit_timings.mutation_us)
+    .with_attribute("recoveryPersistUs", commit_timings.recovery_persist_us)
+    .with_attribute("authorityPublishUs", commit_timings.authority_publish_us);
+    let mut events = vec![with_project_model_sample(
+        event,
+        project_model_sample.as_ref(),
+    )];
+    if let Some(sample) = project_model_sample.as_ref() {
+        events.push(project_model_performance_event(
+            "css",
+            Some(receipt.authority.operation_id.clone()),
+            sample,
+        ));
+    }
+    let _ = append_events(app, events);
+    Ok(receipt)
 }
 
 fn execute_css_workspace_mutation<R>(
@@ -1026,14 +1083,6 @@ fn base_class_selector(selector: &str) -> Option<String> {
     (end > 1 && end < selector.len()).then(|| selector[..end].to_string())
 }
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PageCssCleanupResult {
-    pub stylesheet_deleted: bool,
-    pub template_updated: bool,
-    pub written_files: Vec<WrittenProjectFile>,
-}
-
 fn strip_block_comments(source: &str) -> String {
     let mut result = String::new();
     let mut cursor = 0;
@@ -1335,91 +1384,6 @@ pub fn resolve_css_inspector_context(
 }
 
 #[tauri::command(async)]
-pub fn cleanup_page_css_contract(
-    template_path: String,
-    identity: FileBufferRequestIdentity,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<CssMutationCommandReceipt<PageCssCleanupResult>, String> {
-    let template_path = to_zola_relative_path(&template_path);
-    execute_css_workspace_mutation(
-        &app,
-        &state,
-        &identity,
-        |project_root, _zola_root, store| {
-            let scss_rel = page_scss_relative_path(&template_path);
-            let href = page_css_href(&template_path);
-            let scss_project_rel = to_project_relative_path(&scss_rel);
-            let template_project_rel = to_project_relative_path(&template_path);
-            let mut changes = Vec::new();
-            let mut deletes = Vec::new();
-            let mut stylesheet_deleted = false;
-            let mut template_updated = false;
-            let mut written_files = Vec::new();
-
-            let has_effective_rules = read_current_zola_text(project_root, store, &scss_rel)?
-                .as_deref()
-                .map(css_has_effective_rules)
-                .unwrap_or(false);
-
-            if has_effective_rules {
-                return Ok((
-                    None,
-                    PageCssCleanupResult {
-                        stylesheet_deleted,
-                        template_updated,
-                        written_files,
-                    },
-                ));
-            }
-
-            if project_relative_exists(project_root, store, &scss_project_rel)? {
-                deletes.push(WorkspaceTextDelete {
-                    relative_path: scss_project_rel.clone(),
-                });
-                stylesheet_deleted = true;
-            }
-
-            if let Some(template_source) =
-                read_current_zola_text(project_root, store, &template_path)?
-            {
-                let updated = remove_page_stylesheet_link(&template_source, &href);
-                push_text_change_if_changed(
-                    &mut changes,
-                    &mut written_files,
-                    template_project_rel.clone(),
-                    &template_source,
-                    updated,
-                );
-                template_updated = written_files
-                    .iter()
-                    .any(|file| file.relative_path == template_project_rel);
-            }
-
-            let input = if changes.is_empty() && deletes.is_empty() {
-                None
-            } else {
-                Some(WorkspaceTextResourceMutationInput {
-                    label: "Cleanup Page CSS contract".to_string(),
-                    target: template_project_rel,
-                    changes,
-                    deletes,
-                })
-            };
-
-            Ok((
-                input,
-                PageCssCleanupResult {
-                    stylesheet_deleted,
-                    template_updated,
-                    written_files,
-                },
-            ))
-        },
-    )
-}
-
-#[tauri::command(async)]
 pub fn get_scss_variables(
     identity: FileBufferRequestIdentity,
     state: State<AppState>,
@@ -1570,76 +1534,6 @@ fn validate_scss_variable_name(value: &str) -> Result<String, String> {
         return Err("Numele tokenului trebuie să conțină numai litere, cifre, _ și -.".to_string());
     }
     Ok(value.to_string())
-}
-
-#[tauri::command(async)]
-pub fn set_css_rule(
-    relative_path: String,
-    selector: String,
-    properties: HashMap<String, String>,
-    identity: FileBufferRequestIdentity,
-    expected_selection: Option<SelectionMutationIdentity>,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<CssMutationCommandReceipt<()>, String> {
-    set_css_rule_impl(
-        relative_path,
-        selector,
-        properties,
-        &identity,
-        expected_selection.as_ref(),
-        &app,
-        &state,
-    )
-}
-
-fn set_css_rule_impl(
-    relative_path: String,
-    selector: String,
-    properties: HashMap<String, String>,
-    identity: &FileBufferRequestIdentity,
-    expected_selection: Option<&SelectionMutationIdentity>,
-    app: &AppHandle,
-    state: &State<AppState>,
-) -> Result<CssMutationCommandReceipt<()>, String> {
-    let properties = normalize_panel_rule_input(&selector, &properties, "desktop")?;
-    let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
-    execute_selection_bound_css_workspace_mutation(
-        app,
-        state,
-        identity,
-        expected_selection,
-        move |project_root, _zola_root, store| {
-            if properties.is_empty() {
-                return Ok((None, ()));
-            }
-            let project_relative_path = to_project_relative_path(&zola_relative_path);
-            let existing = read_current_zola_text(project_root, store, &zola_relative_path)?
-                .unwrap_or_default();
-            let updated = upsert_css_rule_desktop(&existing, selector.trim(), &properties);
-            let changes = if updated == existing {
-                Vec::new()
-            } else {
-                vec![WorkspaceTextChange {
-                    relative_path: project_relative_path.clone(),
-                    new_text: updated,
-                }]
-            };
-
-            let input = if changes.is_empty() {
-                None
-            } else {
-                Some(WorkspaceTextResourceMutationInput {
-                    label: "CSS rule".to_string(),
-                    target: project_relative_path,
-                    changes,
-                    deletes: Vec::new(),
-                })
-            };
-
-            Ok((input, ()))
-        },
-    )
 }
 
 /// Write a CSS rule at the correct breakpoint level.

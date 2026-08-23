@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     blocks::native_block_registry_snapshot,
     kernel::{
-        content_models::{ContentFieldDefinition, ContentFieldKind, ContentModelDefinition},
         dynamic_widgets::{
             DynamicFieldEmptyBehavior, DynamicFieldPresentation, DynamicFieldScope,
             DynamicFieldWidgetProperties, DynamicValueBinding, DynamicValueFormat,
@@ -20,7 +19,7 @@ use crate::{
     },
 };
 
-pub const INSERT_CATALOG_SCHEMA_VERSION: u32 = 1;
+pub const INSERT_CATALOG_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,7 +54,6 @@ pub enum InsertCatalogCategory {
     Component,
     Tera,
     DynamicWidget,
-    DirectField,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -65,7 +63,6 @@ pub enum InsertCatalogOrigin {
     Native,
     Project,
     Theme,
-    ContentModel,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -133,31 +130,10 @@ pub enum InsertCatalogPayload {
         name: Option<String>,
         expression: Option<String>,
     },
-    DynamicField {
-        tera_kind: String,
-        family: String,
-        expression: String,
-        binding: InsertCatalogDynamicBinding,
-    },
     DynamicWidget {
         provider_id: String,
         properties: DynamicWidgetProperties,
     },
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InsertCatalogDynamicBinding {
-    pub model_id: String,
-    pub field_id: String,
-    pub path: String,
-    pub scope: String,
-    pub item_path: Option<String>,
-    pub presentation: String,
-    pub prefix: String,
-    pub suffix: String,
-    pub fallback: String,
-    pub text: String,
 }
 
 pub fn build_insert_catalog(
@@ -175,9 +151,6 @@ pub fn build_insert_catalog(
         component_group(graph, &base_capability),
         tera_group(&base_capability),
         dynamic_widget_group(graph, &context, &base_capability),
-        // Contract legacy păstrat pentru compatibilitate/API avansat. UI-ul normal
-        // nu mai expune categoria; inserările noi folosesc DynamicValue.
-        direct_field_group(graph, &context, &base_capability),
     ];
     InsertCatalogSnapshot {
         schema_version: INSERT_CATALOG_SCHEMA_VERSION,
@@ -903,41 +876,6 @@ fn default_listing_properties(graph: &SourceGraph) -> Option<DynamicWidgetProper
     }))
 }
 
-fn direct_field_group(
-    graph: &SourceGraph,
-    context: &InsertCatalogContext,
-    base: &InsertCatalogCapabilities,
-) -> InsertCatalogGroup {
-    let listing_item = listing_item_for_context(graph, context);
-    let root_scope = if listing_item.is_some() {
-        DirectFieldRootScope::CollectionItem
-    } else {
-        DirectFieldRootScope::Page
-    };
-    let model_ids = listing_item
-        .and_then(|item| item.model_id.clone())
-        .map(|model_id| BTreeSet::from([model_id]))
-        .unwrap_or_else(|| applicable_model_ids(graph, context));
-    let target_inside_loop = target_inside_loop(graph, context.target_source_id.as_deref());
-    let mut items = graph
-        .content_models
-        .models
-        .iter()
-        .filter(|model| model_ids.contains(&model.id))
-        .flat_map(|model| dynamic_items(model, target_inside_loop, root_scope, base))
-        .collect::<Vec<_>>();
-    items.sort_by(|left, right| left.label.cmp(&right.label));
-    InsertCatalogGroup {
-        id: "direct-fields".into(),
-        category: InsertCatalogCategory::DirectField,
-        label: "Câmpuri directe".into(),
-        description:
-            "Inserări Tera directe păstrate ca fallback pentru modelele atașate contextului activ."
-                .into(),
-        items,
-    }
-}
-
 fn listing_item_for_context<'a>(
     graph: &'a SourceGraph,
     context: &InsertCatalogContext,
@@ -951,178 +889,6 @@ fn listing_item_for_context<'a>(
         normalize_path(&item.file) == active_file
             || normalize_path(&item.template_name) == active_file.trim_start_matches("templates/")
     })
-}
-
-fn applicable_model_ids(graph: &SourceGraph, context: &InsertCatalogContext) -> BTreeSet<String> {
-    let mut page_files = BTreeSet::new();
-    if let Some(page) = context.active_page_path.as_deref() {
-        page_files.insert(normalize_path(page));
-    }
-    let active_template = context
-        .active_template_path
-        .as_deref()
-        .and_then(template_name_for_file)
-        .or_else(|| {
-            context
-                .active_document_path
-                .as_deref()
-                .and_then(template_name_for_file)
-        });
-    if let Some(active_template) = active_template {
-        for page in &graph.pages {
-            if page
-                .resolved_template
-                .as_deref()
-                .is_some_and(|template| normalize_path(template) == active_template)
-            {
-                page_files.insert(normalize_path(&page.file));
-            }
-        }
-    }
-    model_ids_for_page_files(&graph.content_models, &page_files)
-}
-
-fn model_ids_for_page_files(
-    catalog: &crate::kernel::content_models::ContentModelCatalog,
-    page_files: &BTreeSet<String>,
-) -> BTreeSet<String> {
-    catalog
-        .page_bindings
-        .iter()
-        .filter(|binding| page_files.contains(&normalize_path(&binding.page_file)))
-        .map(|binding| binding.model_id.clone())
-        .collect()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DirectFieldRootScope {
-    Page,
-    CollectionItem,
-}
-
-fn dynamic_items(
-    model: &ContentModelDefinition,
-    target_inside_loop: bool,
-    root_scope: DirectFieldRootScope,
-    base: &InsertCatalogCapabilities,
-) -> Vec<InsertCatalogItem> {
-    let mut result = Vec::new();
-    flatten_dynamic_fields(
-        model,
-        &model.fields,
-        "",
-        None,
-        target_inside_loop,
-        root_scope,
-        base,
-        &mut result,
-    );
-    result
-}
-
-#[allow(clippy::too_many_arguments)]
-fn flatten_dynamic_fields(
-    model: &ContentModelDefinition,
-    fields: &[ContentFieldDefinition],
-    parent: &str,
-    item_parent: Option<&str>,
-    target_inside_loop: bool,
-    root_scope: DirectFieldRootScope,
-    base: &InsertCatalogCapabilities,
-    output: &mut Vec<InsertCatalogItem>,
-) {
-    for field in fields {
-        let path = join_field_path(parent, &field.key);
-        let item_path = item_parent.map(|parent| join_field_path(parent, &field.key));
-        if field.kind != ContentFieldKind::Group {
-            let resolved_item_path = item_path.as_deref().or_else(|| {
-                (root_scope == DirectFieldRootScope::CollectionItem).then_some(path.as_str())
-            });
-            let (tera_kind, presentation, expression) =
-                dynamic_presentation(field, &path, resolved_item_path);
-            let scope = if resolved_item_path.is_some() {
-                "item"
-            } else {
-                "page"
-            };
-            let capability = merge_capability(
-                base,
-                scope == "page"
-                    || root_scope == DirectFieldRootScope::CollectionItem
-                    || target_inside_loop,
-                "insert_catalog_dynamic_item_scope_requires_loop",
-            );
-            output.push(InsertCatalogItem {
-                id: format!("dynamic:{}:{}:{scope}", model.id, field.id),
-                category: InsertCatalogCategory::DirectField,
-                origin: InsertCatalogOrigin::ContentModel,
-                label: field.label.clone(),
-                description: if field.help.trim().is_empty() {
-                    format!("Câmp din modelul {} · {path}", model.label)
-                } else {
-                    field.help.clone()
-                },
-                capabilities: capability,
-                payload: InsertCatalogPayload::DynamicField {
-                    tera_kind,
-                    family: "data".into(),
-                    expression,
-                    binding: InsertCatalogDynamicBinding {
-                        model_id: model.id.clone(),
-                        field_id: field.id.clone(),
-                        path: path.clone(),
-                        scope: scope.into(),
-                        item_path: resolved_item_path.map(str::to_string),
-                        presentation,
-                        prefix: String::new(),
-                        suffix: String::new(),
-                        fallback: String::new(),
-                        text: field.label.clone(),
-                    },
-                },
-            });
-        }
-        let next_item_parent = if field.kind == ContentFieldKind::Repeater {
-            Some("")
-        } else {
-            item_path.as_deref()
-        };
-        flatten_dynamic_fields(
-            model,
-            &field.fields,
-            &path,
-            next_item_parent,
-            target_inside_loop,
-            root_scope,
-            base,
-            output,
-        );
-    }
-}
-
-fn dynamic_presentation(
-    field: &ContentFieldDefinition,
-    path: &str,
-    item_path: Option<&str>,
-) -> (String, String, String) {
-    let value = item_path
-        .map(|path| format!("item.{path}"))
-        .unwrap_or_else(|| format!("page.extra.{path}"));
-    match field.kind {
-        ContentFieldKind::Repeater => ("for".into(), "list".into(), format!("item in {value}")),
-        ContentFieldKind::Boolean => ("if".into(), "condition".into(), value),
-        ContentFieldKind::Image => ("teraVariable".into(), "image".into(), value),
-        ContentFieldKind::Url => ("teraVariable".into(), "link".into(), value),
-        _ => ("teraVariable".into(), "text".into(), value),
-    }
-}
-
-fn join_field_path(parent: &str, key: &str) -> String {
-    if parent.is_empty() {
-        key.to_string()
-    } else {
-        format!("{parent}.{key}")
-    }
 }
 
 fn target_inside_loop(graph: &SourceGraph, target_source_id: Option<&str>) -> bool {
@@ -1223,128 +989,6 @@ mod tests {
             ..Default::default()
         });
         assert!(available.can_drag);
-    }
-
-    #[test]
-    fn repeater_children_are_item_scoped_and_blocked_outside_loop() {
-        let model = ContentModelDefinition {
-            schema_version: 1,
-            id: "serviciu".into(),
-            label: "Serviciu".into(),
-            description: String::new(),
-            fields: vec![ContentFieldDefinition {
-                id: "features".into(),
-                key: "features".into(),
-                label: "Avantaje".into(),
-                kind: ContentFieldKind::Repeater,
-                required: false,
-                help: String::new(),
-                default_value: None,
-                choices: Vec::new(),
-                minimum: None,
-                maximum: None,
-                pattern: None,
-                fields: vec![ContentFieldDefinition {
-                    id: "feature-title".into(),
-                    key: "title".into(),
-                    label: "Titlu".into(),
-                    kind: ContentFieldKind::Text,
-                    required: false,
-                    help: String::new(),
-                    default_value: None,
-                    choices: Vec::new(),
-                    minimum: None,
-                    maximum: None,
-                    pattern: None,
-                    fields: Vec::new(),
-                }],
-            }],
-            file: String::new(),
-        };
-        let items = dynamic_items(&model, false, DirectFieldRootScope::Page, &draggable());
-        let child = items
-            .iter()
-            .find(|item| item.id == "dynamic:serviciu:feature-title:item")
-            .expect("nested field");
-        assert!(!child.capabilities.can_drag);
-        let InsertCatalogPayload::DynamicField { binding, .. } = &child.payload else {
-            panic!("dynamic payload")
-        };
-        assert_eq!(binding.scope, "item");
-        assert_eq!(binding.item_path.as_deref(), Some("title"));
-        assert_eq!(binding.path, "features.title");
-    }
-
-    #[test]
-    fn listing_item_direct_fields_bind_to_collection_item() {
-        let model = ContentModelDefinition {
-            schema_version: 1,
-            id: "serviciu".into(),
-            label: "Serviciu".into(),
-            description: String::new(),
-            fields: vec![ContentFieldDefinition {
-                id: "service-title".into(),
-                key: "service_title".into(),
-                label: "Titlu serviciu".into(),
-                kind: ContentFieldKind::Text,
-                required: false,
-                help: String::new(),
-                default_value: None,
-                choices: Vec::new(),
-                minimum: None,
-                maximum: None,
-                pattern: None,
-                fields: Vec::new(),
-            }],
-            file: String::new(),
-        };
-        let items = dynamic_items(
-            &model,
-            false,
-            DirectFieldRootScope::CollectionItem,
-            &draggable(),
-        );
-        let field = items.first().expect("direct field");
-        assert!(field.capabilities.can_drag);
-        let InsertCatalogPayload::DynamicField {
-            expression,
-            binding,
-            ..
-        } = &field.payload
-        else {
-            panic!("dynamic payload")
-        };
-        assert_eq!(expression, "item.service_title");
-        assert_eq!(binding.scope, "item");
-        assert_eq!(binding.item_path.as_deref(), Some("service_title"));
-    }
-
-    #[test]
-    fn applicable_models_are_bound_to_exact_page_context() {
-        let catalog = crate::kernel::content_models::ContentModelCatalog {
-            page_bindings: vec![
-                crate::kernel::content_models::ContentModelPageBinding {
-                    page_file: "content/servicii/a.md".into(),
-                    section_path: "content/servicii/_index.md".into(),
-                    model_id: "serviciu".into(),
-                    values: BTreeMap::new(),
-                    missing_required_fields: Vec::new(),
-                },
-                crate::kernel::content_models::ContentModelPageBinding {
-                    page_file: "content/proiecte/a.md".into(),
-                    section_path: "content/proiecte/_index.md".into(),
-                    model_id: "proiect".into(),
-                    values: BTreeMap::new(),
-                    missing_required_fields: Vec::new(),
-                },
-            ],
-            ..Default::default()
-        };
-        let page_files = BTreeSet::from(["content/servicii/a.md".to_string()]);
-        assert_eq!(
-            model_ids_for_page_files(&catalog, &page_files),
-            BTreeSet::from(["serviciu".to_string()])
-        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ test("catalogul semantic al tokenilor este deținut de Rust și legat de Project
   const command = source("src-tauri/src/commands/design_system.rs");
   const registry = source("src-tauri/src/tauri_command_registry.rs");
   const kernel = source("src-tauri/src/kernel/design_system/tokens.rs");
-  const io = source("src/lib/project/io.ts");
+  const io = source("src/lib/css/io.ts");
 
   assert.match(
     command,
@@ -36,14 +36,18 @@ test("catalogul semantic al tokenilor este deținut de Rust și legat de Project
 });
 
 test("frontendul prezintă catalogul Rust fără clasificarea SCSS legacy", () => {
-  const workspace = source("src/lib/components/creation/DesignSystemWorkspace.svelte");
+  const workspace = source("src/lib/components/creation/design-system/DesignTokensWorkspace.svelte");
   const catalog = source("src/lib/components/creation/DesignTokenCatalog.svelte");
+  const state = source("src/lib/components/creation/design-system/catalog-state.svelte.ts");
+  const shell = source("src/lib/components/creation/design-system/ResourceWorkspaceShell.svelte");
 
-  assert.match(workspace, /readDesignTokenCatalog/);
+  assert.match(state, /readDesignTokenCatalog/);
   assert.match(workspace, /<DesignTokenCatalog/);
   assert.match(workspace, /selectedToken\.rawValue/);
   assert.match(workspace, /selectedToken\.resolvedValue/);
   assert.doesNotMatch(workspace, /function variableCategory|type TokenCategory/);
+  assert.match(workspace, /tokens=\{visibleTokens\}/);
+  assert.doesNotMatch(catalog, /normalizedQuery|\bquery\b|\bcategory\b/);
 
   assert.match(catalog, /class="token-sections"/);
   assert.match(catalog, /class="token-grid"/);
@@ -70,7 +74,7 @@ test("frontendul prezintă catalogul Rust fără clasificarea SCSS legacy", () =
   assert.doesNotMatch(catalog, /\.token-section\s*\{[^}]*border:\s*1px/);
   assert.doesNotMatch(catalog, /\.section-icon\.(?:color|typography|spacing|radius)/);
   assert.match(
-    workspace,
+    shell,
     /\.workspace-body\s*\{[\s\S]*grid-template-columns:\s*minmax\(340px,\s*1fr\)\s*minmax\(290px,\s*\.58fr\)/,
   );
   assert.doesNotMatch(workspace, /tokens-active/);

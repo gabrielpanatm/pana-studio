@@ -6,32 +6,53 @@ function source(path) {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 }
 
+test("CSS contracts and IPC have one domain-owned frontend path", () => {
+  const contracts = source("src/lib/css/contracts.ts");
+  const mutationContract = source("src/lib/css/mutation-contract.ts");
+  const cssIo = source("src/lib/css/io.ts");
+
+  assert.match(contracts, /export type CssRuleContext/);
+  assert.doesNotMatch(contracts, /export type \{/);
+  assert.match(mutationContract, /export type CssMutationAuthorityReceipt/);
+  assert.match(cssIo, /export async function resolveCssInspectorContext/);
+  assert.equal(existsSync(new URL("../src/lib/types.ts", import.meta.url)), false);
+  assert.doesNotMatch(cssIo, /\bsetCssRule\b|\bcleanupPageCssContract\b|"set_css_rule"|"cleanup_page_css_contract"/);
+});
+
 test("CSS panel has one Rust/ProjectWorkspace write authority", () => {
-  const inspector = source("src/lib/components/InspectorPane.svelte");
-  const app = source("src/lib/state/app.svelte.ts");
-  const design = source("src/lib/components/creation/DesignSystemWorkspace.svelte");
+  const inspector = source("src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const queue = source("src/lib/inspector/css-inspector-mutation-queue.ts");
+  const service = source("src/lib/css/workspace-service.ts");
+  const application = source("src/lib/components/application/ApplicationWorkspace.svelte");
+  const controller = source("src/lib/state/inspector-css-controller.ts");
+  const design = source("src/lib/components/creation/design-system/DesignTokensWorkspace.svelte");
   const sourceSync = source("src/lib/css/source-sync.ts");
 
-  assert.match(inspector, /setCssRuleAtViewport/);
-  assert.match(inspector, /setPageCssRuleAtViewport/);
-  assert.match(inspector, /setReusableCssRuleAtViewport/);
+  assert.match(queue, /setCssRuleAtViewport/);
+  assert.match(queue, /setPageCssRuleAtViewport/);
+  assert.match(queue, /setReusableCssRuleAtViewport/);
   assert.doesNotMatch(inspector, /setScssVariable|VariablesPane|inspectorTab === "vars"/);
-  assert.match(app, /async updateDesignSystemVariable[\s\S]*setScssVariable/);
-  assert.match(design, /app\.updateDesignSystemVariable/);
-  assert.match(inspector, /stageCssRuleMutation/);
-  assert.match(inspector, /flushStagedCssPanelMutations/);
-  assert.match(inspector, /registerEditFlushHandler\("inspector-css-workspace"/);
+  assert.match(controller, /export async function updateDesignSystemVariable[\s\S]*setScssVariable/);
+  assert.match(service, /updateVariable[\s\S]*updateDesignSystemVariable\(this\.inspector/);
+  assert.match(design, /updateVariable/);
+  assert.match(application, /updateVariable: \(variable, value\) => cssWorkspace\.updateVariable/);
+  assert.match(queue, /private stage\(/);
+  assert.match(queue, /async flushForRegistry\(/);
+  assert.match(inspector, /registerEditFlushHandler\(\s*"inspector-css-workspace"/);
+  assert.doesNotMatch(inspector, /setCssRuleAtViewport|setPageCssRuleAtViewport|setReusableCssRuleAtViewport/);
   assert.doesNotMatch(inspector, /applyCssPanelEditToOpenSource/);
-  assert.doesNotMatch(app, /applyCssPanelEditToOpenSource|projectOpenSourceInspectorCssMutation/);
+  assert.doesNotMatch(service, /applyCssPanelEditToOpenSource|projectOpenSourceInspectorCssMutation/);
   assert.doesNotMatch(sourceSync, /upsertCssPropertyInSource|upsertDeclarationInBlock/);
+  assert.doesNotMatch(controller, /AppState|as unknown as|as AppState/);
 });
 
 test("reusable template CSS has a deterministic Rust owner and consumer delivery", () => {
   const theme = source("src-tauri/src/zola_theme.rs");
   const rust = source("src-tauri/src/commands/css.rs");
   const stylesheet = source("src-tauri/src/css/page/stylesheet.rs");
-  const io = source("src/lib/project/io.ts");
-  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const io = source("src/lib/css/io.ts");
+  const inspector = source("src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const queue = source("src/lib/inspector/css-inspector-mutation-queue.ts");
   const pane = source("src/lib/components/inspector/panes/CssPane.svelte");
   const registry = source("src-tauri/src/tauri_command_registry.rs");
 
@@ -43,7 +64,7 @@ test("reusable template CSS has a deterministic Rust owner and consumer delivery
   assert.match(rust, /reusable_scoped_candidates/);
   assert.match(stylesheet, /prepare_reusable_consumer_stylesheet_source/);
   assert.match(io, /"set_reusable_css_rule_at_viewport"/);
-  assert.match(inspector, /pageTarget\?\.targetKind === "reusable"/);
+  assert.match(queue, /pageTarget\?\.targetKind === "reusable"/);
   assert.match(pane, /pageCssTarget\?\.targetKind === "reusable"/);
   assert.match(pane, /pageCssTarget\.consumerFiles/);
   assert.match(pane, /inspector-css-reusable-consumers/);
@@ -55,8 +76,9 @@ test("CSS inspector context is resolved atomically by Rust without the legacy ma
   const rust = source("src-tauri/src/commands/css.rs");
   const coordinator = source("src-tauri/src/kernel/selection_coordinator.rs");
   const registry = source("src-tauri/src/tauri_command_registry.rs");
-  const io = source("src/lib/project/io.ts");
-  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const io = source("src/lib/css/io.ts");
+  const inspector = source("src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const reader = source("src/lib/inspector/css-inspector-reader.ts");
   const pane = source("src/lib/components/inspector/panes/CssPane.svelte");
   const permission = source(
     "src-tauri/permissions/autogenerated/resolve_css_inspector_context.toml",
@@ -73,7 +95,7 @@ test("CSS inspector context is resolved atomically by Rust without the legacy ma
   assert.match(permission, /allow-resolve-css-inspector-context/);
   assert.match(io, /export async function resolveCssInspectorContext/);
   assert.match(io, /resolution\.selectionRevision !== expectedRevision/);
-  assert.match(inspector, /await resolveCssInspectorContext/);
+  assert.match(reader, /resolveCssInspectorContext/);
   assert.match(pane, /resolution\?\.state === "ambiguous"/);
   assert.doesNotMatch(pane, /inspector-css-search-all|searchClassInAllFiles/);
   assert.doesNotMatch(
@@ -90,42 +112,44 @@ test("Inspectorul începe cu conținutul util, fără antet redundant", () => {
 });
 
 test("CSS receipt projects exact FileBuffer snapshots into CodeMirror state", () => {
-  const types = source("src/lib/types.ts");
-  const io = source("src/lib/project/io.ts");
-  const app = source("src/lib/state/app.svelte.ts");
+  const contract = source("src/lib/css/mutation-contract.ts");
+  const io = source("src/lib/css/io.ts");
+  const service = source("src/lib/css/workspace-service.ts");
+  const controller = source("src/lib/state/inspector-css-controller.ts");
 
-  assert.match(types, /CssMutationAuthorityReceipt[\s\S]*documents: WorkspaceDocumentProjection\[\]/);
+  assert.match(contract, /CssMutationAuthorityReceipt[\s\S]*documents: WorkspaceDocumentProjection\[\]/);
   assert.match(io, /authority\.schemaVersion !== 2/);
   assert.match(io, /written\.contents !== snapshot\.text/);
-  assert.match(app, /rebaseFileBufferDraftSyncProjection\(projection\.relativePath, projection\.snapshot\)/);
-  assert.match(app, /this\.source = projection\.snapshot\.text/);
+  assert.match(controller, /rebaseFileBufferDraftSyncProjection\(projection\.relativePath, projection\.snapshot\)/);
+  assert.match(controller, /host\.source\.source = projection\.snapshot\.text/);
+  assert.match(service, /projectCommittedMutation[\s\S]*projectCommittedInspectorCssMutation/);
 });
 
 test("toggle-ul activ emite delete intent, iar un no-op recitește adevărul canonic", () => {
   const segmented = source("src/lib/components/inspector/controls/SegmentedControl.svelte");
-  const app = source("src/lib/state/app.svelte.ts");
+  const controller = source("src/lib/state/inspector-css-controller.ts");
 
   assert.match(segmented, /toggleable && value === nextValue \? "" : nextValue/);
   assert.match(
-    app,
-    /authority\.status === "noop"[\s\S]*this\.notifyCssSourceChanged\(\)/,
+    controller,
+    /authority\.status === "noop"[\s\S]*host\.notifyCssSourceChanged\(\)/,
   );
 });
 
 test("proiecția workspace cere o origine Preview navigabilă, nu doar un iframe", () => {
-  const app = source("src/lib/state/app.svelte.ts");
+  const preview = source("src/lib/preview/workspace-state.svelte.ts");
   const previewController = source("src/lib/state/preview-controller.ts");
-  const canProject = app.slice(
-    app.indexOf("\n  canProjectWorkspacePreview()"),
-    app.indexOf("markPreviewLive", app.indexOf("\n  canProjectWorkspacePreview()")),
+  const canProject = preview.slice(
+    preview.indexOf("\n  canProjectWorkspacePreview()"),
+    preview.indexOf("\n  markLive", preview.indexOf("\n  canProjectWorkspacePreview()")),
   );
 
-  assert.match(canProject, /hasMountedCanvasProjectionSurface\(\)/);
-  assert.match(canProject, /scannedProject\?\.previewBaseUrl/);
-  assert.match(canProject, /previewSrc !== "about:blank"/);
+  assert.match(canProject, /this\.hasMountedSurface\(\)/);
+  assert.match(canProject, /project\?\.previewBaseUrl/);
+  assert.match(canProject, /this\.src !== "about:blank"/);
   assert.match(
     previewController,
-    /canvasSurfaceElement === host\.previewFrame[\s\S]*canvasSurfaceElement\.contentWindow/,
+    /host\.surface\.canvasElement === host\.surface\.frame[\s\S]*host\.surface\.canvasElement\.contentWindow/,
   );
 });
 
@@ -143,7 +167,8 @@ test("all ten CSS sections share the explicit property edit contract", () => {
 });
 
 test("CSS edits use explicit draft, commit and cancel boundaries", () => {
-  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const inspector = source("src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const queue = source("src/lib/inspector/css-inspector-mutation-queue.ts");
   const contract = source("src/lib/inspector/css-property-edit.ts");
   const propInput = source("src/lib/components/inspector/controls/PropInput.svelte");
   const typography = source("src/lib/components/inspector/sections/TypographySection.svelte");
@@ -154,10 +179,10 @@ test("CSS edits use explicit draft, commit and cancel boundaries", () => {
   assert.match(contract, /cancel: \(property: string\)/);
   assert.match(contract, /commitMany:/);
   assert.match(contract, /cancelMany:/);
-  assert.match(inspector, /function draftCssProperty/);
-  assert.match(inspector, /function commitCssProperty/);
-  assert.match(inspector, /function cancelCssProperty/);
-  assert.match(inspector, /restoreCssPendingValueBaseline/);
+  assert.match(queue, /private draftProperty\(/);
+  assert.match(queue, /private commitProperty\(/);
+  assert.match(queue, /private cancelProperty\(/);
+  assert.match(queue, /restoreCssPendingValueBaseline/);
   assert.doesNotMatch(inspector, /addEventListener\("click", scheduleStagedCssPanelFlush\)/);
   assert.doesNotMatch(inspector, /addEventListener\("change", scheduleStagedCssPanelFlush\)/);
   assert.doesNotMatch(inspector, /<svelte:window onpointerup=\{scheduleStagedCssPanelFlush\}/);
@@ -169,88 +194,89 @@ test("CSS edits use explicit draft, commit and cancel boundaries", () => {
 });
 
 test("CSS refresh and class switching keep the previous complete projection until atomic replacement", () => {
-  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const inspector = source("src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const reader = source("src/lib/inspector/css-inspector-reader.ts");
+  const state = source("src/lib/inspector/css-inspector-state.svelte.ts");
   const pane = source("src/lib/components/inspector/panes/CssPane.svelte");
-  const classSwitch = inspector.slice(
-    inspector.indexOf("async function selectClassForCss"),
-    inspector.indexOf("function selectCssVariant"),
+  const classSwitch = reader.slice(
+    reader.indexOf("async selectClass"),
+    reader.indexOf("captureCurrentSelection"),
   );
 
-  assert.match(inspector, /\{ retainProjection: true \}/);
-  assert.match(inspector, /hasStableCssInspectorProjection/);
-  assert.match(inspector, /loadingClassRules = !retainProjection/);
-  assert.match(inspector, /presentedCssSelector/);
-  assert.match(inspector, /cssProjectionTransitioning/);
+  assert.match(reader, /this\.state\.hasStableProjection\(expectedSelection\)/);
+  assert.match(state, /this\.loading = !retainProjection/);
+  assert.match(state, /get presentedSelector\(\)/);
+  assert.match(state, /get projectionTransitioning\(\)/);
   assert.match(pane, /inert=\{projectionTransitioning\}/);
-  assert.match(classSwitch, /const retainProjection = hasStableCssInspectorProjection/);
+  assert.match(classSwitch, /const retainProjection = this\.state\.hasStableProjection/);
   assert.match(
     classSwitch,
-    /if \(resolution\.state === "ambiguous" \|\| !resolution\.target\) \{\s*applyCssInspectorResolution/,
+    /if \(resolution\.state === "ambiguous" \|\| !resolution\.target\) \{\s*this\.applyResolution/,
   );
   assert.doesNotMatch(
     classSwitch.slice(
-      classSwitch.indexOf("const allowed = await onCssCodeTargetChange"),
+      classSwitch.indexOf("const allowed = await this.dependencies.changeCodeTarget"),
       classSwitch.indexOf("return allowed"),
     ),
-    /applyCssInspectorResolution/,
+    /applyResolution/,
   );
-  assert.match(inspector, /cssInspectorSubjectKey\(nextSelectionIdentity\)/);
-  assert.match(inspector, /selectionSummary=\{presentedInspectorSelectionSummary\}/);
+  assert.match(reader, /cssInspectorSubjectKey\(expectedSelection\)/);
+  assert.match(inspector, /selectionSummary=\{selectionSummary\}/);
 });
 
 test("CSS reads are latest-selection-wins and stale completions stay silent", () => {
-  const inspector = source("src/lib/components/InspectorPane.svelte");
-  const load = inspector.slice(
-    inspector.indexOf("async function loadRulesForClass"),
-    inspector.indexOf("async function selectClassForCss"),
+  const reader = source("src/lib/inspector/css-inspector-reader.ts");
+  const load = reader.slice(
+    reader.indexOf("private async load"),
+    reader.indexOf("private resolve"),
   );
-  const beforeInvoke = load.slice(0, load.indexOf("await resolveCssInspectorContext"));
+  const beforeInvoke = load.slice(0, load.indexOf("await this.resolve"));
 
-  assert.match(inspector, /const selectionRevision = selectionSnapshot\?\.selectionRevision \?\? 0/);
   assert.doesNotMatch(beforeInvoke, /isCurrentCssInspectorRead/);
-  assert.match(inspector, /isCurrentCssInspectorRead\(expectedSelection\)/);
+  assert.match(reader, /cssInspectorReadIsCurrent\(expectedSelection, this\.captureSelection\(current\)\)/);
   assert.match(
-    inspector,
-    /catch \(error\)[\s\S]*!isCurrentCssInspectorRead\(expectedSelection\)[\s\S]*inspector-css-read-failed/,
+    load,
+    /catch \(cause\)[\s\S]*!this\.readIsCurrent[\s\S]*kind: "readFailed"/,
   );
 });
 
 test("Undo quiesces CSS reads and focus errors until history projection settles", () => {
-  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const reader = source("src/lib/inspector/css-inspector-reader.ts");
   const workspace = source("src/lib/components/workspace/WorkspaceInspectorArea.svelte");
-  const app = source("src/lib/state/app.svelte.ts");
+  const application = source("src/lib/components/application/ApplicationWorkspace.svelte");
+  const navigation = source("src/lib/editor/source-navigation-service.ts");
 
-  assert.match(inspector, /if \(historyProjectionQuiesced\) return;/);
+  assert.match(reader, /if \(input\.historyProjectionQuiesced\)/);
   assert.match(
-    workspace,
-    /historyProjectionQuiesced=\{app\.kernelUndoRedoFrontendQuiesceActive[\s\S]*app\.kernelUndoRedoFrontendLeaseActive\}/,
+    application,
+    /historyProjectionQuiesced: historyOperation\.quiesceActive[\s\S]*historyOperation\.leaseActive/,
   );
   assert.match(
-    app,
-    /async selectCssFocusFromInspector[\s\S]*kernelUndoRedoFrontendQuiesceActive[\s\S]*kernelUndoRedoFrontendLeaseActive[\s\S]*return false/,
+    navigation,
+    /selectCssFocus[\s\S]*this\.historyLocked\(\)[\s\S]*return false/,
   );
 });
 
 test("CSS focus promotes the current Canvas revision before sending a Rust selection intent", () => {
-  const inspector = source("src/lib/components/InspectorPane.svelte");
-  const app = source("src/lib/state/app.svelte.ts");
-  const classIntent = inspector.slice(
-    inspector.indexOf("async function selectClassForCss"),
-    inspector.indexOf("function selectCssVariant"),
+  const reader = source("src/lib/inspector/css-inspector-reader.ts");
+  const navigation = source("src/lib/editor/source-navigation-service.ts");
+  const classIntent = reader.slice(
+    reader.indexOf("async selectClass"),
+    reader.indexOf("captureCurrentSelection"),
   );
-  const focusIntent = app.slice(
-    app.indexOf("async selectCssFocusFromInspector"),
-    app.indexOf("selectJsBehaviorFromCode"),
+  const focusIntent = navigation.slice(
+    navigation.indexOf("async selectCssFocus("),
+    navigation.indexOf("async openCssSource", navigation.indexOf("async selectCssFocus(")),
   );
 
   assert.doesNotMatch(
-    classIntent.slice(0, classIntent.indexOf("resolveCssInspectorContext")),
-    /classRules = \[\]|cssRuleContext = null|cssInspectorResolution = null/,
+    classIntent.slice(0, classIntent.indexOf("await this.resolve")),
+    /resetProjection/,
   );
-  assert.match(focusIntent, /activeCanvasIdentity\?\.workspaceRevision !== expectedWorkspaceRevision/);
-  assert.match(focusIntent, /projectLatestProjectWorkspacePreview/);
+  assert.match(focusIntent, /preview\.activeIdentity\?\.workspaceRevision !== expectedWorkspaceRevision/);
+  assert.match(focusIntent, /this\.dependencies\.projectLatestPreview/);
   assert.match(focusIntent, /minimumWorkspaceRevision: expectedWorkspaceRevision/);
-  assert.match(focusIntent, /refreshEditorNavigationSnapshot/);
+  assert.match(focusIntent, /selectionSession\.refreshNavigationSnapshot/);
   assert.match(focusIntent, /stableAnchorMatches/);
   assert.match(focusIntent, /expectedSelectionRevision = currentSelection\.selectionRevision/);
 });
@@ -273,7 +299,8 @@ test("structured compound editors preserve unsupported values in raw mode", () =
 test("background editing is Rust-first, layered and committed as one property set", () => {
   const rustModel = source("src-tauri/src/css/background.rs");
   const viewport = source("src-tauri/src/css/viewport.rs");
-  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const inspector = source("src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const queue = source("src/lib/inspector/css-inspector-mutation-queue.ts");
   const background = source("src/lib/components/inspector/sections/BackgroundSection.svelte");
   const typography = source("src/lib/components/inspector/sections/TypographySection.svelte");
   const legacyEditor = new URL("../src/lib/components/inspector/sections/ColorsSection.svelte", import.meta.url);
@@ -283,12 +310,32 @@ test("background editing is Rust-first, layered and committed as one property se
   assert.match(rustModel, /split_top_level_commas/);
   assert.match(rustModel, /pub fn to_longhands/);
   assert.match(viewport, /pub background: CssBackground/);
-  assert.match(inspector, /function draftCssProperties/);
-  assert.match(inspector, /stageCssRuleMutation\(mutation, property, value/);
+  assert.match(queue, /private draftProperties\(/);
+  assert.match(queue, /this\.stage\(mutation, property, value/);
   assert.match(background, /BACKGROUND_LONGHAND_PROPERTIES/);
   assert.match(background, /edit\.commitMany\(properties\)/);
   assert.match(background, /moveLayer/);
   assert.match(background, /duplicateLayer/);
   assert.match(typography, /edit\.continuous\("color"\)/);
   assert.equal(existsSync(legacyEditor), false);
+});
+
+test("CSS coordinator is only the lazy Svelte adapter for focused domain owners", () => {
+  const coordinator = source("src/lib/components/inspector/CssInspectorCoordinator.svelte");
+  const script = coordinator.slice(
+    coordinator.indexOf("<script"),
+    coordinator.indexOf("</script>"),
+  );
+  const state = source("src/lib/inspector/css-inspector-state.svelte.ts");
+  const reader = source("src/lib/inspector/css-inspector-reader.ts");
+  const queue = source("src/lib/inspector/css-inspector-mutation-queue.ts");
+
+  assert.ok(script.split("\n").length <= 300);
+  assert.match(coordinator, /new CssInspectorState\(\)/);
+  assert.match(coordinator, /new CssInspectorReader\(inspectorState/);
+  assert.match(coordinator, /new CssInspectorMutationQueue\(/);
+  assert.doesNotMatch(coordinator, /new Map|queueMicrotask|resolveCssInspectorContext|setCssRuleAtViewport/);
+  assert.match(state, /class CssInspectorState/);
+  assert.match(reader, /class CssInspectorReader/);
+  assert.match(queue, /class CssInspectorMutationQueue/);
 });

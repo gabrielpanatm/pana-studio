@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::{
     js::PageJsConfig,
@@ -36,15 +37,15 @@ pub(crate) struct WorkspacePageJsTransition {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkspaceResourceTransition {
     pub relative_path: String,
-    pub before: Option<FileBufferEntry>,
-    pub after: Option<FileBufferEntry>,
+    pub before: Option<Arc<FileBufferEntry>>,
+    pub after: Option<Arc<FileBufferEntry>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkspaceBinaryResourceTransition {
     pub relative_path: String,
-    pub before: Option<WorkspaceBinaryResource>,
-    pub after: Option<WorkspaceBinaryResource>,
+    pub before: Option<Arc<WorkspaceBinaryResource>>,
+    pub after: Option<Arc<WorkspaceBinaryResource>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -161,8 +162,8 @@ impl WorkspaceHistoryEntry {
             .iter()
             .map(|item| {
                 item.relative_path.len() as u64
-                    + retained_file_entry_bytes(item.before.as_ref())
-                    + retained_file_entry_bytes(item.after.as_ref())
+                    + retained_file_entry_bytes(item.before.as_deref())
+                    + retained_file_entry_bytes(item.after.as_deref())
             })
             .sum::<u64>();
         let binary_resource_bytes = self
@@ -264,8 +265,8 @@ impl WorkspaceHistoryEntry {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct WorkspaceHistory {
-    undo: Vec<WorkspaceHistoryEntry>,
-    redo: Vec<WorkspaceHistoryEntry>,
+    undo: Arc<Vec<Arc<WorkspaceHistoryEntry>>>,
+    redo: Arc<Vec<Arc<WorkspaceHistoryEntry>>>,
     entry_limit: usize,
     retained_bytes_limit: u64,
     #[serde(default)]
@@ -277,8 +278,8 @@ pub(crate) struct WorkspaceHistoryRecoveryStackPatch {
     base_len: usize,
     retained_base_start: usize,
     retained_len: usize,
-    new_prefix: Vec<WorkspaceHistoryEntry>,
-    new_suffix: Vec<WorkspaceHistoryEntry>,
+    new_prefix: Vec<Arc<WorkspaceHistoryEntry>>,
+    new_suffix: Vec<Arc<WorkspaceHistoryEntry>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -293,8 +294,8 @@ pub(crate) struct WorkspaceHistoryRecoveryPatch {
 impl Default for WorkspaceHistory {
     fn default() -> Self {
         Self {
-            undo: Vec::new(),
-            redo: Vec::new(),
+            undo: Arc::default(),
+            redo: Arc::default(),
             entry_limit: DEFAULT_HISTORY_ENTRY_LIMIT,
             retained_bytes_limit: DEFAULT_HISTORY_BYTES_LIMIT,
             coalesce_barrier: false,
@@ -303,6 +304,11 @@ impl Default for WorkspaceHistory {
 }
 
 impl WorkspaceHistory {
+    #[cfg(test)]
+    pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.undo, &other.undo) && Arc::ptr_eq(&self.redo, &other.redo)
+    }
+
     pub(crate) fn recovery_patch_from(
         &self,
         base: &WorkspaceHistory,
@@ -331,7 +337,7 @@ impl WorkspaceHistory {
     pub fn recovery_paths(&self) -> Vec<&str> {
         self.undo
             .iter()
-            .chain(&self.redo)
+            .chain(self.redo.iter())
             .flat_map(|entry| {
                 entry
                     .documents
@@ -389,14 +395,16 @@ impl WorkspaceHistory {
         label: String,
         source: String,
         now_ms: u128,
-    ) -> Result<Option<WorkspaceHistoryEntry>, String> {
+    ) -> Result<Option<Arc<WorkspaceHistoryEntry>>, String> {
         if start > self.undo.len() {
             return Err(
                 "ProjectWorkspace nu poate compune history: ancora este după coada Undo."
                     .to_string(),
             );
         }
-        let recorded = self.undo.drain(start..).collect::<Vec<_>>();
+        let recorded = Arc::make_mut(&mut self.undo)
+            .drain(start..)
+            .collect::<Vec<_>>();
         if recorded.is_empty() {
             return Ok(None);
         }
@@ -416,12 +424,13 @@ impl WorkspaceHistory {
         let mut binary_resources = Vec::new();
         let mut page_js = Vec::new();
         for entry in recorded {
+            let entry = Arc::unwrap_or_clone(entry);
             documents.extend(entry.documents);
             resources.extend(entry.resources);
             binary_resources.extend(entry.binary_resources);
             page_js.extend(entry.page_js);
         }
-        let entry = WorkspaceHistoryEntry {
+        let entry = Arc::new(WorkspaceHistoryEntry {
             transaction_id,
             label,
             source,
@@ -435,51 +444,52 @@ impl WorkspaceHistory {
             page_js,
             source_tree: None,
             canvas_delta: None,
-        };
-        self.undo.push(entry.clone());
+        });
+        Arc::make_mut(&mut self.undo).push(entry.clone());
         self.trim();
         Ok(Some(entry))
     }
 
     pub fn record(&mut self, entry: WorkspaceHistoryEntry) {
         let can_coalesce = !self.coalesce_barrier && self.redo.is_empty();
-        self.redo.clear();
+        Arc::make_mut(&mut self.redo).clear();
         self.coalesce_barrier = false;
         if can_coalesce {
-            if let Some(previous) = self.undo.last_mut() {
+            if let Some(previous) = Arc::make_mut(&mut self.undo).last_mut() {
+                let previous = Arc::make_mut(previous);
                 if previous.can_coalesce(&entry) {
                     previous.coalesce(entry);
                     if previous.is_net_noop() {
-                        self.undo.pop();
+                        Arc::make_mut(&mut self.undo).pop();
                     }
                     self.trim();
                     return;
                 }
             }
         }
-        self.undo.push(entry);
+        Arc::make_mut(&mut self.undo).push(Arc::new(entry));
         self.trim();
     }
 
-    pub fn pop_undo(&mut self) -> Result<WorkspaceHistoryEntry, String> {
-        self.undo
+    pub fn pop_undo(&mut self) -> Result<Arc<WorkspaceHistoryEntry>, String> {
+        Arc::make_mut(&mut self.undo)
             .pop()
             .ok_or_else(|| "ProjectWorkspace nu are o mutație disponibilă pentru Undo.".to_string())
     }
 
-    pub fn complete_undo(&mut self, entry: WorkspaceHistoryEntry) {
-        self.redo.push(entry);
+    pub fn complete_undo(&mut self, entry: Arc<WorkspaceHistoryEntry>) {
+        Arc::make_mut(&mut self.redo).push(entry);
         self.coalesce_barrier = true;
     }
 
-    pub fn pop_redo(&mut self) -> Result<WorkspaceHistoryEntry, String> {
-        self.redo
+    pub fn pop_redo(&mut self) -> Result<Arc<WorkspaceHistoryEntry>, String> {
+        Arc::make_mut(&mut self.redo)
             .pop()
             .ok_or_else(|| "ProjectWorkspace nu are o mutație disponibilă pentru Redo.".to_string())
     }
 
-    pub fn complete_redo(&mut self, entry: WorkspaceHistoryEntry) {
-        self.undo.push(entry);
+    pub fn complete_redo(&mut self, entry: Arc<WorkspaceHistoryEntry>) {
+        Arc::make_mut(&mut self.undo).push(entry);
         self.coalesce_barrier = true;
     }
 
@@ -492,9 +502,10 @@ impl WorkspaceHistory {
         mutation_transaction_id: &str,
         delta: WorkspaceCanvasHistoryDelta,
     ) -> Result<(), String> {
-        let entry = self.undo.last_mut().ok_or_else(|| {
+        let entry = Arc::make_mut(&mut self.undo).last_mut().ok_or_else(|| {
             "ProjectWorkspace History nu are o intrare pentru Canvas delta.".to_string()
         })?;
+        let entry = Arc::make_mut(entry);
         let direct_match = entry.transaction_id == mutation_transaction_id;
         let coalesced_preview_match = entry.source == "preview.structural"
             && entry.coalesce_key.is_some()
@@ -519,9 +530,10 @@ impl WorkspaceHistory {
         mutation_transaction_id: &str,
         source_tree: WorkspaceSourceTreeHistory,
     ) -> Result<(), String> {
-        let entry = self.undo.last_mut().ok_or_else(|| {
+        let entry = Arc::make_mut(&mut self.undo).last_mut().ok_or_else(|| {
             "ProjectWorkspace History nu are o intrare pentru identitatea SourceGraph.".to_string()
         })?;
+        let entry = Arc::make_mut(entry);
         if entry.transaction_id != mutation_transaction_id {
             return Err(
                 "ProjectWorkspace History a refuzat identitatea SourceGraph pentru altă tranzacție."
@@ -541,19 +553,19 @@ impl WorkspaceHistory {
             retained_bytes: self.retained_bytes(),
             retained_bytes_limit: self.retained_bytes_limit,
             entry_limit: self.entry_limit,
-            next_undo: self.undo.last().map(WorkspaceHistoryEntry::snapshot),
-            next_redo: self.redo.last().map(WorkspaceHistoryEntry::snapshot),
+            next_undo: self.undo.last().map(|entry| entry.snapshot()),
+            next_redo: self.redo.last().map(|entry| entry.snapshot()),
             undo_entries: self
                 .undo
                 .iter()
                 .rev()
-                .map(WorkspaceHistoryEntry::snapshot)
+                .map(|entry| entry.snapshot())
                 .collect(),
             redo_entries: self
                 .redo
                 .iter()
                 .rev()
-                .map(WorkspaceHistoryEntry::snapshot)
+                .map(|entry| entry.snapshot())
                 .collect(),
         }
     }
@@ -561,24 +573,24 @@ impl WorkspaceHistory {
     fn retained_bytes(&self) -> u64 {
         self.undo
             .iter()
-            .chain(&self.redo)
-            .map(WorkspaceHistoryEntry::retained_bytes)
+            .chain(self.redo.iter())
+            .map(|entry| entry.retained_bytes())
             .sum()
     }
 
     fn trim(&mut self) {
         while self.undo.len() > self.entry_limit {
-            self.undo.remove(0);
+            Arc::make_mut(&mut self.undo).remove(0);
         }
         while self.retained_bytes() > self.retained_bytes_limit && self.undo.len() > 1 {
-            self.undo.remove(0);
+            Arc::make_mut(&mut self.undo).remove(0);
         }
     }
 }
 
 fn history_stack_recovery_patch(
-    base: &[WorkspaceHistoryEntry],
-    current: &[WorkspaceHistoryEntry],
+    base: &[Arc<WorkspaceHistoryEntry>],
+    current: &[Arc<WorkspaceHistoryEntry>],
 ) -> WorkspaceHistoryRecoveryStackPatch {
     let mut best_base_start = 0;
     let mut best_current_start = 0;
@@ -612,10 +624,10 @@ fn history_stack_recovery_patch(
 }
 
 fn apply_history_stack_recovery_patch(
-    base: &[WorkspaceHistoryEntry],
+    base: &[Arc<WorkspaceHistoryEntry>],
     patch: WorkspaceHistoryRecoveryStackPatch,
     label: &str,
-) -> Result<Vec<WorkspaceHistoryEntry>, String> {
+) -> Result<Arc<Vec<Arc<WorkspaceHistoryEntry>>>, String> {
     let retained_end = patch
         .retained_base_start
         .checked_add(patch.retained_len)
@@ -630,12 +642,12 @@ fn apply_history_stack_recovery_patch(
     restored.extend(patch.new_prefix);
     restored.extend_from_slice(&base[patch.retained_base_start..retained_end]);
     restored.extend(patch.new_suffix);
-    Ok(restored)
+    Ok(Arc::new(restored))
 }
 
 fn history_entry_recovery_equivalent(
-    left: &WorkspaceHistoryEntry,
-    right: &WorkspaceHistoryEntry,
+    left: &Arc<WorkspaceHistoryEntry>,
+    right: &Arc<WorkspaceHistoryEntry>,
 ) -> bool {
     // History mutates an existing entry only through coalescing (which changes
     // transaction/timestamps/count) or derived identity/Canvas attachment. Comparing

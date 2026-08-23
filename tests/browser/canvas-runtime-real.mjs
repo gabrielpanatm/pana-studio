@@ -29,6 +29,11 @@ const bridgeSources = await Promise.all(
     "utf8",
   )),
 );
+const canvasAgentSchemaMatch = bridgeSources[4].match(
+  /var CANVAS_AGENT_MESSAGE_SCHEMA_VERSION = (\d+);/,
+);
+assert.ok(canvasAgentSchemaMatch, "CanvasAgent physical schema version is declared");
+const canvasAgentMessageSchemaVersion = Number(canvasAgentSchemaMatch[1]);
 const htmlEditorSchema = await readFile(
   resolve(repoRoot, "src/lib/html/editor-schema.json"),
   "utf8",
@@ -65,7 +70,7 @@ assert.doesNotMatch(blockRuntime, /__panaMotionV2Config/);
 const fontFixture = await readFile(
   resolve(
     repoRoot,
-    "src-tauri/resources/theme-packs/radacini/theme/static/fonturi/inter-400-700-latin-ext.woff2",
+    "src-tauri/resources/project-starters/radacini/project/static/fonturi/inter-400-700-latin-ext.woff2",
   ),
 );
 
@@ -229,6 +234,7 @@ const harness = `<!doctype html>
   const patchBridgeDurations = [];
   const historyPatchRoundTrips = [];
   const historyPatchBridgeDurations = [];
+  const overlayDurations = [];
   let sample = true;
 
   function finish(ok, details) {
@@ -334,7 +340,7 @@ const harness = `<!doctype html>
     frame.contentWindow.postMessage({
       source: "pana-studio-app",
       type: "activate-canvas-interaction-agent",
-      schemaVersion: 2,
+      schemaVersion: ${canvasAgentMessageSchemaVersion},
       agentInstanceId: agentReady.agentInstanceId,
       documentEpoch: 1,
       lastAcceptedSequence: 0,
@@ -437,7 +443,7 @@ const harness = `<!doctype html>
     frame.contentWindow.postMessage({
       source: "pana-studio-app",
       type: "activate-canvas-interaction-agent",
-      schemaVersion: 2,
+      schemaVersion: ${canvasAgentMessageSchemaVersion},
       agentInstanceId: agentReady.agentInstanceId,
       documentEpoch: 1,
       lastAcceptedSequence: 0,
@@ -525,7 +531,8 @@ const harness = `<!doctype html>
       agentInstanceId: agentReady.agentInstanceId,
       documentEpoch: 1,
       channel: "selection",
-      targetKind: "teraBoundary",
+      targetKind: "boundary",
+      boundaryKind: "template",
       editorNodeId: "editor_boundary:boundary-empty-content",
       gestureSequence: authoringClick.gestureSequence,
       selectionRevision: 40,
@@ -609,7 +616,6 @@ const harness = `<!doctype html>
       });
     }
     frame.contentDocument.body.appendChild(overlayBenchmarkHost);
-    const overlayDurations = [];
     for (let sample = 0; sample < 108; sample += 1) {
       const measurementId = "selection-overlay-" + sample;
       frame.contentWindow.postMessage({
@@ -671,7 +677,7 @@ const harness = `<!doctype html>
     frame.contentWindow.postMessage({
       source: "pana-studio-app",
       type: "inspect-canvas-interaction-target",
-      schemaVersion: 2,
+      schemaVersion: ${canvasAgentMessageSchemaVersion},
       agentInstanceId: agentReady.agentInstanceId,
       documentEpoch: 1,
       inspectionRequestId: "inspection:1:click",
@@ -813,12 +819,24 @@ const harness = `<!doctype html>
     await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
       frame.contentWindow.requestAnimationFrame(resolve)
     ));
+    const resolveCanvasColor = (color) => {
+      const probe = frame.contentDocument.createElement("span");
+      probe.style.color = color;
+      frame.contentDocument.body.append(probe);
+      const resolved = frame.contentWindow.getComputedStyle(probe).color;
+      probe.remove();
+      return resolved;
+    };
+    const expectedBlockedIndicatorColor = resolveCanvasColor(
+      "var(--pana-studio-danger, #d94b4b)"
+    );
+    const blockedIndicatorStyles = frame.contentWindow.getComputedStyle(dragIndicator);
     const blockedIndicatorColor = dragOver.drag.position === "inside"
-      ? dragIndicator.style.borderColor
-      : dragIndicator.style.background;
+      ? blockedIndicatorStyles.borderTopColor
+      : blockedIndicatorStyles.backgroundColor;
     if (
       dragIndicator.getAttribute("data-pana-drag-permission") !== "blocked"
-      || blockedIndicatorColor !== "rgb(220, 38, 38)"
+      || blockedIndicatorColor !== expectedBlockedIndicatorColor
     ) {
       throw new Error("CanvasAgent did not project the blocked Rust move verdict");
     }
@@ -845,12 +863,16 @@ const harness = `<!doctype html>
     await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
       frame.contentWindow.requestAnimationFrame(resolve)
     ));
+    const allowedIndicatorStyles = frame.contentWindow.getComputedStyle(dragIndicator);
     const allowedIndicatorColor = dragOver.drag.position === "inside"
-      ? dragIndicator.style.borderColor
-      : dragIndicator.style.background;
+      ? allowedIndicatorStyles.borderTopColor
+      : allowedIndicatorStyles.backgroundColor;
+    const expectedAllowedIndicatorColor = resolveCanvasColor(
+      "var(--pana-studio-accent, #1d7f6a)"
+    );
     if (
       dragIndicator.getAttribute("data-pana-drag-permission") !== "allowed"
-      || allowedIndicatorColor !== "rgb(21, 128, 61)"
+      || allowedIndicatorColor !== expectedAllowedIndicatorColor
     ) {
       throw new Error("CanvasAgent did not project the allowed Rust move verdict");
     }
@@ -980,7 +1002,9 @@ const harness = `<!doctype html>
       agentInstanceId: agentReady.agentInstanceId,
       documentEpoch: 1,
       channel: "selection",
-      targetKind: "teraBoundary",
+      targetKind: "boundary",
+      boundaryKind: "component",
+      componentKind: "repeat",
       editorNodeId: "editor_boundary:hero",
       gestureSequence: drop.gestureSequence,
       selectionRevision: 42,
@@ -1988,10 +2012,15 @@ const harness = `<!doctype html>
       stylesheetRollback: "last-styled-document-preserved",
       missingFontFallback: "styledReady-with-diagnostic",
       patchSamples: patchRoundTrips.length,
+      patchRoundTripsMs: patchRoundTrips,
+      patchBridgeDurationsMs: patchBridgeDurations,
       patchP95Ms,
       selectionOverlayMembers: 100,
+      selectionOverlayDurationsMs: overlayDurations,
       selectionOverlayP95Ms: overlayP95Ms,
       bridgeP95Ms,
+      historyPatchRoundTripsMs: historyPatchRoundTrips,
+      historyBridgeDurationsMs: historyPatchBridgeDurations,
       historyPatchMaxMs,
       historyBridgeMaxMs,
       dragPreviewRoundTripMs,
@@ -2017,7 +2046,12 @@ const harness = `<!doctype html>
     stage: result.textContent,
     childDiagnostics,
     previewMessageTypes: messages.map((message) => message.type),
-    canvasAgentMessageTypes: canvasAgentMessages.map((message) => message.type)
+    canvasAgentMessageTypes: canvasAgentMessages.map((message) => message.type),
+    patchRoundTripsMs: patchRoundTrips,
+    patchBridgeDurationsMs: patchBridgeDurations,
+    selectionOverlayDurationsMs: overlayDurations,
+    historyPatchRoundTripsMs: historyPatchRoundTrips,
+    historyBridgeDurationsMs: historyPatchBridgeDurations
   }));
 })();
 <\/script></body></html>`;
@@ -2402,12 +2436,12 @@ try {
     method: "POST",
     body: JSON.stringify({ script: "return document.getElementById('result').textContent", args: [] }),
   });
-  assert.equal(title, "PASS", result);
   const evidence = JSON.parse(result);
+  process.stdout.write(`${JSON.stringify(evidence)}\n`);
+  assert.equal(title, "PASS", result);
   assert.equal(evidence.ok, true);
   assert.equal(evidence.sameDocument, true);
   assert(evidence.samples > 0);
-  process.stdout.write(`${JSON.stringify(evidence)}\n`);
 } finally {
   if (sessionId) {
     await webdriver(`/session/${sessionId}`, { method: "DELETE", body: "{}" }).catch(() => {});

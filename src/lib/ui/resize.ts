@@ -1,4 +1,9 @@
 import { defaultTerminalPaneHeight } from "$lib/terminal/runtime";
+import {
+  startPointerSession,
+  type PointerCaptureTarget,
+  type PointerSessionEnvironment,
+} from "$lib/ui/pointer-session";
 
 export type ResizeKind = "left" | "right" | "terminal";
 
@@ -10,11 +15,13 @@ type ResizeState = {
 
 type BeginResizeDragOptions = {
   kind: ResizeKind;
-  event: MouseEvent;
+  event: PointerEvent;
   state: ResizeState;
   applyLiveState?: (nextState: ResizeState) => void;
   onUpdate: (nextState: ResizeState) => void;
   onStop: () => void;
+  captureTarget?: PointerCaptureTarget | null;
+  environment?: PointerSessionEnvironment;
 };
 
 export function clampResizeValue(kind: ResizeKind, value: number) {
@@ -57,94 +64,68 @@ export function beginResizeDrag(options: BeginResizeDragOptions) {
   const startX = options.event.clientX;
   const startY = options.event.clientY;
   const startState = { ...options.state };
-  let animationFrame: number | null = null;
-  let latestMoveEvent: MouseEvent | null = null;
-  let stopped = false;
-  let safetyTimer: number | null = null;
+  let latestX = startX;
+  let latestY = startY;
 
   applyResizeBodyClasses(options.kind);
 
-  const nextResizeState = (moveEvent: MouseEvent): ResizeState => {
+  const nextResizeState = (clientX: number, clientY: number): ResizeState => {
     if (options.kind === "left") {
       return {
         ...startState,
-        leftPaneWidth: clampResizeValue("left", startState.leftPaneWidth + (moveEvent.clientX - startX)),
+        leftPaneWidth: clampResizeValue("left", startState.leftPaneWidth + (clientX - startX)),
       };
     }
 
     if (options.kind === "right") {
       return {
         ...startState,
-        rightPaneWidth: clampResizeValue("right", startState.rightPaneWidth - (moveEvent.clientX - startX)),
+        rightPaneWidth: clampResizeValue("right", startState.rightPaneWidth - (clientX - startX)),
       };
     }
 
     return {
       ...startState,
-      terminalPaneHeight: clampResizeValue("terminal", startState.terminalPaneHeight - (moveEvent.clientY - startY)),
+      terminalPaneHeight: clampResizeValue("terminal", startState.terminalPaneHeight - (clientY - startY)),
     };
   };
 
-  const flushResize = () => {
-    animationFrame = null;
-    if (!latestMoveEvent) return;
-    const nextState = nextResizeState(latestMoveEvent);
+  const publishLiveResize = () => {
+    const nextState = nextResizeState(latestX, latestY);
     if (options.applyLiveState) options.applyLiveState(nextState);
     else options.onUpdate(nextState);
   };
 
-  const handlePointerMove = (moveEvent: MouseEvent) => {
-    moveEvent.preventDefault();
-    latestMoveEvent = moveEvent;
-    if (animationFrame !== null) return;
-    animationFrame = window.requestAnimationFrame(flushResize);
-  };
+  const session = startPointerSession({
+    pointerId: options.event.pointerId,
+    captureTarget: options.captureTarget
+      ?? (typeof HTMLElement !== "undefined" && options.event.currentTarget instanceof HTMLElement
+        ? options.event.currentTarget
+        : null),
+    safetyTimeoutMs: 8_000,
+    environment: options.environment,
+    onMove: (event, currentSession) => {
+      event.preventDefault();
+      latestX = event.clientX;
+      latestY = event.clientY;
+      currentSession.requestFrame(publishLiveResize);
+    },
+    onCommit: (event, currentSession) => {
+      if (event) {
+        latestX = event.clientX;
+        latestY = event.clientY;
+      }
+      currentSession.flushFrame();
+      options.onUpdate(nextResizeState(latestX, latestY));
+      options.onStop();
+    },
+    onCancel: () => {
+      options.onUpdate(startState);
+      options.onStop();
+    },
+  });
 
-  const stopDrag = (commit: boolean) => {
-    if (stopped) return;
-    stopped = true;
-    if (animationFrame !== null) {
-      window.cancelAnimationFrame(animationFrame);
-      animationFrame = null;
-    }
-    if (commit && latestMoveEvent) {
-      options.onUpdate(nextResizeState(latestMoveEvent));
-    }
-    latestMoveEvent = null;
-    options.onStop();
-  };
-
-  const handlePointerUp = () => stopDrag(true);
-  const cancelDrag = () => stopDrag(false);
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === "hidden") cancelDrag();
-  };
-  const handleKeydown = (keyEvent: KeyboardEvent) => {
-    if (keyEvent.key === "Escape") cancelDrag();
-  };
-
-  safetyTimer = window.setTimeout(cancelDrag, 8000);
-  window.addEventListener("mousemove", handlePointerMove);
-  window.addEventListener("mouseup", handlePointerUp, { once: true });
-  window.addEventListener("blur", cancelDrag, { once: true });
-  window.addEventListener("keydown", handleKeydown);
-  document.addEventListener("visibilitychange", handleVisibilityChange);
-
-  return () => {
-    if (animationFrame !== null) {
-      window.cancelAnimationFrame(animationFrame);
-      animationFrame = null;
-    }
-    if (safetyTimer !== null) {
-      window.clearTimeout(safetyTimer);
-      safetyTimer = null;
-    }
-    window.removeEventListener("mousemove", handlePointerMove);
-    window.removeEventListener("mouseup", handlePointerUp);
-    window.removeEventListener("blur", cancelDrag);
-    window.removeEventListener("keydown", handleKeydown);
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
-  };
+  return () => session.destroy();
 }
 
 function clamp(value: number, min: number, max: number) {

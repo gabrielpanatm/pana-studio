@@ -25,7 +25,6 @@ use crate::{
             plan_template_reference_workspace_mutation_from_graph, SourceGraphRewriteOperation,
         },
     },
-    project::{DEFAULT_ARCHIVE_PAGINATE_BY, DEFAULT_ARCHIVE_PAGINATE_PATH},
     source_graph::{
         build_source_graph_from_workspace_projection, build_taxonomy_catalog,
         build_template_catalog,
@@ -36,22 +35,13 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TemplateDraftRole {
+const DEFAULT_ARCHIVE_PAGINATE_BY: usize = 6;
+const DEFAULT_ARCHIVE_PAGINATE_PATH: &str = "pagina";
+
+#[derive(Clone, Copy, Debug)]
+enum TemplateDraftRole {
     Page,
     Layout,
-    Partial,
-    MacroLibrary,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateTemplateInput {
-    pub name: String,
-    pub role: TemplateDraftRole,
-    #[serde(default)]
-    pub parent_template_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -117,19 +107,6 @@ struct PreparedSemanticSection {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateTemplateCollectionInput {
-    pub title: String,
-    pub slug: String,
-    pub list_template_name: String,
-    pub item_template_name: String,
-    #[serde(default)]
-    pub parent_template_name: Option<String>,
-    #[serde(default)]
-    pub include_page_content: bool,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SetTemplateParentInput {
     pub relative_path: String,
     #[serde(default)]
@@ -176,39 +153,6 @@ pub struct RenameTemplateInput {
 #[serde(rename_all = "camelCase")]
 pub struct DeleteTemplateInput {
     pub relative_path: String,
-}
-
-#[tauri::command(async)]
-pub fn workspace_create_template(
-    input: CreateTemplateInput,
-    identity: FileBufferRequestIdentity,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<WorkspaceEntryMutationReceipt, String> {
-    let destination = local_template_path(&input.name)?;
-    let (root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
-    let workspace = live_workspace(&mut slot)?;
-    require_destination_available(workspace, &destination)?;
-    let parent = validate_parent_template(
-        &root,
-        workspace,
-        input.parent_template_name.as_deref(),
-        None,
-    )?;
-    let contents = template_draft(input.role, parent.as_deref());
-    let receipt_path = destination.clone();
-    finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
-        candidate.stage_resource_texts(
-            &current_workspace_identity(candidate),
-            mutation_metadata("Creare șablon Tera", "templates.create"),
-            vec![WorkspaceResourceMutation {
-                relative_path: destination,
-                contents,
-                create_only: true,
-            }],
-            now_ms(),
-        )
-    })
 }
 
 #[tauri::command(async)]
@@ -502,77 +446,6 @@ pub fn workspace_create_semantic_template(
                 },
             ),
             mutations,
-            now_ms(),
-        )
-    })
-}
-
-#[tauri::command(async)]
-pub fn workspace_create_template_collection(
-    input: CreateTemplateCollectionInput,
-    identity: FileBufferRequestIdentity,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<WorkspaceEntryMutationReceipt, String> {
-    let title = input.title.trim();
-    if title.is_empty() {
-        return Err("Colecția are nevoie de un nume.".to_string());
-    }
-    let slug = collection_slug(if input.slug.trim().is_empty() {
-        title
-    } else {
-        input.slug.as_str()
-    });
-    if slug.is_empty() {
-        return Err("Colecția are nevoie de un slug valid.".to_string());
-    }
-    let list_path = local_template_path(&input.list_template_name)?;
-    let item_path = local_template_path(&input.item_template_name)?;
-    if list_path == item_path {
-        return Err("Șablonul listei și cel al elementului trebuie să fie diferite.".to_string());
-    }
-    let section_path = format!("content/{slug}/_index.md");
-    let list_name = template_logical_name(&list_path)?;
-    let item_name = template_logical_name(&item_path)?;
-
-    let (root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
-    let workspace = live_workspace(&mut slot)?;
-    for path in [&list_path, &item_path, &section_path] {
-        require_destination_available(workspace, path)?;
-    }
-    let parent = validate_parent_template(
-        &root,
-        workspace,
-        input.parent_template_name.as_deref(),
-        None,
-    )?;
-    let list_contents = collection_list_template_draft(title, parent.as_deref());
-    let item_contents =
-        collection_item_template_draft(parent.as_deref(), input.include_page_content);
-    let section_contents = collection_section_frontmatter(title, &list_name, &item_name);
-    let receipt_path = section_path.clone();
-
-    finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
-        candidate.stage_resource_texts(
-            &current_workspace_identity(candidate),
-            mutation_metadata("Creare colecție Tera/Zola", "templates.create_collection"),
-            vec![
-                WorkspaceResourceMutation {
-                    relative_path: list_path,
-                    contents: list_contents,
-                    create_only: true,
-                },
-                WorkspaceResourceMutation {
-                    relative_path: item_path,
-                    contents: item_contents,
-                    create_only: true,
-                },
-                WorkspaceResourceMutation {
-                    relative_path: section_path,
-                    contents: section_contents,
-                    create_only: true,
-                },
-            ],
             now_ms(),
         )
     })
@@ -1296,11 +1169,6 @@ fn template_draft(role: TemplateDraftRole, parent: Option<&str>) -> String {
             extends_prefix(parent)
         ),
         TemplateDraftRole::Layout => "<!doctype html>\n<html lang=\"ro\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>{% block title %}{{ config.title }}{% endblock title %}</title>\n</head>\n<body>\n  {% block content %}{% endblock content %}\n</body>\n</html>\n".to_string(),
-        TemplateDraftRole::Partial => "<div>\n  Fragment nou\n</div>\n".to_string(),
-        TemplateDraftRole::MacroLibrary => {
-            "{% macro exemplu(text) %}\n  <span>{{ text }}</span>\n{% endmacro exemplu %}\n"
-                .to_string()
-        }
     }
 }
 
@@ -1321,21 +1189,6 @@ fn collection_item_template_draft(parent: Option<&str>, include_page_content: bo
     format!(
         "{}{{% block content %}}\n<article class=\"articol\">\n  <header class=\"articol-header\">\n    <h1>{{{{ page.title }}}}</h1>\n    {{% if page.date %}}<time datetime=\"{{{{ page.date }}}}\">{{{{ page.date }}}}</time>{{% endif %}}\n  </header>\n{content}</article>\n{{% endblock content %}}\n",
         extends_prefix(parent),
-    )
-}
-
-fn collection_section_frontmatter(
-    title: &str,
-    list_template_name: &str,
-    item_template_name: &str,
-) -> String {
-    format!(
-        "+++\ntitle = \"{}\"\ntemplate = \"{}\"\npage_template = \"{}\"\nsort_by = \"date\"\npaginate_by = {}\npaginate_path = \"{}\"\n+++\n",
-        escape_toml_string(title),
-        escape_toml_string(list_template_name),
-        escape_toml_string(item_template_name),
-        DEFAULT_ARCHIVE_PAGINATE_BY,
-        DEFAULT_ARCHIVE_PAGINATE_PATH,
     )
 }
 
@@ -1515,15 +1368,7 @@ mod tests {
     }
 
     #[test]
-    fn collection_drafts_keep_html_content_optional_and_assign_both_templates() {
-        let section =
-            collection_section_frontmatter("Noutăți", "noutati/list.html", "noutati/single.html");
-        assert!(section.contains("template = \"noutati/list.html\""));
-        assert!(section.contains("page_template = \"noutati/single.html\""));
-        assert!(section.contains("sort_by = \"date\""));
-        assert!(section.contains("paginate_by = 6"));
-        assert!(section.contains("paginate_path = \"pagina\""));
-
+    fn semantic_collection_drafts_keep_html_content_optional() {
         let archive = collection_list_template_draft("Noutăți", Some("layout.html"));
         assert!(archive.starts_with("{% extends \"layout.html\" %}"));
         assert!(archive.contains("paginator.pages"));
@@ -1931,7 +1776,7 @@ mod tests {
                 size: text.len() as u64,
                 readonly: false,
             },
-            baseline_text: text.to_string(),
+            baseline_text: text.to_string().into(),
             draft: None,
             revision: 1,
         });

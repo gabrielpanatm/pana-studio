@@ -8,7 +8,6 @@ use crate::{
     project_model::{
         files::{model_revision, project_model_file},
         model::{ProjectModel, ProjectModelFileKind},
-        tera_graph::build_tera_graph,
     },
     source_graph::{
         identity::{reconcile_project_source_node_ids, SourceChangeSet},
@@ -17,7 +16,7 @@ use crate::{
     },
 };
 
-pub(crate) const PROJECT_MODEL_INCREMENTAL_REPORT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const PROJECT_MODEL_INCREMENTAL_REPORT_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,11 +92,18 @@ pub(crate) struct ProjectModelIncrementalBuildReport {
     pub(crate) reused_nodes: usize,
     pub(crate) reused_relations: usize,
     pub(crate) model_clone_ms: u64,
-    pub(crate) template_parse_ms: u64,
-    pub(crate) component_graph_ms: u64,
-    pub(crate) block_graph_ms: u64,
-    pub(crate) tera_graph_ms: u64,
+    pub(crate) model_clone_us: u64,
+    pub(crate) template_parse_us: u64,
+    pub(crate) component_graph_us: u64,
+    pub(crate) block_graph_us: u64,
+    pub(crate) content_model_us: u64,
+    pub(crate) listing_items_us: u64,
+    pub(crate) listing_items_reused: bool,
+    pub(crate) dynamic_widget_us: u64,
+    pub(crate) markdown_us: u64,
+    pub(crate) node_index_us: u64,
     pub(crate) duration_ms: u64,
+    pub(crate) duration_us: u64,
     pub(crate) fallback_reason: Option<String>,
 }
 
@@ -147,7 +153,7 @@ pub(crate) fn rebuild_project_model_after_workspace_change_with_source_changes(
         intent,
         supplied_source_changes.as_deref(),
     ) {
-        Ok((model, graph_report, changed_paths, model_clone_ms, tera_graph_ms)) => {
+        Ok((model, graph_report, changed_paths, model_clone_us)) => {
             Ok(ProjectModelIncrementalBuildOutcome {
                 model,
                 report: report(
@@ -155,10 +161,9 @@ pub(crate) fn rebuild_project_model_after_workspace_change_with_source_changes(
                     projection,
                     changed_paths,
                     Some(graph_report),
-                    model_clone_ms,
-                    tera_graph_ms,
+                    model_clone_us,
                     None,
-                    elapsed_ms(started),
+                    elapsed_us(started),
                 ),
             })
         }
@@ -184,9 +189,8 @@ pub(crate) fn rebuild_project_model_after_workspace_change_with_source_changes(
                     normalized_changed_paths(exact_changed_paths).unwrap_or_default(),
                     None,
                     0,
-                    0,
                     Some(reason.code()),
-                    elapsed_ms(started),
+                    elapsed_us(started),
                 ),
             })
         }
@@ -279,7 +283,6 @@ fn rebuild_derived_graphs(
         );
     model.source_graph.markdown_projections =
         crate::source_graph::markdown::build_markdown_projections(&model.source_graph);
-    model.tera_graph = build_tera_graph(&model.source_graph, &model.files);
 }
 
 fn try_incremental_build(
@@ -295,7 +298,6 @@ fn try_incremental_build(
         ProjectModel,
         SourceGraphIncrementalTemplateReport,
         Vec<String>,
-        u64,
         u64,
     ),
     ProjectModelIncrementalFallback,
@@ -365,7 +367,7 @@ fn try_incremental_build(
     }
     let model_clone_started = Instant::now();
     let mut next = previous.clone();
-    let model_clone_ms = elapsed_ms(model_clone_started);
+    let model_clone_us = elapsed_us(model_clone_started);
     let contents = projection
         .source_texts
         .get(relative_path)
@@ -392,17 +394,8 @@ fn try_incremental_build(
     )
     .map_err(ProjectModelIncrementalFallback::SourceGraph)?;
     next.source_graph = source_graph;
-    let tera_graph_started = Instant::now();
-    next.tera_graph = build_tera_graph(&next.source_graph, &next.files);
-    let tera_graph_ms = elapsed_ms(tera_graph_started);
     next.revision = model_revision(&next.files);
-    Ok((
-        next,
-        graph_report,
-        changed_paths,
-        model_clone_ms,
-        tera_graph_ms,
-    ))
+    Ok((next, graph_report, changed_paths, model_clone_us))
 }
 
 fn try_incremental_style_build(
@@ -414,7 +407,6 @@ fn try_incremental_style_build(
         ProjectModel,
         SourceGraphIncrementalTemplateReport,
         Vec<String>,
-        u64,
         u64,
     ),
     ProjectModelIncrementalFallback,
@@ -451,7 +443,7 @@ fn try_incremental_style_build(
 
     let model_clone_started = Instant::now();
     let mut next = previous.clone();
-    let model_clone_ms = elapsed_ms(model_clone_started);
+    let model_clone_us = elapsed_us(model_clone_started);
     for (file_index, relative_path) in replacements {
         let contents = projection
             .source_texts
@@ -472,11 +464,17 @@ fn try_incremental_style_build(
         replaced_nodes: 0,
         reused_nodes: next.source_graph.nodes.len(),
         reused_relations: next.source_graph.relations.len(),
-        template_parse_ms: 0,
-        component_graph_ms: 0,
-        block_graph_ms: 0,
+        template_parse_us: 0,
+        component_graph_us: 0,
+        block_graph_us: 0,
+        content_model_us: 0,
+        listing_items_us: 0,
+        listing_items_reused: true,
+        dynamic_widget_us: 0,
+        markdown_us: 0,
+        node_index_us: 0,
     };
-    Ok((next, graph_report, changed_paths, model_clone_ms, 0))
+    Ok((next, graph_report, changed_paths, model_clone_us))
 }
 
 fn looks_like_rename(
@@ -533,10 +531,9 @@ fn report(
     projection: &WorkspaceProjectionSnapshot,
     changed_paths: Vec<String>,
     graph: Option<SourceGraphIncrementalTemplateReport>,
-    model_clone_ms: u64,
-    tera_graph_ms: u64,
+    model_clone_us: u64,
     fallback_reason: Option<String>,
-    duration_ms: u64,
+    duration_us: u64,
 ) -> ProjectModelIncrementalBuildReport {
     let graph = graph.unwrap_or(SourceGraphIncrementalTemplateReport {
         invalidated_template_files: Vec::new(),
@@ -544,9 +541,15 @@ fn report(
         replaced_nodes: 0,
         reused_nodes: 0,
         reused_relations: 0,
-        template_parse_ms: 0,
-        component_graph_ms: 0,
-        block_graph_ms: 0,
+        template_parse_us: 0,
+        component_graph_us: 0,
+        block_graph_us: 0,
+        content_model_us: 0,
+        listing_items_us: 0,
+        listing_items_reused: false,
+        dynamic_widget_us: 0,
+        markdown_us: 0,
+        node_index_us: 0,
     });
     ProjectModelIncrementalBuildReport {
         schema_version: PROJECT_MODEL_INCREMENTAL_REPORT_SCHEMA_VERSION,
@@ -559,18 +562,25 @@ fn report(
         replaced_nodes: graph.replaced_nodes,
         reused_nodes: graph.reused_nodes,
         reused_relations: graph.reused_relations,
-        model_clone_ms,
-        template_parse_ms: graph.template_parse_ms,
-        component_graph_ms: graph.component_graph_ms,
-        block_graph_ms: graph.block_graph_ms,
-        tera_graph_ms,
-        duration_ms,
+        model_clone_ms: model_clone_us / 1_000,
+        model_clone_us,
+        template_parse_us: graph.template_parse_us,
+        component_graph_us: graph.component_graph_us,
+        block_graph_us: graph.block_graph_us,
+        content_model_us: graph.content_model_us,
+        listing_items_us: graph.listing_items_us,
+        listing_items_reused: graph.listing_items_reused,
+        dynamic_widget_us: graph.dynamic_widget_us,
+        markdown_us: graph.markdown_us,
+        node_index_us: graph.node_index_us,
+        duration_ms: duration_us / 1_000,
+        duration_us,
         fallback_reason,
     }
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
-    started.elapsed().as_millis().min(u64::MAX as u128) as u64
+fn elapsed_us(started: Instant) -> u64 {
+    started.elapsed().as_micros().min(u64::MAX as u128) as u64
 }
 
 #[cfg(test)]
@@ -936,36 +946,105 @@ mod tests {
     }
 
     fn canonical_model_semantics(model: &ProjectModel) -> serde_json::Value {
-        let source_ids = model
-            .source_graph
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(index, node)| (node.id.clone(), format!("opaque-test-node-{index}")))
-            .collect::<HashMap<_, _>>();
+        let runtime_ids = canonical_runtime_identities(model);
         let mut snapshot = serde_json::to_value(model.snapshot()).unwrap();
-        if let Some(source_graph) = snapshot
-            .as_object_mut()
-            .and_then(|root| root.get_mut("sourceGraph"))
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            for derived in [
-                "componentGraph",
-                "blockGraph",
-                "contentModels",
-                "listingItems",
-                "dynamicWidgetGraph",
-            ] {
-                source_graph.remove(derived);
-            }
-        }
-        canonicalize_source_identities(&mut snapshot, &source_ids);
+        canonicalize_runtime_identities(&mut snapshot, &runtime_ids);
         normalize_graph_collection_order(&mut snapshot);
         snapshot
     }
 
+    fn canonical_runtime_identities(model: &ProjectModel) -> HashMap<String, String> {
+        let mut identities = HashMap::new();
+        let mut extend = |kind: &str, values: Vec<String>| {
+            identities.extend(
+                values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, id)| (id, format!("opaque-{kind}-{index}"))),
+            );
+        };
+        extend(
+            "source-node",
+            model
+                .source_graph
+                .nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect(),
+        );
+        extend(
+            "source-relation",
+            model
+                .source_graph
+                .relations
+                .iter()
+                .map(|relation| relation.id.clone())
+                .collect(),
+        );
+        extend(
+            "component-definition",
+            model
+                .source_graph
+                .component_graph
+                .definitions
+                .iter()
+                .map(|definition| definition.id.clone())
+                .collect(),
+        );
+        extend(
+            "component-invocation",
+            model
+                .source_graph
+                .component_graph
+                .invocations
+                .iter()
+                .map(|invocation| invocation.id.clone())
+                .collect(),
+        );
+        extend(
+            "component-rendered-instance",
+            model
+                .source_graph
+                .component_graph
+                .rendered_instances
+                .iter()
+                .map(|instance| instance.id.clone())
+                .collect(),
+        );
+        extend(
+            "block-source-instance",
+            model
+                .source_graph
+                .block_graph
+                .source_instances
+                .iter()
+                .map(|instance| instance.id.clone())
+                .collect(),
+        );
+        extend(
+            "dynamic-source-instance",
+            model
+                .source_graph
+                .dynamic_widget_graph
+                .source_instances
+                .iter()
+                .map(|instance| instance.id.clone())
+                .collect(),
+        );
+        extend(
+            "markdown-projection",
+            model
+                .source_graph
+                .markdown_projections
+                .iter()
+                .map(|projection| projection.id.clone())
+                .collect(),
+        );
+        identities
+    }
+
     fn normalize_graph_collection_order(snapshot: &mut serde_json::Value) {
-        for graph_name in ["sourceGraph", "teraGraph"] {
+        for graph_name in ["sourceGraph"] {
             let Some(graph) = snapshot
                 .as_object_mut()
                 .and_then(|root| root.get_mut(graph_name))
@@ -985,25 +1064,24 @@ mod tests {
         }
     }
 
-    fn canonicalize_source_identities(
+    fn canonicalize_runtime_identities(
         value: &mut serde_json::Value,
-        source_ids: &HashMap<String, String>,
+        runtime_ids: &HashMap<String, String>,
     ) {
         match value {
             serde_json::Value::String(text) => {
-                if let Some(canonical) = source_ids.get(text) {
+                if let Some(canonical) = runtime_ids.get(text) {
                     *text = canonical.clone();
                 }
             }
             serde_json::Value::Array(values) => {
                 for value in values {
-                    canonicalize_source_identities(value, source_ids);
+                    canonicalize_runtime_identities(value, runtime_ids);
                 }
             }
             serde_json::Value::Object(object) => {
-                object.remove("id");
                 for value in object.values_mut() {
-                    canonicalize_source_identities(value, source_ids);
+                    canonicalize_runtime_identities(value, runtime_ids);
                 }
             }
             _ => {}
@@ -1052,6 +1130,88 @@ mod tests {
             .invalidated_template_files
             .contains(&"templates/index.html".to_string()));
         assert_model_semantics_match(&outcome.model, &oracle);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rich_derived_projections_and_undo_match_the_full_builder() {
+        let root = unique_test_dir();
+        fs::create_dir_all(&root).unwrap();
+        let initial = rich_derived_sources();
+        let before_projection = projection(&root, 70, None, initial.clone(), HashSet::new());
+        let before =
+            build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
+        assert!(!before.source_graph.component_graph.invocations.is_empty());
+        assert!(!before.source_graph.block_graph.source_instances.is_empty());
+        assert!(!before
+            .source_graph
+            .content_models
+            .template_usages
+            .is_empty());
+        assert!(!before.source_graph.listing_items.items.is_empty());
+        assert_eq!(
+            before
+                .source_graph
+                .dynamic_widget_graph
+                .source_instances
+                .len(),
+            2
+        );
+        assert!(before
+            .source_graph
+            .dynamic_widget_graph
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "dynamic_widget_duplicate_instance"));
+        assert!(!before.source_graph.markdown_projections.is_empty());
+
+        let mut changed_sources = initial.clone();
+        changed_sources.insert(
+            "templates/index.html".to_string(),
+            rich_index_source().replace("Titlu</h1>", "Titlu actualizat</h1>"),
+        );
+        let changed_projection = projection(
+            &root,
+            71,
+            Some("rich-derived-71"),
+            changed_sources,
+            HashSet::from(["templates/index.html".to_string()]),
+        );
+        let changed = rebuild_project_model_after_workspace_change(
+            &root,
+            Some(&before),
+            Some(70),
+            &changed_projection,
+            &["templates/index.html".to_string()],
+            ProjectModelIncrementalIntent::HtmlStructural,
+        )
+        .unwrap();
+        let changed_oracle =
+            build_project_model_from_workspace_projection(&root, &changed_projection).unwrap();
+        assert_eq!(changed.report.mode, ProjectModelRebuildMode::Incremental);
+        assert!(changed.report.listing_items_reused);
+        assert_model_semantics_match(&changed.model, &changed_oracle);
+
+        let undo_projection = projection(
+            &root,
+            72,
+            Some("rich-derived-undo-72"),
+            initial,
+            HashSet::from(["templates/index.html".to_string()]),
+        );
+        let undone = rebuild_project_model_after_workspace_change(
+            &root,
+            Some(&changed.model),
+            Some(71),
+            &undo_projection,
+            &["templates/index.html".to_string()],
+            ProjectModelIncrementalIntent::HtmlStructural,
+        )
+        .unwrap();
+        let undo_oracle =
+            build_project_model_from_workspace_projection(&root, &undo_projection).unwrap();
+        assert_eq!(undone.report.mode, ProjectModelRebuildMode::Incremental);
+        assert_model_semantics_match(&undone.model, &undo_oracle);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1165,7 +1325,7 @@ mod tests {
         assert_eq!(outcome.report.mode, ProjectModelRebuildMode::Incremental);
         assert_eq!(outcome.report.fallback_reason, None);
         assert_eq!(outcome.report.replaced_nodes, 0);
-        assert_eq!(outcome.report.template_parse_ms, 0);
+        assert_eq!(outcome.report.template_parse_us, 0);
         assert_model_semantics_match(&outcome.model, &oracle);
         fs::remove_dir_all(root).unwrap();
     }
@@ -1717,14 +1877,36 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires PANA_INCREMENTAL_BENCH_PROJECT"]
-    fn real_project_single_template_warm_p95_stays_within_budget() {
-        let root = PathBuf::from(
-            std::env::var("PANA_INCREMENTAL_BENCH_PROJECT")
-                .expect("PANA_INCREMENTAL_BENCH_PROJECT"),
-        )
-        .canonicalize()
-        .unwrap();
+    #[ignore = "performance baseline; run through npm run performance:baseline"]
+    fn performance_baseline_project_open_large_fixture() {
+        let root = performance_project_root();
+        let (sample_count, warmup_count) = performance_sample_configuration();
+        let mut samples = Vec::with_capacity(sample_count);
+        for sample in 0..(warmup_count + sample_count) {
+            let started = Instant::now();
+            let projection = performance_disk_projection(
+                &root,
+                u64::try_from(sample + 1).expect("revision benchmark"),
+            );
+            let model = build_project_model_from_workspace_projection(&root, &projection).unwrap();
+            std::hint::black_box((model.files.len(), model.source_graph.nodes.len()));
+            if sample >= warmup_count {
+                samples.push(elapsed_us(started));
+            }
+        }
+        emit_performance_baseline(
+            "project_open",
+            "kernel_ingest_and_model",
+            &mut samples,
+            None,
+        );
+    }
+
+    #[test]
+    #[ignore = "performance baseline; run through npm run performance:baseline"]
+    fn performance_baseline_html_edit_large_fixture() {
+        let root = performance_project_root();
+        let (sample_count, warmup_count) = performance_sample_configuration();
         // This ignored real-project benchmark owns an explicit filesystem
         // ingestion boundary. ProjectModel still receives only the immutable
         // projection captured at that boundary.
@@ -1744,8 +1926,8 @@ mod tests {
             runtime_session_id: runtime_session_id.clone(),
             revision: 1,
             workspace_transaction_id: Some("incremental-real-benchmark-1".to_string()),
-            source_texts,
-            resource_bytes: HashMap::new(),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::new(),
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -1753,17 +1935,39 @@ mod tests {
                 root.to_string_lossy().to_string(),
                 manifest.clone(),
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         let before =
             build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
+        let target_path = before
+            .source_graph
+            .templates
+            .iter()
+            .max_by_key(|template| {
+                before
+                    .source_graph
+                    .nodes
+                    .iter()
+                    .filter(|node| node.file == template.file)
+                    .count()
+            })
+            .map(|template| template.file.clone())
+            .expect("fixture-ul trebuie să conțină un template HTML eligibil");
         let target = before
             .files
             .iter()
-            .find(|file| file.relative_path == "templates/index.html")
-            .expect("templates/index.html");
-        let mut changed = target.contents.clone();
-        changed.push_str("\n<!-- pana incremental benchmark -->\n");
+            .find(|file| file.relative_path == target_path)
+            .expect("template-ul SourceGraph trebuie să existe în ProjectModel");
+        let changed = if target.contents.contains("Conținut determinist 0") {
+            target.contents.replacen(
+                "Conținut determinist 0",
+                "Conținut determinist actualizat 0",
+                1,
+            )
+        } else {
+            format!("{}\n<!-- pana incremental benchmark -->\n", target.contents)
+        };
         let mut source_texts = before
             .files
             .iter()
@@ -1775,8 +1979,8 @@ mod tests {
             runtime_session_id: runtime_session_id.clone(),
             revision: 2,
             workspace_transaction_id: Some("incremental-real-benchmark-2".to_string()),
-            source_texts,
-            resource_bytes: HashMap::new(),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::from([target.relative_path.clone()]),
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -1784,23 +1988,36 @@ mod tests {
                 root.to_string_lossy().to_string(),
                 manifest,
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
         let expected = build_project_model_from_workspace_projection(&root, &projection).unwrap();
         let expected_snapshot = serde_json::to_value(expected.snapshot()).unwrap();
-        let mut full_samples = Vec::new();
-        for _ in 0..10 {
+        let mut full_samples = Vec::with_capacity(sample_count);
+        for sample in 0..(warmup_count + sample_count) {
             let full_started = Instant::now();
             let oracle = build_project_model_from_workspace_projection(&root, &projection).unwrap();
-            full_samples.push(elapsed_ms(full_started));
-            assert_eq!(
-                serde_json::to_value(oracle.snapshot()).unwrap(),
-                expected_snapshot,
-            );
+            if sample >= warmup_count {
+                full_samples.push(elapsed_us(full_started));
+            }
+            if sample == 0 {
+                assert_eq!(
+                    serde_json::to_value(oracle.snapshot()).unwrap(),
+                    expected_snapshot,
+                );
+            }
         }
         let mut samples = Vec::new();
+        let mut template_parse_samples = Vec::new();
+        let mut component_graph_samples = Vec::new();
+        let mut block_graph_samples = Vec::new();
+        let mut content_model_samples = Vec::new();
+        let mut listing_items_samples = Vec::new();
+        let mut dynamic_widget_samples = Vec::new();
+        let mut markdown_samples = Vec::new();
+        let mut node_index_samples = Vec::new();
         let mut last_report = None;
-        for _ in 0..25 {
+        for sample in 0..(warmup_count + sample_count) {
             let outcome = rebuild_project_model_after_workspace_change(
                 &root,
                 Some(&before),
@@ -1810,33 +2027,217 @@ mod tests {
                 ProjectModelIncrementalIntent::HtmlStructural,
             )
             .unwrap();
-            assert_eq!(outcome.report.mode, ProjectModelRebuildMode::Incremental);
             assert_eq!(
-                serde_json::to_value(outcome.model.snapshot()).unwrap(),
-                expected_snapshot,
+                outcome.report.mode,
+                ProjectModelRebuildMode::Incremental,
+                "fallback: {:?}",
+                outcome.report.fallback_reason,
             );
-            samples.push(outcome.report.duration_ms);
+            if sample == 0 || sample + 1 == warmup_count + sample_count {
+                assert_model_semantics_match(&outcome.model, &expected);
+            }
+            if sample >= warmup_count {
+                samples.push(outcome.report.duration_us);
+                template_parse_samples.push(outcome.report.template_parse_us);
+                component_graph_samples.push(outcome.report.component_graph_us);
+                block_graph_samples.push(outcome.report.block_graph_us);
+                content_model_samples.push(outcome.report.content_model_us);
+                listing_items_samples.push(outcome.report.listing_items_us);
+                dynamic_widget_samples.push(outcome.report.dynamic_widget_us);
+                markdown_samples.push(outcome.report.markdown_us);
+                node_index_samples.push(outcome.report.node_index_us);
+            }
             last_report = Some(outcome.report);
         }
         full_samples.sort_unstable();
-        samples.sort_unstable();
         let full_p95 = full_samples[(full_samples.len() * 95).div_ceil(100).saturating_sub(1)];
-        let p95 = samples[(samples.len() * 95).div_ceil(100).saturating_sub(1)];
         let report = last_report.unwrap();
-        eprintln!(
-            "project_model_incremental full_samples={full_samples:?} full_p95_ms={full_p95} incremental_samples={samples:?} incremental_p95_ms={p95} clone_ms={} parse_ms={} component_ms={} block_ms={} tera_ms={}",
-            report.model_clone_ms,
-            report.template_parse_ms,
-            report.component_graph_ms,
-            report.block_graph_ms,
-            report.tera_graph_ms,
+        emit_performance_baseline(
+            "html_edit",
+            "project_model_incremental",
+            &mut samples,
+            Some(serde_json::json!({
+                "fullP95Us": full_p95,
+                "fullSamplesUs": full_samples,
+                "projectModelCloneUs": report.model_clone_us,
+                "projectModelBuildMode": report.mode.label(),
+                "projectModelTemplateParseP95Us": performance_p95(&mut template_parse_samples),
+                "projectModelComponentGraphP95Us": performance_p95(&mut component_graph_samples),
+                "projectModelBlockGraphP95Us": performance_p95(&mut block_graph_samples),
+                "projectModelContentModelP95Us": performance_p95(&mut content_model_samples),
+                "projectModelListingItemsP95Us": performance_p95(&mut listing_items_samples),
+                "projectModelListingItemsReused": report.listing_items_reused,
+                "projectModelDynamicWidgetP95Us": performance_p95(&mut dynamic_widget_samples),
+                "projectModelMarkdownP95Us": performance_p95(&mut markdown_samples),
+                "projectModelNodeIndexP95Us": performance_p95(&mut node_index_samples),
+            })),
         );
-        assert!(p95 <= 50, "incremental ProjectModel p95 {p95} ms > 50 ms");
-        let regression_limit = full_p95.saturating_mul(110).div_ceil(100).max(1);
+        emit_performance_baseline(
+            "project_model_build",
+            report.mode.label(),
+            &mut samples,
+            Some(serde_json::json!({
+                "projectModelCloneUs": report.model_clone_us,
+                "projectModelBuildMode": report.mode.label(),
+            })),
+        );
+    }
+
+    #[test]
+    #[ignore = "performance baseline; run through npm run performance:baseline"]
+    fn performance_baseline_css_edit_large_fixture() {
+        let root = performance_project_root();
+        let (sample_count, warmup_count) = performance_sample_configuration();
+        let before_projection = performance_disk_projection(&root, 1);
+        let before = build_project_model_from_workspace_projection(&root, &before_projection)
+            .expect("performance baseline ProjectModel");
+        let target = before
+            .files
+            .iter()
+            .filter(|file| {
+                file.relative_path.starts_with("sass/") && file.relative_path.ends_with(".scss")
+            })
+            .max_by_key(|file| file.contents.len())
+            .expect("fixture-ul trebuie să conțină cel puțin un fișier SCSS");
+        let mut source_texts = (*before_projection.source_texts).clone();
+        source_texts.insert(
+            target.relative_path.clone(),
+            format!(
+                "{}\n.performance-probe {{ color: red; }}\n",
+                target.contents
+            ),
+        );
+        let projection = WorkspaceProjectionSnapshot {
+            project_root: before_projection.project_root.clone(),
+            runtime_session_id: before_projection.runtime_session_id.clone(),
+            revision: 2,
+            workspace_transaction_id: Some("performance-css-2".to_string()),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
+            deleted_sources: HashSet::new(),
+            changed_paths: HashSet::from([target.relative_path.clone()]),
+            accepted_disk: before_projection.accepted_disk.clone(),
+        };
+        let mut samples = Vec::with_capacity(sample_count);
+        let mut last_report = None;
+        for sample in 0..(warmup_count + sample_count) {
+            let outcome = rebuild_project_model_after_workspace_change(
+                &root,
+                Some(&before),
+                Some(1),
+                &projection,
+                std::slice::from_ref(&target.relative_path),
+                ProjectModelIncrementalIntent::StyleDeclaration,
+            )
+            .unwrap();
+            assert_eq!(outcome.report.mode, ProjectModelRebuildMode::Incremental);
+            if sample >= warmup_count {
+                samples.push(outcome.report.duration_us);
+            }
+            last_report = Some(outcome.report);
+        }
+        let report = last_report.unwrap();
+        emit_performance_baseline(
+            "css_edit",
+            "project_model_incremental",
+            &mut samples,
+            Some(serde_json::json!({
+                "projectModelCloneUs": report.model_clone_us,
+                "projectModelBuildMode": report.mode.label(),
+            })),
+        );
+    }
+
+    fn performance_project_root() -> PathBuf {
+        PathBuf::from(
+            std::env::var("PANA_PERFORMANCE_BENCH_PROJECT")
+                .or_else(|_| std::env::var("PANA_INCREMENTAL_BENCH_PROJECT"))
+                .expect("PANA_PERFORMANCE_BENCH_PROJECT"),
+        )
+        .canonicalize()
+        .unwrap()
+    }
+
+    fn performance_sample_configuration() -> (usize, usize) {
+        let parse = |name: &str, default: usize| {
+            std::env::var(name)
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(default)
+        };
+        let sample_count = parse("PANA_PERFORMANCE_SAMPLE_COUNT", 20).max(20);
+        let warmup_count = parse("PANA_PERFORMANCE_WARMUP_COUNT", 3);
+        (sample_count, warmup_count)
+    }
+
+    fn performance_disk_projection(root: &Path, revision: u64) -> WorkspaceProjectionSnapshot {
+        let manifest = crate::project::read_project_disk_manifest(root).unwrap();
         assert!(
-            p95 <= regression_limit,
-            "incremental ProjectModel p95 {p95} ms depășește oracle-ul complet {full_p95} ms cu mai mult de 10%"
+            !manifest.truncated,
+            "fixture-ul de performanță depășește plafonul manifestului canonic"
         );
+        let source_texts = manifest
+            .files
+            .iter()
+            .filter_map(|entry| {
+                fs::read_to_string(root.join(&entry.relative_path))
+                    .ok()
+                    .map(|source| (entry.relative_path.clone(), source))
+            })
+            .collect::<HashMap<_, _>>();
+        let runtime_session_id = "performance-large-fixture".to_string();
+        WorkspaceProjectionSnapshot {
+            project_root: root.to_string_lossy().to_string(),
+            runtime_session_id: runtime_session_id.clone(),
+            revision,
+            workspace_transaction_id: Some(format!("performance-{revision}")),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
+            deleted_sources: HashSet::new(),
+            changed_paths: HashSet::new(),
+            accepted_disk: AcceptedProjectDiskManifest::new(
+                runtime_session_id,
+                root.to_string_lossy().to_string(),
+                manifest,
+            )
+            .unwrap()
+            .into(),
+        }
+    }
+
+    fn emit_performance_baseline(
+        operation: &str,
+        variant: &str,
+        samples: &mut [u64],
+        extra: Option<serde_json::Value>,
+    ) {
+        samples.sort_unstable();
+        assert!(samples.len() >= 20);
+        let percentile =
+            |percent: usize| samples[(samples.len() * percent).div_ceil(100).saturating_sub(1)];
+        let mut value = serde_json::json!({
+            "schemaVersion": 1,
+            "operation": operation,
+            "variant": variant,
+            "sampleCount": samples.len(),
+            "samplesUs": samples,
+            "p50Us": percentile(50),
+            "p95Us": percentile(95),
+            "maxUs": samples.last().copied().unwrap_or_default(),
+        });
+        if let (Some(target), Some(extra)) = (
+            value.as_object_mut(),
+            extra.and_then(|v| v.as_object().cloned()),
+        ) {
+            target.extend(extra);
+        }
+        eprintln!("[pana-performance] {value}");
+    }
+
+    fn performance_p95(samples: &mut [u64]) -> u64 {
+        samples.sort_unstable();
+        samples[(samples.len() * 95).div_ceil(100).saturating_sub(1)]
     }
 
     fn initial_sources() -> HashMap<String, String> {
@@ -1916,6 +2317,59 @@ mod tests {
         )
     }
 
+    fn rich_derived_sources() -> HashMap<String, String> {
+        let mut sources = initial_sources();
+        sources.insert(
+            ".panastudio/project.toml".to_string(),
+            "schema_version = 1\n".to_string(),
+        );
+        sources.insert(
+            ".panastudio/assignments.toml".to_string(),
+            "schema_version = 1\n\n[[assignments]]\nsectionPath = \"content/_index.md\"\nmodelId = \"service\"\n"
+                .to_string(),
+        );
+        sources.insert(
+            ".panastudio/content-models/service.toml".to_string(),
+            "schemaVersion = 1\nid = \"service\"\nlabel = \"Serviciu\"\n\n[[fields]]\nid = \"field-title\"\nkey = \"title\"\nlabel = \"Titlu\"\nkind = \"text\"\n"
+                .to_string(),
+        );
+        sources.insert(
+            ".panastudio/listing-items.toml".to_string(),
+            "schema_version = 1\n\n[[items]]\nid = \"service-card\"\nlabel = \"Card serviciu\"\ntemplateName = \"listing-items/service-card.html\"\nmodelId = \"service\"\npreviewPageFile = \"content/blog/post.md\"\n"
+                .to_string(),
+        );
+        sources.insert(
+            "templates/listing-items/service-card.html".to_string(),
+            concat!(
+                "{# pana:widget schema=2 provider=dynamic-field ",
+                "instance=dynamic-field-rich01 props=00 #}",
+                "<h2 data-pana-widget-instance=\"dynamic-field-rich01\">",
+                "{{ item.extra.title }}</h2>",
+                "{# /pana:widget instance=dynamic-field-rich01 #}",
+            )
+            .to_string(),
+        );
+        sources.insert("templates/index.html".to_string(), rich_index_source());
+        sources
+    }
+
+    fn rich_index_source() -> String {
+        initial_index_source().replace(
+            "<main>",
+            concat!(
+                "<main>",
+                "{% for item in [1, 2] %}<span>{{ item }}</span>{% endfor %}",
+                "<span data-pana-block=\"counter\" data-pana-instance=\"counter-rich\">0</span>",
+                "{{ page.content | safe }}{{ page.extra.title }}",
+                "{# pana:widget schema=2 provider=dynamic-field ",
+                "instance=dynamic-field-rich01 props=00 #}",
+                "<h2 data-pana-widget-instance=\"dynamic-field-rich01\">",
+                "{{ page.extra.title }}</h2>",
+                "{# /pana:widget instance=dynamic-field-rich01 #}",
+            ),
+        )
+    }
+
     fn projection(
         root: &Path,
         revision: u64,
@@ -1930,8 +2384,8 @@ mod tests {
             runtime_session_id: runtime_session_id.clone(),
             revision,
             workspace_transaction_id: transaction_id.map(str::to_string),
-            source_texts,
-            resource_bytes: HashMap::new(),
+            source_texts: source_texts.into(),
+            resource_bytes: HashMap::new().into(),
             deleted_sources: HashSet::new(),
             changed_paths,
             accepted_disk: AcceptedProjectDiskManifest::new(
@@ -1944,7 +2398,8 @@ mod tests {
                     max_files: 10_000,
                 },
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         }
     }
 

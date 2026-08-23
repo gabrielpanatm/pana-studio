@@ -1,4 +1,4 @@
-import type { SelectionMutationIdentity } from "$lib/types";
+import type { SelectionMutationIdentity } from "$lib/preview/contracts";
 
 function normalizedAnchor(value: string | null | undefined): string | null {
   return value?.trim() || null;

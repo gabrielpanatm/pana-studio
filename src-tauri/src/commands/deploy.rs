@@ -4,7 +4,6 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::{
     commands::config::{read_deploy_settings_from_state, save_deploy_settings_in_workspace},
-    commands::project::require_current_project_root,
     deploy::{
         build_deploy_artifact_manifest, configuration_snapshot, credential_status,
         execute_deploy_with_artifact, plan_deploy_with_artifact, prepare_credential_write,
@@ -19,6 +18,7 @@ use crate::{
         file_buffer_store::FileBufferRequestIdentity,
         observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
         project_env_store::ProjectEnvStore,
+        project_runtime_access::require_current_project_root,
         project_workspace::persist_project_workspace_recovery,
         publish_operation::{
             PublishOperationCancelReceipt, PublishOperationControl, PublishOperationKind,
@@ -276,6 +276,13 @@ pub fn save_deploy_credential(
         let workspace = slot.as_mut().ok_or_else(|| {
             "ProjectWorkspace nu este inițializat pentru credentiale.".to_string()
         })?;
+        state
+            .versioning_network_operation
+            .require_source_mutation_allowed(
+                "Salvarea credentialelor deploy",
+                &workspace.session.project_root,
+                &workspace.runtime_session_id(),
+            )?;
         workspace.accepted_disk.require_live_complete(
             &workspace.runtime_session_id(),
             &workspace.session.project_root,
@@ -334,6 +341,13 @@ pub fn delete_deploy_credential(
         let workspace = slot.as_mut().ok_or_else(|| {
             "ProjectWorkspace nu este inițializat pentru credentiale.".to_string()
         })?;
+        state
+            .versioning_network_operation
+            .require_source_mutation_allowed(
+                "Ștergerea credentialelor deploy",
+                &workspace.session.project_root,
+                &workspace.runtime_session_id(),
+            )?;
         let current = crate::deploy::read_deploy_settings_from_store(
             &workspace.documents,
             workspace.revision,

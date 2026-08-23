@@ -418,7 +418,7 @@ mod tests {
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: baseline_from_disk_or_text(root, relative_path, baseline_text),
-            baseline_text: baseline_text.to_string(),
+            baseline_text: baseline_text.to_string().into(),
             draft: None,
             revision: 1,
         }

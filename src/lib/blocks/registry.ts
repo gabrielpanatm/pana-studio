@@ -1,13 +1,13 @@
-import type { HtmlPaletteElement, HtmlPaletteGroup } from "$lib/project/html-palette";
+import type { HtmlPaletteElement, HtmlPaletteGroup } from "$lib/html/palette";
 import type {
   BlockDefinition,
   BlockScale,
-  BlockSelectionContext,
   NativeBlockRegistryItem,
   NativeBlockRegistrySnapshot,
   UiBlockGraphSnapshot,
   UiBlockSourceInstance,
-} from "$lib/types";
+} from "$lib/blocks/contracts";
+import type { BlockSelectionContext } from "$lib/canvas/contracts";
 
 const BLOCK_SCALE_ORDER: readonly BlockScale[] = ["element", "section", "composition"];
 

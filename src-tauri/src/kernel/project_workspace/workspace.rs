@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     path::Path,
+    sync::Arc,
 };
 
 use crate::{
@@ -35,30 +36,63 @@ use super::{
     },
 };
 
-#[derive(Clone)]
 pub struct ProjectWorkspace {
     pub schema_version: u32,
     pub session: ProjectSessionSnapshot,
-    pub accepted_disk: AcceptedProjectDiskManifest,
+    pub accepted_disk: Arc<AcceptedProjectDiskManifest>,
     pub documents: FileBufferStore,
-    pub(super) accepted_documents: BTreeMap<String, FileBufferEntry>,
+    pub(super) accepted_documents: Arc<BTreeMap<String, Arc<FileBufferEntry>>>,
     /// Content hashes for binary resources whose bytes were committed by this
     /// ProjectWorkspace. The accepted disk manifest proves identity and
     /// freshness, while these hashes let History normalize Redo back to the
     /// clean accepted state without reading or rewriting the project disk.
-    pub(super) accepted_binary_resource_hashes: BTreeMap<String, String>,
-    pub(super) binary_resources: BTreeMap<String, WorkspaceBinaryResource>,
-    pub(super) deleted_binary_resources: std::collections::BTreeSet<String>,
+    pub(super) accepted_binary_resource_hashes: Arc<BTreeMap<String, String>>,
+    pub(super) binary_resources: Arc<BTreeMap<String, Arc<WorkspaceBinaryResource>>>,
+    pub(super) deleted_binary_resources: Arc<std::collections::BTreeSet<String>>,
     pub page_js: PageJsDraftStore,
-    pub(super) accepted_page_js: BTreeMap<String, PageJsConfig>,
+    pub(super) accepted_page_js: Arc<BTreeMap<String, PageJsConfig>>,
     pub revision: u64,
-    pub project_model: Option<ProjectModel>,
+    pub project_model: Option<Arc<ProjectModel>>,
     pub project_model_source_revision: Option<u64>,
     pub(super) last_projection_transaction_id: Option<String>,
     pub(super) history: WorkspaceHistory,
+    candidate_base_revision: Option<u64>,
 }
 
 impl ProjectWorkspace {
+    /// Creates an isolated transactional candidate without copying retained
+    /// document, Page JS, binary-resource or History payloads. Each store
+    /// detaches only the map/entry it mutates through copy-on-write.
+    pub(crate) fn fork_candidate(&self) -> Self {
+        Self {
+            schema_version: self.schema_version,
+            session: self.session.clone(),
+            accepted_disk: self.accepted_disk.clone(),
+            documents: self.documents.clone(),
+            accepted_documents: self.accepted_documents.clone(),
+            accepted_binary_resource_hashes: self.accepted_binary_resource_hashes.clone(),
+            binary_resources: self.binary_resources.clone(),
+            deleted_binary_resources: self.deleted_binary_resources.clone(),
+            page_js: self.page_js.clone(),
+            accepted_page_js: self.accepted_page_js.clone(),
+            revision: self.revision,
+            project_model: self.project_model.clone(),
+            project_model_source_revision: self.project_model_source_revision,
+            last_projection_transaction_id: self.last_projection_transaction_id.clone(),
+            history: self.history.clone(),
+            candidate_base_revision: Some(self.revision),
+        }
+    }
+
+    pub(crate) fn prepare_candidate_for_publish(&mut self) {
+        self.candidate_base_revision = None;
+    }
+
+    pub(crate) fn adopt_candidate(&mut self, mut candidate: Self) {
+        candidate.candidate_base_revision = self.candidate_base_revision;
+        *self = candidate;
+    }
+
     pub fn new(
         session: ProjectSessionSnapshot,
         accepted_disk: AcceptedProjectDiskManifest,
@@ -81,19 +115,20 @@ impl ProjectWorkspace {
         Ok(Self {
             schema_version: PROJECT_WORKSPACE_SCHEMA_VERSION,
             session,
-            accepted_disk,
+            accepted_disk: Arc::new(accepted_disk),
             accepted_documents: documents.files.clone(),
             documents,
-            accepted_binary_resource_hashes: BTreeMap::new(),
-            binary_resources: BTreeMap::new(),
-            deleted_binary_resources: std::collections::BTreeSet::new(),
+            accepted_binary_resource_hashes: Arc::default(),
+            binary_resources: Arc::default(),
+            deleted_binary_resources: Arc::default(),
             page_js,
-            accepted_page_js: BTreeMap::new(),
+            accepted_page_js: Arc::default(),
             revision: 0,
             project_model: None,
             project_model_source_revision: None,
             last_projection_transaction_id: None,
             history: WorkspaceHistory::default(),
+            candidate_base_revision: None,
         })
     }
 
@@ -224,11 +259,11 @@ impl ProjectWorkspace {
 
         self.accepted_documents = documents.files.clone();
         self.documents = documents;
-        self.accepted_binary_resource_hashes
+        Arc::make_mut(&mut self.accepted_binary_resource_hashes)
             .retain(|path, _| unchanged_accepted_binary_paths.contains(path));
-        self.binary_resources.clear();
-        self.deleted_binary_resources.clear();
-        self.accepted_disk = accepted_disk;
+        Arc::make_mut(&mut self.binary_resources).clear();
+        Arc::make_mut(&mut self.deleted_binary_resources).clear();
+        self.accepted_disk = Arc::new(accepted_disk);
         if invalidate_history || binary_history_invalidated {
             self.history = WorkspaceHistory::default();
         } else {
@@ -278,7 +313,7 @@ impl ProjectWorkspace {
                     .to_string(),
             );
         }
-        self.accepted_disk = accepted_disk;
+        self.accepted_disk = Arc::new(accepted_disk);
         self.history.break_coalescing_group();
         Ok(())
     }
@@ -301,24 +336,19 @@ impl ProjectWorkspace {
             runtime_session_id: self.runtime_session_id(),
             revision: self.revision,
             workspace_transaction_id,
-            source_texts: materialized
-                .documents
-                .files
-                .iter()
-                .map(|(path, entry)| (path.clone(), entry.current_text().to_string()))
-                .collect(),
-            resource_bytes: self
-                .binary_resources
-                .iter()
-                .map(|(path, resource)| (path.clone(), resource.bytes.clone()))
-                .collect(),
+            source_texts: super::model::WorkspaceProjectionSourceTexts::from_materialized(
+                materialized.documents,
+            ),
+            resource_bytes: super::model::WorkspaceProjectionResourceBytes::from_materialized(
+                materialized.binary_resources,
+            ),
             deleted_sources: materialized
                 .deleted_documents
                 .into_iter()
                 .chain(self.deleted_binary_resources.iter().cloned())
                 .collect(),
             changed_paths,
-            accepted_disk: self.accepted_disk.clone(),
+            accepted_disk: Arc::clone(&self.accepted_disk),
         })
     }
 
@@ -453,10 +483,10 @@ impl ProjectWorkspace {
     pub fn publish_project_model(
         &mut self,
         projection: &WorkspaceProjectionSnapshot,
-        model: ProjectModel,
+        model: impl Into<Arc<ProjectModel>>,
     ) -> Result<(), String> {
         self.require_current_projection(projection)?;
-        self.project_model = Some(model);
+        self.project_model = Some(model.into());
         self.project_model_source_revision = Some(self.revision);
         Ok(())
     }
@@ -467,7 +497,7 @@ impl ProjectWorkspace {
         runtime_session_id: &str,
         revision: u64,
         workspace_transaction_id: &str,
-        model: ProjectModel,
+        model: impl Into<Arc<ProjectModel>>,
     ) -> Result<(), String> {
         if project_root != self.session.project_root
             || runtime_session_id != self.runtime_session_id()
@@ -479,7 +509,7 @@ impl ProjectWorkspace {
                     .to_string(),
             );
         }
-        self.project_model = Some(model);
+        self.project_model = Some(model.into());
         self.project_model_source_revision = Some(revision);
         Ok(())
     }
@@ -498,45 +528,55 @@ impl ProjectWorkspace {
         }
         require_distinct_document_paths(&mutations)?;
 
-        let mut next_documents = self.documents.clone();
-        let mut transitions = Vec::with_capacity(mutations.len());
-        let mut files = Vec::with_capacity(mutations.len());
-        for mutation in mutations {
-            let before = next_documents
-                .text_snapshot(&mutation.relative_path)
-                .ok_or_else(|| {
-                    format!(
-                        "ProjectWorkspace nu urmărește documentul {}.",
-                        mutation.relative_path
-                    )
-                })?;
-            let transition = WorkspaceDocumentTransition {
-                relative_path: mutation.relative_path.clone(),
-                before: before.text,
-                after: mutation.contents,
-            };
-            if transition_is_no_op(&transition) {
-                files.push(
-                    next_documents
-                        .files
-                        .get(&transition.relative_path)
-                        .expect("document checked above")
-                        .snapshot(),
-                );
-                continue;
+        let stage = |documents: &mut FileBufferStore| {
+            let mut transitions = Vec::with_capacity(mutations.len());
+            let mut files = Vec::with_capacity(mutations.len());
+            for mutation in &mutations {
+                let before = documents
+                    .text_snapshot(&mutation.relative_path)
+                    .ok_or_else(|| {
+                        format!(
+                            "ProjectWorkspace nu urmărește documentul {}.",
+                            mutation.relative_path
+                        )
+                    })?;
+                let transition = WorkspaceDocumentTransition {
+                    relative_path: mutation.relative_path.clone(),
+                    before: before.text,
+                    after: mutation.contents.clone(),
+                };
+                if transition_is_no_op(&transition) {
+                    files.push(
+                        documents
+                            .files
+                            .get(&transition.relative_path)
+                            .expect("document checked above")
+                            .snapshot(),
+                    );
+                    continue;
+                }
+                let expectation = FileBufferMutationExpectation {
+                    expected_revision: before.revision,
+                    expected_hash: before.hash,
+                };
+                files.push(documents.set_draft_if_current(
+                    &transition.relative_path,
+                    transition.after.clone(),
+                    &expectation,
+                    now_ms,
+                )?);
+                transitions.push(transition);
             }
-            let expectation = FileBufferMutationExpectation {
-                expected_revision: before.revision,
-                expected_hash: before.hash,
-            };
-            files.push(next_documents.set_draft_if_current(
-                &transition.relative_path,
-                transition.after.clone(),
-                &expectation,
-                now_ms,
-            )?);
-            transitions.push(transition);
-        }
+            Ok::<_, String>((transitions, files))
+        };
+        let (transitions, files, next_documents) = if self.candidate_base_revision.is_some() {
+            let (transitions, files) = stage(&mut self.documents)?;
+            (transitions, files, None)
+        } else {
+            let mut next_documents = self.documents.clone();
+            let (transitions, files) = stage(&mut next_documents)?;
+            (transitions, files, Some(next_documents))
+        };
 
         if transitions.is_empty() {
             return Ok(self.mutation_receipt(revision_before, files, None, None));
@@ -553,7 +593,9 @@ impl ProjectWorkspace {
             Vec::new(),
         );
         let entry_snapshot = entry.snapshot();
-        self.documents = next_documents;
+        if let Some(next_documents) = next_documents {
+            self.documents = next_documents;
+        }
         self.commit_mutation(entry)?;
         Ok(self.mutation_receipt(revision_before, files, None, Some(entry_snapshot)))
     }
@@ -628,12 +670,13 @@ impl ProjectWorkspace {
                 }
                 None => {}
             }
+            let resource = Arc::new(resource);
             transitions.push(WorkspaceBinaryResourceTransition {
                 relative_path: normalized.clone(),
                 before: None,
                 after: Some(resource.clone()),
             });
-            next_resources.insert(normalized, resource);
+            Arc::make_mut(&mut next_resources).insert(normalized, resource);
         }
 
         let total_bytes = next_resources
@@ -739,19 +782,19 @@ impl ProjectWorkspace {
             }
             let before = change
                 .before
-                .map(|bytes| WorkspaceBinaryResource::new(normalized.clone(), bytes));
+                .map(|bytes| Arc::new(WorkspaceBinaryResource::new(normalized.clone(), bytes)));
             let after = change
                 .after
-                .map(|bytes| WorkspaceBinaryResource::new(normalized.clone(), bytes));
+                .map(|bytes| Arc::new(WorkspaceBinaryResource::new(normalized.clone(), bytes)));
             match after.as_ref() {
                 Some(resource) => {
-                    next_resources.insert(normalized.clone(), resource.clone());
-                    next_deleted.remove(&normalized);
+                    Arc::make_mut(&mut next_resources).insert(normalized.clone(), resource.clone());
+                    Arc::make_mut(&mut next_deleted).remove(&normalized);
                 }
                 None => {
-                    next_resources.remove(&normalized);
+                    Arc::make_mut(&mut next_resources).remove(&normalized);
                     if accepted_exists {
-                        next_deleted.insert(normalized.clone());
+                        Arc::make_mut(&mut next_deleted).insert(normalized.clone());
                     }
                 }
             }
@@ -812,7 +855,7 @@ impl ProjectWorkspace {
         transaction_metadata.transaction_id = Some(transaction_id.clone());
         let label = normalized_label(&transaction_metadata.label);
         let source = normalized_source(&transaction_metadata.source);
-        let mut candidate = self.clone();
+        let mut candidate = self.fork_candidate();
 
         candidate.stage_resource_changes(
             identity,
@@ -847,7 +890,7 @@ impl ProjectWorkspace {
         candidate.last_projection_transaction_id = Some(entry.transaction_id.clone());
         candidate.invalidate_derived_state();
         let entry_snapshot = entry.snapshot();
-        *self = candidate;
+        self.adopt_candidate(candidate);
         Ok(self.mutation_receipt(revision_before, Vec::new(), None, Some(entry_snapshot)))
     }
 
@@ -897,95 +940,104 @@ impl ProjectWorkspace {
             self.require_editable_source_path(path)?;
         }
 
-        let mut next_documents = self.documents.clone();
-        let mut transitions = Vec::with_capacity(mutations.len() + deletes.len());
-        let mut files = Vec::with_capacity(mutations.len());
-        for mutation in mutations {
-            let before = next_documents.files.get(&mutation.relative_path).cloned();
-            if mutation.create_only
-                && (before.is_some()
-                    || self
-                        .accepted_documents
-                        .contains_key(&mutation.relative_path))
-            {
-                return Err(format!(
-                    "ProjectWorkspace a refuzat create-only pentru {}: resursa există în starea curentă sau în baseline-ul acceptat.",
-                    mutation.relative_path
-                ));
+        let accepted_documents = self.accepted_documents.clone();
+        let stage = |documents: &mut FileBufferStore| {
+            let mut transitions = Vec::with_capacity(mutations.len() + deletes.len());
+            let mut files = Vec::with_capacity(mutations.len());
+            for mutation in &mutations {
+                let before = documents.files.get(&mutation.relative_path).cloned();
+                if mutation.create_only
+                    && (before.is_some()
+                        || accepted_documents.contains_key(&mutation.relative_path))
+                {
+                    return Err(format!(
+                        "ProjectWorkspace a refuzat create-only pentru {}: resursa există în starea curentă sau în baseline-ul acceptat.",
+                        mutation.relative_path
+                    ));
+                }
+                let file = match documents.text_snapshot(&mutation.relative_path) {
+                    Some(current) => {
+                        if current.text == mutation.contents {
+                            documents
+                                .files
+                                .get(&mutation.relative_path)
+                                .expect("resource snapshot checked above")
+                                .snapshot()
+                        } else {
+                            documents.set_draft_if_current(
+                                &mutation.relative_path,
+                                mutation.contents.clone(),
+                                &FileBufferMutationExpectation {
+                                    expected_revision: current.revision,
+                                    expected_hash: current.hash,
+                                },
+                                now_ms,
+                            )?
+                        }
+                    }
+                    None => {
+                        if let Some(accepted) = accepted_documents.get(&mutation.relative_path) {
+                            documents
+                                .files_mut()
+                                .insert(mutation.relative_path.clone(), accepted.clone());
+                        }
+                        if let Some(current) = documents.text_snapshot(&mutation.relative_path) {
+                            documents.set_draft_if_current(
+                                &mutation.relative_path,
+                                mutation.contents.clone(),
+                                &FileBufferMutationExpectation {
+                                    expected_revision: current.revision,
+                                    expected_hash: current.hash,
+                                },
+                                now_ms,
+                            )?
+                        } else {
+                            documents.stage_new_text_file(
+                                &mutation.relative_path,
+                                mutation.contents.clone(),
+                                now_ms,
+                            )?
+                        }
+                    }
+                };
+                let after = documents.files.get(&mutation.relative_path).cloned();
+                if before.as_ref().map(|entry| entry.current_hash())
+                    != after.as_ref().map(|entry| entry.current_hash())
+                {
+                    transitions.push(WorkspaceResourceTransition {
+                        relative_path: mutation.relative_path.clone(),
+                        before,
+                        after,
+                    });
+                }
+                files.push(file);
             }
-            let file = match next_documents.text_snapshot(&mutation.relative_path) {
-                Some(current) => {
-                    if current.text == mutation.contents {
-                        next_documents
-                            .files
-                            .get(&mutation.relative_path)
-                            .expect("resource snapshot checked above")
-                            .snapshot()
-                    } else {
-                        next_documents.set_draft_if_current(
-                            &mutation.relative_path,
-                            mutation.contents,
-                            &FileBufferMutationExpectation {
-                                expected_revision: current.revision,
-                                expected_hash: current.hash,
-                            },
-                            now_ms,
-                        )?
-                    }
-                }
-                None => {
-                    if let Some(accepted) = self.accepted_documents.get(&mutation.relative_path) {
-                        next_documents
-                            .files
-                            .insert(mutation.relative_path.clone(), accepted.clone());
-                    }
-                    if let Some(current) = next_documents.text_snapshot(&mutation.relative_path) {
-                        next_documents.set_draft_if_current(
-                            &mutation.relative_path,
-                            mutation.contents,
-                            &FileBufferMutationExpectation {
-                                expected_revision: current.revision,
-                                expected_hash: current.hash,
-                            },
-                            now_ms,
-                        )?
-                    } else {
-                        next_documents.stage_new_text_file(
-                            &mutation.relative_path,
-                            mutation.contents,
-                            now_ms,
-                        )?
-                    }
-                }
-            };
-            let after = next_documents.files.get(&mutation.relative_path).cloned();
-            if before.as_ref().map(|entry| entry.current_hash())
-                != after.as_ref().map(|entry| entry.current_hash())
-            {
+            for delete in &deletes {
+                let before = documents
+                    .files_mut()
+                    .remove(&delete.relative_path)
+                    .ok_or_else(|| {
+                        format!(
+                            "ProjectWorkspace nu poate șterge {}: resursa nu există în starea curentă.",
+                            delete.relative_path
+                        )
+                    })?;
                 transitions.push(WorkspaceResourceTransition {
-                    relative_path: mutation.relative_path,
-                    before,
-                    after,
+                    relative_path: delete.relative_path.clone(),
+                    before: Some(before),
+                    after: None,
                 });
             }
-            files.push(file);
-        }
-        for delete in deletes {
-            let before = next_documents
-                .files
-                .remove(&delete.relative_path)
-                .ok_or_else(|| {
-                    format!(
-                        "ProjectWorkspace nu poate șterge {}: resursa nu există în starea curentă.",
-                        delete.relative_path
-                    )
-                })?;
-            transitions.push(WorkspaceResourceTransition {
-                relative_path: delete.relative_path,
-                before: Some(before),
-                after: None,
-            });
-        }
+            Ok::<_, String>((transitions, files))
+        };
+        let (transitions, files, next_documents) = if self.candidate_base_revision.is_some() {
+            let (transitions, files) = stage(&mut self.documents)?;
+            (transitions, files, None)
+        } else {
+            let mut next_documents = self.documents.clone();
+            let (transitions, files) = stage(&mut next_documents)?;
+            (transitions, files, Some(next_documents))
+        };
 
         if transitions.is_empty() {
             return Ok(self.mutation_receipt(revision_before, files, None, None));
@@ -1002,7 +1054,9 @@ impl ProjectWorkspace {
             Vec::new(),
         );
         let entry_snapshot = entry.snapshot();
-        self.documents = next_documents;
+        if let Some(next_documents) = next_documents {
+            self.documents = next_documents;
+        }
         self.commit_mutation(entry)?;
         Ok(self.mutation_receipt(revision_before, files, None, Some(entry_snapshot)))
     }
@@ -1024,7 +1078,7 @@ impl ProjectWorkspace {
         transaction_metadata.transaction_id = Some(transaction_id.clone());
         let label = normalized_label(&transaction_metadata.label);
         let source = normalized_source(&transaction_metadata.source);
-        let mut candidate = self.clone();
+        let mut candidate = self.fork_candidate();
 
         let resource_receipt = candidate.stage_resource_changes(
             identity,
@@ -1068,7 +1122,7 @@ impl ProjectWorkspace {
         candidate.last_projection_transaction_id = Some(entry.transaction_id.clone());
         candidate.invalidate_derived_state();
         let entry_snapshot = entry.snapshot();
-        *self = candidate;
+        self.adopt_candidate(candidate);
         Ok(self.mutation_receipt(
             revision_before,
             resource_receipt.files,
@@ -1090,13 +1144,26 @@ impl ProjectWorkspace {
             .documents
             .text_snapshot(&relative_path)
             .ok_or_else(|| format!("ProjectWorkspace nu urmărește documentul {relative_path}."))?;
-        let mut next_documents = self.documents.clone();
-        let result = next_documents.apply_changeset(input, now_ms)?;
+        let (result, after, next_documents) = if self.candidate_base_revision.is_some() {
+            let result = self.documents.apply_changeset(input, now_ms)?;
+            let after = result
+                .applied
+                .then(|| self.documents.text_for(&relative_path))
+                .flatten();
+            (result, after, None)
+        } else {
+            let mut next_documents = self.documents.clone();
+            let result = next_documents.apply_changeset(input, now_ms)?;
+            let after = result
+                .applied
+                .then(|| next_documents.text_for(&relative_path))
+                .flatten();
+            (result, after, Some(next_documents))
+        };
         if !result.applied {
             return Ok(result);
         }
-        let after = next_documents
-            .text_for(&relative_path)
+        let after = after
             .ok_or_else(|| format!("ProjectWorkspace a pierdut documentul {relative_path}."))?;
         let entry = new_history_entry(
             transaction_id(&metadata, self.revision),
@@ -1113,7 +1180,9 @@ impl ProjectWorkspace {
             Vec::new(),
             Vec::new(),
         );
-        self.documents = next_documents;
+        if let Some(next_documents) = next_documents {
+            self.documents = next_documents;
+        }
         self.commit_mutation(entry)?;
         Ok(result)
     }
@@ -1196,7 +1265,7 @@ impl ProjectWorkspace {
             vec![transition],
         );
         let entry_snapshot = entry.snapshot();
-        self.accepted_page_js
+        Arc::make_mut(&mut self.accepted_page_js)
             .entry(accepted_template_path)
             .or_insert(accepted);
         self.page_js = next_page_js;
@@ -1279,47 +1348,7 @@ impl ProjectWorkspace {
         identity: &ProjectWorkspaceIdentity,
         now_ms: u128,
     ) -> Result<WorkspaceUndoRedoReceipt, String> {
-        self.require_identity(identity)?;
-        let revision_before = self.revision;
-        let mut next_documents = self.documents.clone();
-        let mut next_binary_resources = self.binary_resources.clone();
-        let mut next_deleted_binary_resources = self.deleted_binary_resources.clone();
-        let mut next_page_js = self.page_js.clone();
-        let mut next_history = self.history.clone();
-        let entry = next_history.pop_undo()?;
-        let application_transaction_id =
-            history_application_transaction_id(WorkspaceHistoryDirection::Undo, self.revision);
-        let mut application = WorkspaceHistoryApplication {
-            documents: &mut next_documents,
-            accepted_documents: &self.accepted_documents,
-            binary_resources: &mut next_binary_resources,
-            deleted_binary_resources: &mut next_deleted_binary_resources,
-            accepted_binary_resource_hashes: &self.accepted_binary_resource_hashes,
-            accepted_disk: &self.accepted_disk,
-            page_js: &mut next_page_js,
-            accepted_page_js: &self.accepted_page_js,
-        };
-        apply_history_entry(
-            &mut application,
-            &entry,
-            WorkspaceHistoryDirection::Undo,
-            now_ms,
-        )?;
-        next_history.complete_undo(entry.clone());
-        self.documents = next_documents;
-        self.binary_resources = next_binary_resources;
-        self.deleted_binary_resources = next_deleted_binary_resources;
-        self.page_js = next_page_js;
-        self.history = next_history;
-        self.advance_revision()?;
-        self.last_projection_transaction_id = Some(application_transaction_id.clone());
-        self.invalidate_derived_state();
-        Ok(self.undo_redo_receipt(
-            WorkspaceHistoryDirection::Undo,
-            revision_before,
-            entry,
-            application_transaction_id,
-        ))
+        self.apply_history_direction(identity, WorkspaceHistoryDirection::Undo, now_ms)
     }
 
     pub fn require_history_target(
@@ -1357,43 +1386,68 @@ impl ProjectWorkspace {
         identity: &ProjectWorkspaceIdentity,
         now_ms: u128,
     ) -> Result<WorkspaceUndoRedoReceipt, String> {
+        self.apply_history_direction(identity, WorkspaceHistoryDirection::Redo, now_ms)
+    }
+
+    fn apply_history_direction(
+        &mut self,
+        identity: &ProjectWorkspaceIdentity,
+        direction: WorkspaceHistoryDirection,
+        now_ms: u128,
+    ) -> Result<WorkspaceUndoRedoReceipt, String> {
         self.require_identity(identity)?;
         let revision_before = self.revision;
-        let mut next_documents = self.documents.clone();
-        let mut next_binary_resources = self.binary_resources.clone();
-        let mut next_deleted_binary_resources = self.deleted_binary_resources.clone();
-        let mut next_page_js = self.page_js.clone();
-        let mut next_history = self.history.clone();
-        let entry = next_history.pop_redo()?;
-        let application_transaction_id =
-            history_application_transaction_id(WorkspaceHistoryDirection::Redo, self.revision);
-        let mut application = WorkspaceHistoryApplication {
-            documents: &mut next_documents,
-            accepted_documents: &self.accepted_documents,
-            binary_resources: &mut next_binary_resources,
-            deleted_binary_resources: &mut next_deleted_binary_resources,
-            accepted_binary_resource_hashes: &self.accepted_binary_resource_hashes,
-            accepted_disk: &self.accepted_disk,
-            page_js: &mut next_page_js,
-            accepted_page_js: &self.accepted_page_js,
+        let accepted_documents = self.accepted_documents.clone();
+        let accepted_binary_resource_hashes = self.accepted_binary_resource_hashes.clone();
+        let accepted_disk = self.accepted_disk.clone();
+        let accepted_page_js = self.accepted_page_js.clone();
+        let entry = if self.candidate_base_revision.is_some() {
+            apply_history_direction_to_stores(
+                &mut self.documents,
+                &mut self.binary_resources,
+                &mut self.deleted_binary_resources,
+                &mut self.page_js,
+                &mut self.history,
+                accepted_documents.as_ref(),
+                accepted_binary_resource_hashes.as_ref(),
+                accepted_disk.as_ref(),
+                accepted_page_js.as_ref(),
+                direction,
+                now_ms,
+            )?
+        } else {
+            let mut next_documents = self.documents.clone();
+            let mut next_binary_resources = self.binary_resources.clone();
+            let mut next_deleted_binary_resources = self.deleted_binary_resources.clone();
+            let mut next_page_js = self.page_js.clone();
+            let mut next_history = self.history.clone();
+            let entry = apply_history_direction_to_stores(
+                &mut next_documents,
+                &mut next_binary_resources,
+                &mut next_deleted_binary_resources,
+                &mut next_page_js,
+                &mut next_history,
+                accepted_documents.as_ref(),
+                accepted_binary_resource_hashes.as_ref(),
+                accepted_disk.as_ref(),
+                accepted_page_js.as_ref(),
+                direction,
+                now_ms,
+            )?;
+            self.documents = next_documents;
+            self.binary_resources = next_binary_resources;
+            self.deleted_binary_resources = next_deleted_binary_resources;
+            self.page_js = next_page_js;
+            self.history = next_history;
+            entry
         };
-        apply_history_entry(
-            &mut application,
-            &entry,
-            WorkspaceHistoryDirection::Redo,
-            now_ms,
-        )?;
-        next_history.complete_redo(entry.clone());
-        self.documents = next_documents;
-        self.binary_resources = next_binary_resources;
-        self.deleted_binary_resources = next_deleted_binary_resources;
-        self.page_js = next_page_js;
-        self.history = next_history;
+        let application_transaction_id =
+            history_application_transaction_id(direction, self.revision);
         self.advance_revision()?;
         self.last_projection_transaction_id = Some(application_transaction_id.clone());
         self.invalidate_derived_state();
         Ok(self.undo_redo_receipt(
-            WorkspaceHistoryDirection::Redo,
+            direction,
             revision_before,
             entry,
             application_transaction_id,
@@ -1425,7 +1479,7 @@ impl ProjectWorkspace {
         &mut self,
         identity: &ProjectWorkspaceIdentity,
         documents: FileBufferStore,
-        accepted_page_js: BTreeMap<String, PageJsConfig>,
+        accepted_page_js: Arc<BTreeMap<String, PageJsConfig>>,
         accepted_disk: AcceptedProjectDiskManifest,
     ) -> Result<(), String> {
         self.require_identity(identity)?;
@@ -1444,20 +1498,20 @@ impl ProjectWorkspace {
         }
         accepted_disk.require_identity(&self.runtime_session_id(), &self.session.project_root)?;
         accepted_disk.require_complete()?;
-        for path in &self.deleted_binary_resources {
-            self.accepted_binary_resource_hashes.remove(path);
+        for path in self.deleted_binary_resources.iter() {
+            Arc::make_mut(&mut self.accepted_binary_resource_hashes).remove(path);
         }
-        for (path, resource) in &self.binary_resources {
-            self.accepted_binary_resource_hashes
+        for (path, resource) in self.binary_resources.iter() {
+            Arc::make_mut(&mut self.accepted_binary_resource_hashes)
                 .insert(path.clone(), hash_bytes(&resource.bytes));
         }
         self.documents = documents;
         self.accepted_documents = self.documents.files.clone();
-        self.binary_resources.clear();
-        self.deleted_binary_resources.clear();
+        Arc::make_mut(&mut self.binary_resources).clear();
+        Arc::make_mut(&mut self.deleted_binary_resources).clear();
         self.accepted_page_js = accepted_page_js;
         self.page_js = PageJsDraftStore::new(&self.session);
-        self.accepted_disk = accepted_disk;
+        self.accepted_disk = Arc::new(accepted_disk);
         self.history.break_coalescing_group();
         self.last_projection_transaction_id =
             Some(authority_revision_transaction_id("save", self.revision));
@@ -1592,6 +1646,7 @@ impl ProjectWorkspace {
             files,
             page_js,
             history: self.history.snapshot(),
+            project_model_performance: None,
         }
     }
 
@@ -1599,7 +1654,7 @@ impl ProjectWorkspace {
         &self,
         direction: WorkspaceHistoryDirection,
         revision_before: u64,
-        entry: WorkspaceHistoryEntry,
+        entry: Arc<WorkspaceHistoryEntry>,
         application_transaction_id: String,
     ) -> WorkspaceUndoRedoReceipt {
         let mut document_paths = entry
@@ -1632,8 +1687,8 @@ impl ProjectWorkspace {
             documents,
             history: self.history.snapshot(),
             application_transaction_id,
-            source_tree: entry.source_tree,
-            canvas_delta: entry.canvas_delta,
+            source_tree: entry.source_tree.clone(),
+            canvas_delta: entry.canvas_delta.clone(),
         }
     }
 
@@ -1658,13 +1713,49 @@ impl ProjectWorkspace {
 
 struct WorkspaceHistoryApplication<'a> {
     documents: &'a mut FileBufferStore,
-    accepted_documents: &'a BTreeMap<String, FileBufferEntry>,
-    binary_resources: &'a mut BTreeMap<String, WorkspaceBinaryResource>,
-    deleted_binary_resources: &'a mut std::collections::BTreeSet<String>,
+    accepted_documents: &'a BTreeMap<String, Arc<FileBufferEntry>>,
+    binary_resources: &'a mut Arc<BTreeMap<String, Arc<WorkspaceBinaryResource>>>,
+    deleted_binary_resources: &'a mut Arc<std::collections::BTreeSet<String>>,
     accepted_binary_resource_hashes: &'a BTreeMap<String, String>,
     accepted_disk: &'a AcceptedProjectDiskManifest,
     page_js: &'a mut PageJsDraftStore,
     accepted_page_js: &'a BTreeMap<String, PageJsConfig>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_history_direction_to_stores(
+    documents: &mut FileBufferStore,
+    binary_resources: &mut Arc<BTreeMap<String, Arc<WorkspaceBinaryResource>>>,
+    deleted_binary_resources: &mut Arc<std::collections::BTreeSet<String>>,
+    page_js: &mut PageJsDraftStore,
+    history: &mut WorkspaceHistory,
+    accepted_documents: &BTreeMap<String, Arc<FileBufferEntry>>,
+    accepted_binary_resource_hashes: &BTreeMap<String, String>,
+    accepted_disk: &AcceptedProjectDiskManifest,
+    accepted_page_js: &BTreeMap<String, PageJsConfig>,
+    direction: WorkspaceHistoryDirection,
+    now_ms: u128,
+) -> Result<Arc<WorkspaceHistoryEntry>, String> {
+    let entry = match direction {
+        WorkspaceHistoryDirection::Undo => history.pop_undo()?,
+        WorkspaceHistoryDirection::Redo => history.pop_redo()?,
+    };
+    let mut application = WorkspaceHistoryApplication {
+        documents,
+        accepted_documents,
+        binary_resources,
+        deleted_binary_resources,
+        accepted_binary_resource_hashes,
+        accepted_disk,
+        page_js,
+        accepted_page_js,
+    };
+    apply_history_entry(&mut application, &entry, direction, now_ms)?;
+    match direction {
+        WorkspaceHistoryDirection::Undo => history.complete_undo(entry.clone()),
+        WorkspaceHistoryDirection::Redo => history.complete_redo(entry.clone()),
+    }
+    Ok(entry)
 }
 
 fn apply_history_entry(
@@ -1724,7 +1815,7 @@ fn apply_history_entry(
             None => {
                 application
                     .documents
-                    .files
+                    .files_mut()
                     .remove(&transition.relative_path);
             }
         }
@@ -1747,22 +1838,16 @@ fn apply_history_entry(
                     .get(&transition.relative_path)
                     == Some(&hash_bytes(&resource.bytes))
                 {
-                    application
-                        .binary_resources
-                        .remove(&transition.relative_path);
+                    Arc::make_mut(application.binary_resources).remove(&transition.relative_path);
                 } else {
-                    application
-                        .binary_resources
+                    Arc::make_mut(application.binary_resources)
                         .insert(transition.relative_path.clone(), resource.clone());
                 }
-                application
-                    .deleted_binary_resources
+                Arc::make_mut(application.deleted_binary_resources)
                     .remove(&transition.relative_path);
             }
             None => {
-                application
-                    .binary_resources
-                    .remove(&transition.relative_path);
+                Arc::make_mut(application.binary_resources).remove(&transition.relative_path);
                 if application
                     .accepted_binary_resource_hashes
                     .contains_key(&transition.relative_path)
@@ -1773,12 +1858,10 @@ fn apply_history_entry(
                         .iter()
                         .any(|entry| entry.relative_path == transition.relative_path)
                 {
-                    application
-                        .deleted_binary_resources
+                    Arc::make_mut(application.deleted_binary_resources)
                         .insert(transition.relative_path.clone());
                 } else {
-                    application
-                        .deleted_binary_resources
+                    Arc::make_mut(application.deleted_binary_resources)
                         .remove(&transition.relative_path);
                 }
             }
@@ -1815,17 +1898,17 @@ fn apply_history_entry(
 
 fn restore_resource_entry(
     documents: &mut FileBufferStore,
-    accepted: Option<&FileBufferEntry>,
-    target: &FileBufferEntry,
+    accepted: Option<&Arc<FileBufferEntry>>,
+    target: &Arc<FileBufferEntry>,
     next_revision: u64,
     now_ms: u128,
 ) -> Result<(), String> {
     let relative_path = &target.relative_path;
     let target_text = target.current_text().to_string();
     let mut restored = if let Some(accepted) = accepted {
-        let mut restored = accepted.clone();
+        let mut restored = accepted.as_ref().clone();
         restored.revision = restored.revision.max(next_revision);
-        if target_text == restored.baseline_text {
+        if target_text == restored.baseline_text.as_ref() {
             restored.draft = None;
         } else {
             restored.draft = Some(FileBufferDraft {
@@ -1837,15 +1920,18 @@ fn restore_resource_entry(
         }
         restored
     } else {
-        documents.files.remove(relative_path);
+        documents.files_mut().remove(relative_path);
         documents.stage_new_text_file(relative_path, target_text, now_ms)?;
         documents
-            .files
+            .files_mut()
             .remove(relative_path)
+            .map(Arc::unwrap_or_clone)
             .expect("resource staged immediately above")
     };
     restored.revision = restored.revision.max(next_revision);
-    documents.files.insert(relative_path.clone(), restored);
+    documents
+        .files_mut()
+        .insert(relative_path.clone(), Arc::new(restored));
     Ok(())
 }
 
@@ -1983,7 +2069,10 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
     };
 
     use crate::{
@@ -2000,6 +2089,110 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn candidate_fork_shares_retained_state_and_detaches_only_the_mutated_document() {
+        let root = unique_test_dir();
+        let workspace = workspace(
+            &root,
+            &[
+                ("templates/index.html", "<h1>Original</h1>"),
+                ("templates/shared.html", "<p>Shared</p>"),
+            ],
+        );
+        assert!(Arc::ptr_eq(
+            &workspace.documents.files,
+            &workspace.accepted_documents,
+        ));
+
+        let mut candidate = workspace.fork_candidate();
+        assert!(Arc::ptr_eq(
+            &workspace.documents.files,
+            &candidate.documents.files,
+        ));
+        assert!(Arc::ptr_eq(
+            &workspace.accepted_documents,
+            &candidate.accepted_documents,
+        ));
+        assert!(Arc::ptr_eq(
+            &workspace.binary_resources,
+            &candidate.binary_resources,
+        ));
+        assert!(Arc::ptr_eq(
+            &workspace.deleted_binary_resources,
+            &candidate.deleted_binary_resources,
+        ));
+        assert!(Arc::ptr_eq(
+            &workspace.accepted_page_js,
+            &candidate.accepted_page_js,
+        ));
+        assert!(Arc::ptr_eq(
+            &workspace.page_js.drafts,
+            &candidate.page_js.drafts,
+        ));
+        assert!(Arc::ptr_eq(
+            &workspace.accepted_disk,
+            &candidate.accepted_disk,
+        ));
+        assert!(workspace.history.shares_storage_with(&candidate.history));
+
+        candidate
+            .stage_document_texts(
+                &identity(&candidate),
+                metadata("COW document", None),
+                vec![WorkspaceDocumentMutation {
+                    relative_path: "templates/index.html".to_string(),
+                    contents: "<h1>Candidate</h1>".to_string(),
+                }],
+                10,
+            )
+            .unwrap();
+
+        assert!(!Arc::ptr_eq(
+            &workspace.documents.files,
+            &candidate.documents.files,
+        ));
+        assert!(Arc::ptr_eq(
+            workspace
+                .documents
+                .files
+                .get("templates/shared.html")
+                .unwrap(),
+            candidate
+                .documents
+                .files
+                .get("templates/shared.html")
+                .unwrap(),
+        ));
+        let original = workspace
+            .documents
+            .files
+            .get("templates/index.html")
+            .unwrap();
+        let changed = candidate
+            .documents
+            .files
+            .get("templates/index.html")
+            .unwrap();
+        assert!(!Arc::ptr_eq(original, changed));
+        assert!(Arc::ptr_eq(&original.baseline_text, &changed.baseline_text,));
+        assert_eq!(
+            workspace
+                .documents
+                .text_for("templates/index.html")
+                .as_deref(),
+            Some("<h1>Original</h1>"),
+        );
+        assert_eq!(
+            candidate
+                .documents
+                .text_for("templates/index.html")
+                .as_deref(),
+            Some("<h1>Candidate</h1>"),
+        );
+        assert!(!workspace.history.shares_storage_with(&candidate.history));
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn sensitive_env_files_cannot_enter_workspace_history() {
@@ -2421,6 +2614,58 @@ mod tests {
     }
 
     #[test]
+    fn projection_snapshot_shares_materialized_sources_binary_resources_and_disk_authority() {
+        let root = unique_test_dir();
+        let mut workspace = workspace(
+            &root,
+            &[
+                ("zola.toml", "base_url = '/'\n"),
+                ("templates/index.html", "<main>Shared</main>"),
+            ],
+        );
+        let relative_path = "static/images/shared.bin";
+        let bytes = vec![7; 128 * 1024];
+        workspace
+            .stage_binary_resource_creates(
+                &identity(&workspace),
+                metadata("COW binary", None),
+                vec![WorkspaceBinaryResource::new(relative_path, bytes.clone())],
+                1,
+            )
+            .unwrap();
+        let file_entries = Arc::clone(&workspace.documents.files);
+        let binary_resources = Arc::clone(&workspace.binary_resources);
+        let accepted_disk = Arc::clone(&workspace.accepted_disk);
+
+        let projection = workspace.capture_projection_snapshot().unwrap();
+        assert!(projection
+            .source_texts
+            .shares_file_entries_with(&file_entries));
+        assert!(projection
+            .resource_bytes
+            .shares_resources_with(&binary_resources));
+        assert!(Arc::ptr_eq(&projection.accepted_disk, &accepted_disk));
+        assert!(!projection.source_texts.owned_view_is_materialized());
+        assert!(!projection.resource_bytes.owned_view_is_materialized());
+
+        let shared_projection = projection.clone();
+        assert_eq!(
+            shared_projection
+                .source_texts
+                .get("templates/index.html")
+                .map(String::as_str),
+            Some("<main>Shared</main>")
+        );
+        assert_eq!(
+            shared_projection.resource_bytes.get(relative_path),
+            Some(&bytes)
+        );
+        assert!(projection.source_texts.owned_view_is_materialized());
+        assert!(!projection.resource_bytes.owned_view_is_materialized());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn resource_delete_is_a_tombstone_projection_and_is_fully_reversible() {
         let root = unique_test_dir();
         fs::create_dir_all(root.join("templates")).unwrap();
@@ -2618,7 +2863,8 @@ mod tests {
             workspace.session.project_root.clone(),
             crate::project::read_project_disk_manifest(&root).unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .into();
 
         let text_error = workspace
             .stage_binary_resource_creates(
@@ -2869,7 +3115,7 @@ mod tests {
                     size: text.len() as u64,
                     readonly: false,
                 },
-                baseline_text: (*text).to_string(),
+                baseline_text: (*text).to_string().into(),
                 draft: None,
                 revision: 1,
             });

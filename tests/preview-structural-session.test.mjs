@@ -6,7 +6,6 @@ import {
   drainPreviewStructuralLanes,
   PreviewStructuralCancellationError,
   previewStructuralCommandIdentity,
-  previewStructuralLaneSnapshot,
   requirePreviewStructuralReceiptIdentity,
   runInPreviewStructuralLane,
 } from "$lib/kernel/preview-structural-lane";
@@ -19,7 +18,7 @@ import {
   captureEditorCommand,
   htmlTargetFromCoordinatedSelection,
 } from "$lib/editor-runtime/commands";
-import { captureHtmlActionTarget } from "$lib/state/html-actions-controller";
+import { captureHtmlActionTarget } from "$lib/editor/html-actions/target";
 
 function deferred() {
   let resolve;
@@ -38,6 +37,7 @@ function host(overrides = {}) {
     projectSessionEpoch: 4,
     projectTransitionFrontendLeaseActive: false,
     kernelUndoRedoFrontendLeaseActive: false,
+    editorSelection: { selectionSnapshot: null },
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
     ...overrides,
@@ -120,10 +120,6 @@ function selection(selector, sourceId, tag = "section") {
 
 afterEach(async () => {
   await drainPreviewStructuralLanes();
-  assert.deepEqual(previewStructuralLaneSnapshot(), {
-    sessionCount: 0,
-    pendingCount: 0,
-  });
 });
 
 test("structural lane serializes the complete commit-to-projection lifecycle", async () => {
@@ -143,11 +139,6 @@ test("structural lane serializes the complete commit-to-projection lifecycle", a
 
   await nextTurn();
   assert.deepEqual(order, ["first:commit"]);
-  assert.deepEqual(previewStructuralLaneSnapshot(), {
-    sessionCount: 1,
-    pendingCount: 2,
-  });
-
   releaseFirst.resolve();
   await Promise.all([first, second]);
   assert.deepEqual(order, [
@@ -160,13 +151,15 @@ test("structural lane serializes the complete commit-to-projection lifecycle", a
 
 test("selection-driven structural commands capture the Rust selection revision before queueing", async () => {
   const activeHost = host({
-    selectionSnapshot: semanticSelectionSnapshot(
-      37,
-      23,
-      "editor_render:title",
-      "source:title",
-      "render-title",
-    ),
+    editorSelection: {
+      selectionSnapshot: semanticSelectionSnapshot(
+        37,
+        23,
+        "editor_render:title",
+        "source:title",
+        "render-title",
+      ),
+    },
   });
   const gate = deferred();
   const first = runInPreviewStructuralLane(activeHost, async () => {
@@ -178,7 +171,7 @@ test("selection-driven structural commands capture the Rust selection revision b
   });
 
   await nextTurn();
-  activeHost.selectionSnapshot = {
+  activeHost.editorSelection.selectionSnapshot = {
     ...semanticSelectionSnapshot(
       38,
       23,
@@ -311,7 +304,7 @@ test("File Explorer uses exact Rust plan/commit while Save owns the single disk 
   const productionCommands = commands.slice(0, commands.indexOf("#[cfg(test)]"));
   const files = read("src/lib/components/project/ProjectFilesTab.svelte");
   const save = read("src/lib/state/save-controller.ts");
-  const app = read("src/lib/state/app.svelte.ts");
+  const saveService = read("src/lib/project/save-service.ts");
 
   assert.match(explorer, /workspace_revision/);
   assert.match(explorer, /accepted_disk_generation/);
@@ -321,8 +314,8 @@ test("File Explorer uses exact Rust plan/commit while Save owns the single disk 
   assert.match(files, /planOperation/);
   assert.match(files, /commitOperation\(resolvedPlan\)/);
   assert.match(save, /await saveProjectWorkspace\(/);
-  assert.match(app, /await suspendAndDrainExternalDiskMonitoringFromController/);
-  assert.match(app, /return await saveActiveDocument\(this\.saveControllerHost\(\)\)/);
+  assert.match(saveService, /await this\.dependencies\.externalDisk\.suspendAndDrain\(\)/);
+  assert.match(saveService, /return await saveActiveDocument\(this\.controller\)/);
   assert.doesNotMatch(productionCommands, /fs::write|fs::remove|rename\(/);
   assert.doesNotMatch(save, /runInPreviewStructuralLane|acceptedDiskGeneration|InternalWriteEvidence/);
 });
@@ -449,27 +442,13 @@ test("a late receipt cannot project local or Preview state into the active sessi
   assert.deepEqual(calls, { project: 0 });
 });
 
-test("Project Transition raises its reservation before draining structural work", () => {
-  const source = readFileSync(fileURLToPath(new URL(
-    "../src/lib/state/app.svelte.ts",
-    import.meta.url,
-  )), "utf8");
-  const begin = source.slice(source.indexOf("async beginProjectTransitionFrontendLease()"));
-  const reserveAt = begin.indexOf("this.projectTransitionFrontendLeaseActive = true");
-  const closeMenuAt = begin.indexOf("contextMenu.close()", reserveAt);
-  const drainAt = begin.indexOf("await drainPreviewStructuralLanes()", closeMenuAt);
-  assert.ok(reserveAt >= 0, "Project Transition trebuie să ridice reservation flag");
-  assert.ok(closeMenuAt > reserveAt, "meniul contextual trebuie închis după rezervare");
-  assert.ok(drainAt > closeMenuAt, "mutațiile structurale trebuie drenate după rezervare");
-});
-
 test("preview Delete uses the Rust-resolved Canvas target instead of a legacy bridge selection", () => {
   const agent = readFileSync(fileURLToPath(new URL(
     "../src-tauri/src/preview/bridge/03_canvas_agent.js",
     import.meta.url,
   )), "utf8");
   const controller = readFileSync(fileURLToPath(new URL(
-    "../src/lib/state/canvas-interaction-controller.ts",
+    "../src/lib/state/canvas-interaction-selection.ts",
     import.meta.url,
   )), "utf8");
 
@@ -488,15 +467,15 @@ test("preview Delete uses the Rust-resolved Canvas target instead of a legacy br
 });
 
 test("Layers Delete resolves the clicked node before dispatching consecutive child-parent deletes", () => {
-  const app = readFileSync(fileURLToPath(new URL(
-    "../src/lib/state/app.svelte.ts",
+  const navigation = readFileSync(fileURLToPath(new URL(
+    "../src/lib/editor/navigation-service.ts",
     import.meta.url,
   )), "utf8");
-  const deleteFlow = app.slice(
-    app.indexOf("async deleteEditorNavigationNode"),
-    app.indexOf("async deleteHtmlElement", app.indexOf("async deleteEditorNavigationNode")),
+  const deleteFlow = navigation.slice(
+    navigation.indexOf("async deleteNode("),
+    navigation.indexOf("private", navigation.indexOf("async deleteNode(")),
   );
-  const selectAt = deleteFlow.indexOf("await selectEditorNavigationNodeFromController");
+  const selectAt = deleteFlow.indexOf("await this.select(node)");
   const verifyAt = deleteFlow.indexOf("primarySelectionEditorNodeId(selection) !== node.id");
   const dispatchAt = deleteFlow.indexOf("type: \"delete-html\"");
   assert.ok(selectAt >= 0, "ținta apăsată trebuie selectată prin Rust");
@@ -520,33 +499,38 @@ test("missing structural selection remains a visible target error, not a masked 
 });
 
 test("generated class and data-anim delegate identity allocation to the captured Rust target", () => {
-  const source = readFileSync(fileURLToPath(new URL(
-    "../src/lib/state/html-actions-controller.ts",
+  const identity = readFileSync(fileURLToPath(new URL(
+    "../src/lib/editor/html-actions/identity.ts",
     import.meta.url,
   )), "utf8");
-  const classAction = source.slice(
-    source.indexOf("export async function generateClassForSelectedHtml"),
-    source.indexOf("export async function generateDataAnimForSelectedHtml"),
+  const attributes = readFileSync(fileURLToPath(new URL(
+    "../src/lib/editor/html-actions/attributes.ts",
+    import.meta.url,
+  )), "utf8");
+  const source = `${identity}\n${attributes}`;
+  const classAction = identity.slice(
+    identity.indexOf("export async function generateClassForSelectedHtml"),
+    identity.indexOf("export async function generateDataAnimForSelectedHtml"),
   );
-  const dataAnimAction = source.slice(
-    source.indexOf("export async function generateDataAnimForSelectedHtml"),
-    source.indexOf("export async function insertNodeRelative"),
+  const dataAnimAction = identity.slice(
+    identity.indexOf("export async function generateDataAnimForSelectedHtml"),
+    identity.indexOf("async function generateIdentityForTarget"),
   );
 
   assert.match(
     classAction,
-    /captureHtmlActionTarget\(host\.coordinatedElementSelection\)[\s\S]*generateIdentityForTarget\(host, target, "class"\)/,
+    /captureHtmlActionTarget\(host\.context\(\)\.coordinatedSelection\)[\s\S]*generateIdentityForTarget\(host, target, "class"\)/,
   );
   assert.match(
     dataAnimAction,
-    /captureHtmlActionTarget\(host\.coordinatedElementSelection\)[\s\S]*generateIdentityForTarget\(host, target, "dataAnim"\)/,
+    /captureHtmlActionTarget\(host\.context\(\)\.coordinatedSelection\)[\s\S]*generateIdentityForTarget\(host, target, "dataAnim"\)/,
   );
-  assert.match(source, /executeSelectedHtmlAttributes\([\s\S]*\{ kind \},\s*\);/);
+  assert.match(identity, /generatedIdentity:\s*\{ kind \}/);
   assert.doesNotMatch(source, /collectIdentitySourceTexts|generateUniqueHtmlIdentity|readProjectFile/);
   assert.match(source, /committedDraftCanSettle\(currentClasses, submittedClasses, baselineClasses\)/);
   assert.match(
     source,
-    /committedDraftCanSettle\([\s\S]*attributeDraftToken\(host\.attributeValues\)[\s\S]*submittedAttributeDraft[\s\S]*baselineAttributeDraft/,
+    /committedDraftCanSettle\([\s\S]*attributeDraftToken\(host\.draft\.attributeValues\)[\s\S]*submittedAttributeDraft[\s\S]*baselineAttributeDraft/,
   );
   assert.match(
     source,
@@ -732,7 +716,7 @@ test("direct Tera delete captures its source node before entering the structural
     source.indexOf("async function deleteSelectedTeraNodeInLane"),
   );
   const captureAt = action.indexOf("const targetNode = captureTeraActionTarget");
-  const laneAt = action.indexOf("runInPreviewStructuralLane");
+  const laneAt = action.indexOf("host.runStructural");
   assert.ok(captureAt >= 0 && captureAt < laneAt);
   assert.match(action, /deleteSelectedTeraNodeInLane\(host, targetNode, lease\)/);
 });

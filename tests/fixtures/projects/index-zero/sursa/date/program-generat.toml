@@ -1,0 +1,1621 @@
+# Fișier generat determinist. Nu edita manual.
+
+[[evenimente]]
+id = "eveniment-001"
+zi = 1
+ora = "11:00"
+disciplina = "performance"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-001"
+
+[[evenimente]]
+id = "eveniment-002"
+zi = 2
+ora = "12:00"
+disciplina = "sunet"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-002"
+
+[[evenimente]]
+id = "eveniment-003"
+zi = 3
+ora = "13:00"
+disciplina = "instalatie"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-003"
+
+[[evenimente]]
+id = "eveniment-004"
+zi = 4
+ora = "14:00"
+disciplina = "imagine"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-004"
+
+[[evenimente]]
+id = "eveniment-005"
+zi = 5
+ora = "15:00"
+disciplina = "cercetare"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-005"
+
+[[evenimente]]
+id = "eveniment-006"
+zi = 6
+ora = "16:00"
+disciplina = "atelier"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-006"
+
+[[evenimente]]
+id = "eveniment-007"
+zi = 7
+ora = "17:00"
+disciplina = "performance"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-007"
+
+[[evenimente]]
+id = "eveniment-008"
+zi = 8
+ora = "18:00"
+disciplina = "sunet"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-008"
+
+[[evenimente]]
+id = "eveniment-009"
+zi = 9
+ora = "19:00"
+disciplina = "instalatie"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-009"
+
+[[evenimente]]
+id = "eveniment-010"
+zi = 10
+ora = "20:00"
+disciplina = "imagine"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-010"
+
+[[evenimente]]
+id = "eveniment-011"
+zi = 1
+ora = "21:00"
+disciplina = "cercetare"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-011"
+
+[[evenimente]]
+id = "eveniment-012"
+zi = 2
+ora = "22:00"
+disciplina = "atelier"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-012"
+
+[[evenimente]]
+id = "eveniment-013"
+zi = 3
+ora = "11:00"
+disciplina = "performance"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-013"
+
+[[evenimente]]
+id = "eveniment-014"
+zi = 4
+ora = "12:00"
+disciplina = "sunet"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-014"
+
+[[evenimente]]
+id = "eveniment-015"
+zi = 5
+ora = "13:00"
+disciplina = "instalatie"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-015"
+
+[[evenimente]]
+id = "eveniment-016"
+zi = 6
+ora = "14:00"
+disciplina = "imagine"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-016"
+
+[[evenimente]]
+id = "eveniment-017"
+zi = 7
+ora = "15:00"
+disciplina = "cercetare"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-017"
+
+[[evenimente]]
+id = "eveniment-018"
+zi = 8
+ora = "16:00"
+disciplina = "atelier"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-018"
+
+[[evenimente]]
+id = "eveniment-019"
+zi = 9
+ora = "17:00"
+disciplina = "performance"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-019"
+
+[[evenimente]]
+id = "eveniment-020"
+zi = 10
+ora = "18:00"
+disciplina = "sunet"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-020"
+
+[[evenimente]]
+id = "eveniment-021"
+zi = 1
+ora = "19:00"
+disciplina = "instalatie"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-021"
+
+[[evenimente]]
+id = "eveniment-022"
+zi = 2
+ora = "20:00"
+disciplina = "imagine"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-022"
+
+[[evenimente]]
+id = "eveniment-023"
+zi = 3
+ora = "21:00"
+disciplina = "cercetare"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-023"
+
+[[evenimente]]
+id = "eveniment-024"
+zi = 4
+ora = "22:00"
+disciplina = "atelier"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-024"
+
+[[evenimente]]
+id = "eveniment-025"
+zi = 5
+ora = "11:00"
+disciplina = "performance"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-025"
+
+[[evenimente]]
+id = "eveniment-026"
+zi = 6
+ora = "12:00"
+disciplina = "sunet"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-026"
+
+[[evenimente]]
+id = "eveniment-027"
+zi = 7
+ora = "13:00"
+disciplina = "instalatie"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-027"
+
+[[evenimente]]
+id = "eveniment-028"
+zi = 8
+ora = "14:00"
+disciplina = "imagine"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-028"
+
+[[evenimente]]
+id = "eveniment-029"
+zi = 9
+ora = "15:00"
+disciplina = "cercetare"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-029"
+
+[[evenimente]]
+id = "eveniment-030"
+zi = 10
+ora = "16:00"
+disciplina = "atelier"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-030"
+
+[[evenimente]]
+id = "eveniment-031"
+zi = 1
+ora = "17:00"
+disciplina = "performance"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-031"
+
+[[evenimente]]
+id = "eveniment-032"
+zi = 2
+ora = "18:00"
+disciplina = "sunet"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-032"
+
+[[evenimente]]
+id = "eveniment-033"
+zi = 3
+ora = "19:00"
+disciplina = "instalatie"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-033"
+
+[[evenimente]]
+id = "eveniment-034"
+zi = 4
+ora = "20:00"
+disciplina = "imagine"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-034"
+
+[[evenimente]]
+id = "eveniment-035"
+zi = 5
+ora = "21:00"
+disciplina = "cercetare"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-035"
+
+[[evenimente]]
+id = "eveniment-036"
+zi = 6
+ora = "22:00"
+disciplina = "atelier"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-036"
+
+[[evenimente]]
+id = "eveniment-037"
+zi = 7
+ora = "11:00"
+disciplina = "performance"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-037"
+
+[[evenimente]]
+id = "eveniment-038"
+zi = 8
+ora = "12:00"
+disciplina = "sunet"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-038"
+
+[[evenimente]]
+id = "eveniment-039"
+zi = 9
+ora = "13:00"
+disciplina = "instalatie"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-039"
+
+[[evenimente]]
+id = "eveniment-040"
+zi = 10
+ora = "14:00"
+disciplina = "imagine"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-040"
+
+[[evenimente]]
+id = "eveniment-041"
+zi = 1
+ora = "15:00"
+disciplina = "cercetare"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-041"
+
+[[evenimente]]
+id = "eveniment-042"
+zi = 2
+ora = "16:00"
+disciplina = "atelier"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-042"
+
+[[evenimente]]
+id = "eveniment-043"
+zi = 3
+ora = "17:00"
+disciplina = "performance"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-043"
+
+[[evenimente]]
+id = "eveniment-044"
+zi = 4
+ora = "18:00"
+disciplina = "sunet"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-044"
+
+[[evenimente]]
+id = "eveniment-045"
+zi = 5
+ora = "19:00"
+disciplina = "instalatie"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-045"
+
+[[evenimente]]
+id = "eveniment-046"
+zi = 6
+ora = "20:00"
+disciplina = "imagine"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-046"
+
+[[evenimente]]
+id = "eveniment-047"
+zi = 7
+ora = "21:00"
+disciplina = "cercetare"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-047"
+
+[[evenimente]]
+id = "eveniment-048"
+zi = 8
+ora = "22:00"
+disciplina = "atelier"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-048"
+
+[[evenimente]]
+id = "eveniment-049"
+zi = 9
+ora = "11:00"
+disciplina = "performance"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-049"
+
+[[evenimente]]
+id = "eveniment-050"
+zi = 10
+ora = "12:00"
+disciplina = "sunet"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-050"
+
+[[evenimente]]
+id = "eveniment-051"
+zi = 1
+ora = "13:00"
+disciplina = "instalatie"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-051"
+
+[[evenimente]]
+id = "eveniment-052"
+zi = 2
+ora = "14:00"
+disciplina = "imagine"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-052"
+
+[[evenimente]]
+id = "eveniment-053"
+zi = 3
+ora = "15:00"
+disciplina = "cercetare"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-053"
+
+[[evenimente]]
+id = "eveniment-054"
+zi = 4
+ora = "16:00"
+disciplina = "atelier"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-054"
+
+[[evenimente]]
+id = "eveniment-055"
+zi = 5
+ora = "17:00"
+disciplina = "performance"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-055"
+
+[[evenimente]]
+id = "eveniment-056"
+zi = 6
+ora = "18:00"
+disciplina = "sunet"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-056"
+
+[[evenimente]]
+id = "eveniment-057"
+zi = 7
+ora = "19:00"
+disciplina = "instalatie"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-057"
+
+[[evenimente]]
+id = "eveniment-058"
+zi = 8
+ora = "20:00"
+disciplina = "imagine"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-058"
+
+[[evenimente]]
+id = "eveniment-059"
+zi = 9
+ora = "21:00"
+disciplina = "cercetare"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-059"
+
+[[evenimente]]
+id = "eveniment-060"
+zi = 10
+ora = "22:00"
+disciplina = "atelier"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-060"
+
+[[evenimente]]
+id = "eveniment-061"
+zi = 1
+ora = "11:00"
+disciplina = "performance"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-061"
+
+[[evenimente]]
+id = "eveniment-062"
+zi = 2
+ora = "12:00"
+disciplina = "sunet"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-062"
+
+[[evenimente]]
+id = "eveniment-063"
+zi = 3
+ora = "13:00"
+disciplina = "instalatie"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-063"
+
+[[evenimente]]
+id = "eveniment-064"
+zi = 4
+ora = "14:00"
+disciplina = "imagine"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-064"
+
+[[evenimente]]
+id = "eveniment-065"
+zi = 5
+ora = "15:00"
+disciplina = "cercetare"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-065"
+
+[[evenimente]]
+id = "eveniment-066"
+zi = 6
+ora = "16:00"
+disciplina = "atelier"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-066"
+
+[[evenimente]]
+id = "eveniment-067"
+zi = 7
+ora = "17:00"
+disciplina = "performance"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-067"
+
+[[evenimente]]
+id = "eveniment-068"
+zi = 8
+ora = "18:00"
+disciplina = "sunet"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-068"
+
+[[evenimente]]
+id = "eveniment-069"
+zi = 9
+ora = "19:00"
+disciplina = "instalatie"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-069"
+
+[[evenimente]]
+id = "eveniment-070"
+zi = 10
+ora = "20:00"
+disciplina = "imagine"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-070"
+
+[[evenimente]]
+id = "eveniment-071"
+zi = 1
+ora = "21:00"
+disciplina = "cercetare"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-071"
+
+[[evenimente]]
+id = "eveniment-072"
+zi = 2
+ora = "22:00"
+disciplina = "atelier"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-072"
+
+[[evenimente]]
+id = "eveniment-073"
+zi = 3
+ora = "11:00"
+disciplina = "performance"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-073"
+
+[[evenimente]]
+id = "eveniment-074"
+zi = 4
+ora = "12:00"
+disciplina = "sunet"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-074"
+
+[[evenimente]]
+id = "eveniment-075"
+zi = 5
+ora = "13:00"
+disciplina = "instalatie"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-075"
+
+[[evenimente]]
+id = "eveniment-076"
+zi = 6
+ora = "14:00"
+disciplina = "imagine"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-076"
+
+[[evenimente]]
+id = "eveniment-077"
+zi = 7
+ora = "15:00"
+disciplina = "cercetare"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-077"
+
+[[evenimente]]
+id = "eveniment-078"
+zi = 8
+ora = "16:00"
+disciplina = "atelier"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-078"
+
+[[evenimente]]
+id = "eveniment-079"
+zi = 9
+ora = "17:00"
+disciplina = "performance"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-079"
+
+[[evenimente]]
+id = "eveniment-080"
+zi = 10
+ora = "18:00"
+disciplina = "sunet"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-080"
+
+[[evenimente]]
+id = "eveniment-081"
+zi = 1
+ora = "19:00"
+disciplina = "instalatie"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-081"
+
+[[evenimente]]
+id = "eveniment-082"
+zi = 2
+ora = "20:00"
+disciplina = "imagine"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-082"
+
+[[evenimente]]
+id = "eveniment-083"
+zi = 3
+ora = "21:00"
+disciplina = "cercetare"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-083"
+
+[[evenimente]]
+id = "eveniment-084"
+zi = 4
+ora = "22:00"
+disciplina = "atelier"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-084"
+
+[[evenimente]]
+id = "eveniment-085"
+zi = 5
+ora = "11:00"
+disciplina = "performance"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-085"
+
+[[evenimente]]
+id = "eveniment-086"
+zi = 6
+ora = "12:00"
+disciplina = "sunet"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-086"
+
+[[evenimente]]
+id = "eveniment-087"
+zi = 7
+ora = "13:00"
+disciplina = "instalatie"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-087"
+
+[[evenimente]]
+id = "eveniment-088"
+zi = 8
+ora = "14:00"
+disciplina = "imagine"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-088"
+
+[[evenimente]]
+id = "eveniment-089"
+zi = 9
+ora = "15:00"
+disciplina = "cercetare"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-089"
+
+[[evenimente]]
+id = "eveniment-090"
+zi = 10
+ora = "16:00"
+disciplina = "atelier"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-090"
+
+[[evenimente]]
+id = "eveniment-091"
+zi = 1
+ora = "17:00"
+disciplina = "performance"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-091"
+
+[[evenimente]]
+id = "eveniment-092"
+zi = 2
+ora = "18:00"
+disciplina = "sunet"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-092"
+
+[[evenimente]]
+id = "eveniment-093"
+zi = 3
+ora = "19:00"
+disciplina = "instalatie"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-093"
+
+[[evenimente]]
+id = "eveniment-094"
+zi = 4
+ora = "20:00"
+disciplina = "imagine"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-094"
+
+[[evenimente]]
+id = "eveniment-095"
+zi = 5
+ora = "21:00"
+disciplina = "cercetare"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-095"
+
+[[evenimente]]
+id = "eveniment-096"
+zi = 6
+ora = "22:00"
+disciplina = "atelier"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-096"
+
+[[evenimente]]
+id = "eveniment-097"
+zi = 7
+ora = "11:00"
+disciplina = "performance"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-097"
+
+[[evenimente]]
+id = "eveniment-098"
+zi = 8
+ora = "12:00"
+disciplina = "sunet"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-098"
+
+[[evenimente]]
+id = "eveniment-099"
+zi = 9
+ora = "13:00"
+disciplina = "instalatie"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-099"
+
+[[evenimente]]
+id = "eveniment-100"
+zi = 10
+ora = "14:00"
+disciplina = "imagine"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-100"
+
+[[evenimente]]
+id = "eveniment-101"
+zi = 1
+ora = "15:00"
+disciplina = "cercetare"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-001"
+
+[[evenimente]]
+id = "eveniment-102"
+zi = 2
+ora = "16:00"
+disciplina = "atelier"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-002"
+
+[[evenimente]]
+id = "eveniment-103"
+zi = 3
+ora = "17:00"
+disciplina = "performance"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-003"
+
+[[evenimente]]
+id = "eveniment-104"
+zi = 4
+ora = "18:00"
+disciplina = "sunet"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-004"
+
+[[evenimente]]
+id = "eveniment-105"
+zi = 5
+ora = "19:00"
+disciplina = "instalatie"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-005"
+
+[[evenimente]]
+id = "eveniment-106"
+zi = 6
+ora = "20:00"
+disciplina = "imagine"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-006"
+
+[[evenimente]]
+id = "eveniment-107"
+zi = 7
+ora = "21:00"
+disciplina = "cercetare"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-007"
+
+[[evenimente]]
+id = "eveniment-108"
+zi = 8
+ora = "22:00"
+disciplina = "atelier"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-008"
+
+[[evenimente]]
+id = "eveniment-109"
+zi = 9
+ora = "11:00"
+disciplina = "performance"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-009"
+
+[[evenimente]]
+id = "eveniment-110"
+zi = 10
+ora = "12:00"
+disciplina = "sunet"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-010"
+
+[[evenimente]]
+id = "eveniment-111"
+zi = 1
+ora = "13:00"
+disciplina = "instalatie"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-011"
+
+[[evenimente]]
+id = "eveniment-112"
+zi = 2
+ora = "14:00"
+disciplina = "imagine"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-012"
+
+[[evenimente]]
+id = "eveniment-113"
+zi = 3
+ora = "15:00"
+disciplina = "cercetare"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-013"
+
+[[evenimente]]
+id = "eveniment-114"
+zi = 4
+ora = "16:00"
+disciplina = "atelier"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-014"
+
+[[evenimente]]
+id = "eveniment-115"
+zi = 5
+ora = "17:00"
+disciplina = "performance"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-015"
+
+[[evenimente]]
+id = "eveniment-116"
+zi = 6
+ora = "18:00"
+disciplina = "sunet"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-016"
+
+[[evenimente]]
+id = "eveniment-117"
+zi = 7
+ora = "19:00"
+disciplina = "instalatie"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-017"
+
+[[evenimente]]
+id = "eveniment-118"
+zi = 8
+ora = "20:00"
+disciplina = "imagine"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-018"
+
+[[evenimente]]
+id = "eveniment-119"
+zi = 9
+ora = "21:00"
+disciplina = "cercetare"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-019"
+
+[[evenimente]]
+id = "eveniment-120"
+zi = 10
+ora = "22:00"
+disciplina = "atelier"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-020"
+
+[[evenimente]]
+id = "eveniment-121"
+zi = 1
+ora = "11:00"
+disciplina = "performance"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-021"
+
+[[evenimente]]
+id = "eveniment-122"
+zi = 2
+ora = "12:00"
+disciplina = "sunet"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-022"
+
+[[evenimente]]
+id = "eveniment-123"
+zi = 3
+ora = "13:00"
+disciplina = "instalatie"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-023"
+
+[[evenimente]]
+id = "eveniment-124"
+zi = 4
+ora = "14:00"
+disciplina = "imagine"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-024"
+
+[[evenimente]]
+id = "eveniment-125"
+zi = 5
+ora = "15:00"
+disciplina = "cercetare"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-025"
+
+[[evenimente]]
+id = "eveniment-126"
+zi = 6
+ora = "16:00"
+disciplina = "atelier"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-026"
+
+[[evenimente]]
+id = "eveniment-127"
+zi = 7
+ora = "17:00"
+disciplina = "performance"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-027"
+
+[[evenimente]]
+id = "eveniment-128"
+zi = 8
+ora = "18:00"
+disciplina = "sunet"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-028"
+
+[[evenimente]]
+id = "eveniment-129"
+zi = 9
+ora = "19:00"
+disciplina = "instalatie"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-029"
+
+[[evenimente]]
+id = "eveniment-130"
+zi = 10
+ora = "20:00"
+disciplina = "imagine"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-030"
+
+[[evenimente]]
+id = "eveniment-131"
+zi = 1
+ora = "21:00"
+disciplina = "cercetare"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-031"
+
+[[evenimente]]
+id = "eveniment-132"
+zi = 2
+ora = "22:00"
+disciplina = "atelier"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-032"
+
+[[evenimente]]
+id = "eveniment-133"
+zi = 3
+ora = "11:00"
+disciplina = "performance"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-033"
+
+[[evenimente]]
+id = "eveniment-134"
+zi = 4
+ora = "12:00"
+disciplina = "sunet"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-034"
+
+[[evenimente]]
+id = "eveniment-135"
+zi = 5
+ora = "13:00"
+disciplina = "instalatie"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-035"
+
+[[evenimente]]
+id = "eveniment-136"
+zi = 6
+ora = "14:00"
+disciplina = "imagine"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-036"
+
+[[evenimente]]
+id = "eveniment-137"
+zi = 7
+ora = "15:00"
+disciplina = "cercetare"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-037"
+
+[[evenimente]]
+id = "eveniment-138"
+zi = 8
+ora = "16:00"
+disciplina = "atelier"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-038"
+
+[[evenimente]]
+id = "eveniment-139"
+zi = 9
+ora = "17:00"
+disciplina = "performance"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-039"
+
+[[evenimente]]
+id = "eveniment-140"
+zi = 10
+ora = "18:00"
+disciplina = "sunet"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-040"
+
+[[evenimente]]
+id = "eveniment-141"
+zi = 1
+ora = "19:00"
+disciplina = "instalatie"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-041"
+
+[[evenimente]]
+id = "eveniment-142"
+zi = 2
+ora = "20:00"
+disciplina = "imagine"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-042"
+
+[[evenimente]]
+id = "eveniment-143"
+zi = 3
+ora = "21:00"
+disciplina = "cercetare"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-043"
+
+[[evenimente]]
+id = "eveniment-144"
+zi = 4
+ora = "22:00"
+disciplina = "atelier"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-044"
+
+[[evenimente]]
+id = "eveniment-145"
+zi = 5
+ora = "11:00"
+disciplina = "performance"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-045"
+
+[[evenimente]]
+id = "eveniment-146"
+zi = 6
+ora = "12:00"
+disciplina = "sunet"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-046"
+
+[[evenimente]]
+id = "eveniment-147"
+zi = 7
+ora = "13:00"
+disciplina = "instalatie"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-047"
+
+[[evenimente]]
+id = "eveniment-148"
+zi = 8
+ora = "14:00"
+disciplina = "imagine"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-048"
+
+[[evenimente]]
+id = "eveniment-149"
+zi = 9
+ora = "15:00"
+disciplina = "cercetare"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-049"
+
+[[evenimente]]
+id = "eveniment-150"
+zi = 10
+ora = "16:00"
+disciplina = "atelier"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-050"
+
+[[evenimente]]
+id = "eveniment-151"
+zi = 1
+ora = "17:00"
+disciplina = "performance"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-051"
+
+[[evenimente]]
+id = "eveniment-152"
+zi = 2
+ora = "18:00"
+disciplina = "sunet"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-052"
+
+[[evenimente]]
+id = "eveniment-153"
+zi = 3
+ora = "19:00"
+disciplina = "instalatie"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-053"
+
+[[evenimente]]
+id = "eveniment-154"
+zi = 4
+ora = "20:00"
+disciplina = "imagine"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-054"
+
+[[evenimente]]
+id = "eveniment-155"
+zi = 5
+ora = "21:00"
+disciplina = "cercetare"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-055"
+
+[[evenimente]]
+id = "eveniment-156"
+zi = 6
+ora = "22:00"
+disciplina = "atelier"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-056"
+
+[[evenimente]]
+id = "eveniment-157"
+zi = 7
+ora = "11:00"
+disciplina = "performance"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-057"
+
+[[evenimente]]
+id = "eveniment-158"
+zi = 8
+ora = "12:00"
+disciplina = "sunet"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-058"
+
+[[evenimente]]
+id = "eveniment-159"
+zi = 9
+ora = "13:00"
+disciplina = "instalatie"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-059"
+
+[[evenimente]]
+id = "eveniment-160"
+zi = 10
+ora = "14:00"
+disciplina = "imagine"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-060"
+
+[[evenimente]]
+id = "eveniment-161"
+zi = 1
+ora = "15:00"
+disciplina = "cercetare"
+format = "expozitie"
+locatie = "locatie-01"
+artist = "artist-061"
+
+[[evenimente]]
+id = "eveniment-162"
+zi = 2
+ora = "16:00"
+disciplina = "atelier"
+format = "interventie"
+locatie = "locatie-02"
+artist = "artist-062"
+
+[[evenimente]]
+id = "eveniment-163"
+zi = 3
+ora = "17:00"
+disciplina = "performance"
+format = "discutie"
+locatie = "locatie-03"
+artist = "artist-063"
+
+[[evenimente]]
+id = "eveniment-164"
+zi = 4
+ora = "18:00"
+disciplina = "sunet"
+format = "live"
+locatie = "locatie-04"
+artist = "artist-064"
+
+[[evenimente]]
+id = "eveniment-165"
+zi = 5
+ora = "19:00"
+disciplina = "instalatie"
+format = "atelier"
+locatie = "locatie-05"
+artist = "artist-065"
+
+[[evenimente]]
+id = "eveniment-166"
+zi = 6
+ora = "20:00"
+disciplina = "imagine"
+format = "expozitie"
+locatie = "locatie-06"
+artist = "artist-066"
+
+[[evenimente]]
+id = "eveniment-167"
+zi = 7
+ora = "21:00"
+disciplina = "cercetare"
+format = "interventie"
+locatie = "locatie-07"
+artist = "artist-067"
+
+[[evenimente]]
+id = "eveniment-168"
+zi = 8
+ora = "22:00"
+disciplina = "atelier"
+format = "discutie"
+locatie = "locatie-08"
+artist = "artist-068"
+
+[[evenimente]]
+id = "eveniment-169"
+zi = 9
+ora = "11:00"
+disciplina = "performance"
+format = "live"
+locatie = "locatie-09"
+artist = "artist-069"
+
+[[evenimente]]
+id = "eveniment-170"
+zi = 10
+ora = "12:00"
+disciplina = "sunet"
+format = "atelier"
+locatie = "locatie-10"
+artist = "artist-070"
+
+[[evenimente]]
+id = "eveniment-171"
+zi = 1
+ora = "13:00"
+disciplina = "instalatie"
+format = "expozitie"
+locatie = "locatie-11"
+artist = "artist-071"
+
+[[evenimente]]
+id = "eveniment-172"
+zi = 2
+ora = "14:00"
+disciplina = "imagine"
+format = "interventie"
+locatie = "locatie-12"
+artist = "artist-072"
+
+[[evenimente]]
+id = "eveniment-173"
+zi = 3
+ora = "15:00"
+disciplina = "cercetare"
+format = "discutie"
+locatie = "locatie-13"
+artist = "artist-073"
+
+[[evenimente]]
+id = "eveniment-174"
+zi = 4
+ora = "16:00"
+disciplina = "atelier"
+format = "live"
+locatie = "locatie-14"
+artist = "artist-074"
+
+[[evenimente]]
+id = "eveniment-175"
+zi = 5
+ora = "17:00"
+disciplina = "performance"
+format = "atelier"
+locatie = "locatie-15"
+artist = "artist-075"
+
+[[evenimente]]
+id = "eveniment-176"
+zi = 6
+ora = "18:00"
+disciplina = "sunet"
+format = "expozitie"
+locatie = "locatie-16"
+artist = "artist-076"
+
+[[evenimente]]
+id = "eveniment-177"
+zi = 7
+ora = "19:00"
+disciplina = "instalatie"
+format = "interventie"
+locatie = "locatie-17"
+artist = "artist-077"
+
+[[evenimente]]
+id = "eveniment-178"
+zi = 8
+ora = "20:00"
+disciplina = "imagine"
+format = "discutie"
+locatie = "locatie-18"
+artist = "artist-078"
+
+[[evenimente]]
+id = "eveniment-179"
+zi = 9
+ora = "21:00"
+disciplina = "cercetare"
+format = "live"
+locatie = "locatie-19"
+artist = "artist-079"
+
+[[evenimente]]
+id = "eveniment-180"
+zi = 10
+ora = "22:00"
+disciplina = "atelier"
+format = "atelier"
+locatie = "locatie-20"
+artist = "artist-080"

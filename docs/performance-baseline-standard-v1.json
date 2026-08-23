@@ -1,0 +1,7263 @@
+{
+  "schemaVersion": 1,
+  "benchmarkIdentity": {
+    "protocolVersion": 1,
+    "sampleSchemaVersion": 1,
+    "suite": "standard",
+    "runId": "standard-1787363625196-1110733",
+    "fixtureSha256": {
+      "control": "16719d89bc7900f4864117e9d3eacd686d6ba27c29aa9b5a115c4651da527c14",
+      "densitate": "c2046b4886c40120f97b8c608866fff6b564222c75d65c7f886f86f15ed811df",
+      "mare": "fe0da12b305eff8f9c7b672b0d055c7e252335cae41f7484d93c359e2f7eb7d5",
+      "margine-disk": "37e5c25c092acc84cebb76edb7874bea9e314339a247ee9a44b11c8238b1a894",
+      "peste-limita": "ebf581dc0890f3c5118bcf1f056bd69750de5fc3cd4f816763a8785807c9f52d"
+    },
+    "environment": {
+      "rustcVersion": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+      "cargoVersion": "cargo 1.96.1 (356927216 2026-06-26)",
+      "nodeVersion": "v24.18.0",
+      "zolaVersion": "zola 0.22.1",
+      "kernel": "Linux 7.0.0-29-generic x86_64 GNU/Linux",
+      "cpuModel": "Intel(R) Xeon(R) CPU E5-2620 v3 @ 2.40GHz",
+      "logicalCpuCount": 12,
+      "memoryTotalKib": 16289716,
+      "cpuGovernors": [
+        "schedutil"
+      ]
+    }
+  },
+  "rawSampleCount": 7834,
+  "summaries": [
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 4.0,
+        "p95": 4.0,
+        "p99": null,
+        "max": 4.0,
+        "mean": 4.0,
+        "minimum": 4.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 27957.0,
+        "p95": 27957.0,
+        "p99": null,
+        "max": 27957.0,
+        "mean": 27957.0,
+        "minimum": 27957.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 29964.0,
+        "p95": 29964.0,
+        "p99": null,
+        "max": 29964.0,
+        "mean": 29964.0,
+        "minimum": 29964.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 42.788,
+        "p95": 42.788,
+        "p99": null,
+        "max": 42.788,
+        "mean": 42.788,
+        "minimum": 42.788,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 9.0,
+        "p95": 9.0,
+        "p99": null,
+        "max": 9.0,
+        "mean": 9.0,
+        "minimum": 9.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 25944.0,
+        "p95": 25944.0,
+        "p99": null,
+        "max": 25944.0,
+        "mean": 25944.0,
+        "minimum": 25944.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 27796.0,
+        "p95": 27796.0,
+        "p99": null,
+        "max": 27796.0,
+        "mean": 27796.0,
+        "minimum": 27796.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 98.789,
+        "p95": 98.789,
+        "p99": null,
+        "max": 98.789,
+        "mean": 98.789,
+        "minimum": 98.789,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 14.0,
+        "p95": 14.0,
+        "p99": null,
+        "max": 14.0,
+        "mean": 14.0,
+        "minimum": 14.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 30125.0,
+        "p95": 30125.0,
+        "p99": null,
+        "max": 30125.0,
+        "mean": 30125.0,
+        "minimum": 30125.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 32136.0,
+        "p95": 32136.0,
+        "p99": null,
+        "max": 32136.0,
+        "mean": 32136.0,
+        "minimum": 32136.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 152.463,
+        "p95": 152.463,
+        "p99": null,
+        "max": 152.463,
+        "mean": 152.463,
+        "minimum": 152.463,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 5.0,
+        "p95": 5.0,
+        "p99": null,
+        "max": 5.0,
+        "mean": 5.0,
+        "minimum": 5.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 24189.0,
+        "p95": 24189.0,
+        "p99": null,
+        "max": 24189.0,
+        "mean": 24189.0,
+        "minimum": 24189.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 26212.0,
+        "p95": 26212.0,
+        "p99": null,
+        "max": 26212.0,
+        "mean": 26212.0,
+        "minimum": 26212.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 54.798,
+        "p95": 54.798,
+        "p99": null,
+        "max": 54.798,
+        "mean": 54.798,
+        "minimum": 54.798,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "check",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "frontend_bundle",
+      "profile": "application",
+      "mode": "artifact",
+      "metric": "file_count",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 99.0,
+        "p95": 99.0,
+        "p99": null,
+        "max": 99.0,
+        "mean": 99.0,
+        "minimum": 99.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "frontend_bundle",
+      "profile": "application",
+      "mode": "artifact",
+      "metric": "total_bytes",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 4722812.0,
+        "p95": 4722812.0,
+        "p99": null,
+        "max": 4722812.0,
+        "mean": 4722812.0,
+        "minimum": 4722812.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "frontend_production",
+      "profile": "application",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 22.0,
+        "p95": 22.0,
+        "p99": null,
+        "max": 22.0,
+        "mean": 22.0,
+        "minimum": 22.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "frontend_production",
+      "profile": "application",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 3290185.0,
+        "p95": 3290185.0,
+        "p99": null,
+        "max": 3290185.0,
+        "mean": 3290185.0,
+        "minimum": 3290185.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "frontend_production",
+      "profile": "application",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 3367828.0,
+        "p95": 3367828.0,
+        "p99": null,
+        "max": 3367828.0,
+        "mean": 3367828.0,
+        "minimum": 3367828.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "frontend_production",
+      "profile": "application",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "frontend_production",
+      "profile": "application",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 91563.131,
+        "p95": 91563.131,
+        "p99": null,
+        "max": 91563.131,
+        "mean": 91563.131,
+        "minimum": 91563.131,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "frontend_production",
+      "profile": "application",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "native_application",
+      "profile": "application",
+      "mode": "release",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 13.0,
+        "p95": 13.0,
+        "p99": null,
+        "max": 13.0,
+        "mean": 13.0,
+        "minimum": 13.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "native_application",
+      "profile": "application",
+      "mode": "release",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 64841.0,
+        "p95": 64841.0,
+        "p99": null,
+        "max": 64841.0,
+        "mean": 64841.0,
+        "minimum": 64841.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "native_application",
+      "profile": "application",
+      "mode": "release",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 84072.0,
+        "p95": 84072.0,
+        "p99": null,
+        "max": 84072.0,
+        "mean": 84072.0,
+        "minimum": 84072.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "native_application",
+      "profile": "application",
+      "mode": "release",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "native_application",
+      "profile": "application",
+      "mode": "release",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 250821.642,
+        "p95": 250821.642,
+        "p99": null,
+        "max": 250821.642,
+        "mean": 250821.642,
+        "minimum": 250821.642,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "native_application",
+      "profile": "application",
+      "mode": "release",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "native_binary",
+      "profile": "application",
+      "mode": "artifact",
+      "metric": "file_count",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "native_binary",
+      "profile": "application",
+      "mode": "artifact",
+      "metric": "total_bytes",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 133069896.0,
+        "p95": 133069896.0,
+        "p99": null,
+        "max": 133069896.0,
+        "mean": 133069896.0,
+        "minimum": 133069896.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 14.0,
+        "p95": 15.0,
+        "p99": null,
+        "max": 15.0,
+        "mean": 14.2,
+        "minimum": 14.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 35261.0,
+        "p95": 35841.0,
+        "p99": null,
+        "max": 35841.0,
+        "mean": 35398.2,
+        "minimum": 35105.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 37240.0,
+        "p95": 37812.0,
+        "p99": null,
+        "max": 37812.0,
+        "mean": 37392.0,
+        "minimum": 37128.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 76.348,
+        "p95": 88.016,
+        "p99": null,
+        "max": 88.016,
+        "mean": 77.737,
+        "minimum": 75.215,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "filesystem_warm",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 14.0,
+        "p95": 15.0,
+        "p99": null,
+        "max": 16.0,
+        "mean": 14.367,
+        "minimum": 13.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "filesystem_warm",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 35323.0,
+        "p95": 35829.0,
+        "p99": null,
+        "max": 35833.0,
+        "mean": 35390.133,
+        "minimum": 35037.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "filesystem_warm",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 37376.0,
+        "p95": 37840.0,
+        "p99": null,
+        "max": 37856.0,
+        "mean": 37392.8,
+        "minimum": 37024.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "filesystem_warm",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "filesystem_warm",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 76.862,
+        "p95": 86.381,
+        "p99": null,
+        "max": 88.777,
+        "mean": 78.084,
+        "minimum": 75.785,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "control",
+      "mode": "filesystem_warm",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 40.0,
+        "p95": 41.0,
+        "p99": null,
+        "max": 41.0,
+        "mean": 39.8,
+        "minimum": 38.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 55557.0,
+        "p95": 55993.0,
+        "p99": null,
+        "max": 55993.0,
+        "mean": 55538.8,
+        "minimum": 55061.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 57580.0,
+        "p95": 57976.0,
+        "p99": null,
+        "max": 57976.0,
+        "mean": 57538.4,
+        "minimum": 57000.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 181.59,
+        "p95": 195.088,
+        "p99": null,
+        "max": 195.088,
+        "mean": 181.256,
+        "minimum": 169.471,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "filesystem_warm",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 40.0,
+        "p95": 41.0,
+        "p99": null,
+        "max": 41.0,
+        "mean": 39.7,
+        "minimum": 38.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "filesystem_warm",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 55557.0,
+        "p95": 56181.0,
+        "p99": null,
+        "max": 56205.0,
+        "mean": 55507.833,
+        "minimum": 54073.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "filesystem_warm",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 57536.0,
+        "p95": 58164.0,
+        "p99": null,
+        "max": 58172.0,
+        "mean": 57501.067,
+        "minimum": 56048.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "filesystem_warm",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "filesystem_warm",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 181.931,
+        "p95": 205.052,
+        "p99": null,
+        "max": 205.4,
+        "mean": 183.932,
+        "minimum": 161.72,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "densitate",
+      "mode": "filesystem_warm",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 75.0,
+        "p95": 79.0,
+        "p99": null,
+        "max": 79.0,
+        "mean": 76.0,
+        "minimum": 75.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 68857.0,
+        "p95": 74057.0,
+        "p99": null,
+        "max": 74057.0,
+        "mean": 69614.6,
+        "minimum": 68057.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 70844.0,
+        "p95": 76028.0,
+        "p99": null,
+        "max": 76028.0,
+        "mean": 71599.2,
+        "minimum": 70076.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 265.565,
+        "p95": 294.627,
+        "p99": null,
+        "max": 294.627,
+        "mean": 267.62,
+        "minimum": 240.739,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "filesystem_warm",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 76.0,
+        "p95": 79.0,
+        "p99": null,
+        "max": 79.0,
+        "mean": 76.467,
+        "minimum": 74.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "filesystem_warm",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 68862.0,
+        "p95": 71228.0,
+        "p99": null,
+        "max": 73445.0,
+        "mean": 69198.267,
+        "minimum": 68145.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "filesystem_warm",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 70888.0,
+        "p95": 73160.0,
+        "p99": null,
+        "max": 75444.0,
+        "mean": 71192.4,
+        "minimum": 70144.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "filesystem_warm",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "filesystem_warm",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 261.918,
+        "p95": 291.607,
+        "p99": null,
+        "max": 307.66,
+        "mean": 264.75,
+        "minimum": 236.621,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "mare",
+      "mode": "filesystem_warm",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 14.0,
+        "p95": 15.0,
+        "p99": null,
+        "max": 15.0,
+        "mean": 14.3,
+        "minimum": 13.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 35249.0,
+        "p95": 35493.0,
+        "p99": null,
+        "max": 35493.0,
+        "mean": 35253.0,
+        "minimum": 35025.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 37252.0,
+        "p95": 37492.0,
+        "p99": null,
+        "max": 37492.0,
+        "mean": 37244.8,
+        "minimum": 37004.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 77.22,
+        "p95": 90.752,
+        "p99": null,
+        "max": 90.752,
+        "mean": 80.559,
+        "minimum": 76.155,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "filesystem_warm",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 14.0,
+        "p95": 15.0,
+        "p99": null,
+        "max": 16.0,
+        "mean": 14.3,
+        "minimum": 13.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "filesystem_warm",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 35337.0,
+        "p95": 35725.0,
+        "p99": null,
+        "max": 35797.0,
+        "mean": 35325.467,
+        "minimum": 34817.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "filesystem_warm",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 37316.0,
+        "p95": 37724.0,
+        "p99": null,
+        "max": 37764.0,
+        "mean": 37317.333,
+        "minimum": 36840.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "filesystem_warm",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "filesystem_warm",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 76.548,
+        "p95": 88.625,
+        "p99": null,
+        "max": 88.853,
+        "mean": 77.517,
+        "minimum": 68.239,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "build",
+      "scenario": "zola_build",
+      "profile": "margine-disk",
+      "mode": "filesystem_warm",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "contract",
+      "scenario": "project_open_boundary",
+      "profile": "control",
+      "mode": "fail_closed",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "contract",
+      "scenario": "project_open_boundary",
+      "profile": "densitate",
+      "mode": "fail_closed",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "contract",
+      "scenario": "project_open_boundary",
+      "profile": "mare",
+      "mode": "fail_closed",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "contract",
+      "scenario": "project_open_boundary",
+      "profile": "margine-disk",
+      "mode": "fail_closed",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "contract",
+      "scenario": "project_open_boundary",
+      "profile": "peste-limita",
+      "mode": "fail_closed",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "application_composition",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "composition_construction",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 24.0,
+        "p95": 24.0,
+        "p99": null,
+        "max": 24.0,
+        "mean": 24.0,
+        "minimum": 24.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "application_composition",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "composition_effect_settle",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 6311.0,
+        "p95": 6311.0,
+        "p99": null,
+        "max": 6311.0,
+        "mean": 6311.0,
+        "minimum": 6311.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "application_composition",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "composition_construction",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 26.0,
+        "p95": 26.0,
+        "p99": null,
+        "max": 26.0,
+        "mean": 26.0,
+        "minimum": 26.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "application_composition",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "composition_effect_settle",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 6286.0,
+        "p95": 6286.0,
+        "p99": null,
+        "max": 6286.0,
+        "mean": 6286.0,
+        "minimum": 6286.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "application_composition",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "composition_construction",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 25.0,
+        "p95": 25.0,
+        "p99": null,
+        "max": 25.0,
+        "mean": 25.0,
+        "minimum": 25.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "application_composition",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "composition_effect_settle",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 6231.0,
+        "p95": 6231.0,
+        "p99": null,
+        "max": 6231.0,
+        "mean": 6231.0,
+        "minimum": 6231.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "reactive_workspace_layout",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "flush_sync",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 2.0,
+        "p95": 3.0,
+        "p99": null,
+        "max": 5.0,
+        "mean": 2.033,
+        "minimum": 1.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "reactive_workspace_layout",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "flush_sync",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 1.0,
+        "p95": 2.0,
+        "p99": null,
+        "max": 4.0,
+        "mean": 1.3,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "frontend",
+      "scenario": "reactive_workspace_layout",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "flush_sync",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 3.0,
+        "mean": 1.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "attribute_edit",
+      "profile": "canvas-contract",
+      "mode": "functional",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "canvas_runtime_contract",
+      "profile": "canvas-contract",
+      "mode": "release_sources",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 44.0,
+        "p95": 44.0,
+        "p99": null,
+        "max": 44.0,
+        "mean": 44.0,
+        "minimum": 44.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "canvas_runtime_contract",
+      "profile": "canvas-contract",
+      "mode": "release_sources",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 66941.0,
+        "p95": 66941.0,
+        "p99": null,
+        "max": 66941.0,
+        "mean": 66941.0,
+        "minimum": 66941.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "canvas_runtime_contract",
+      "profile": "canvas-contract",
+      "mode": "release_sources",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 92660.0,
+        "p95": 92660.0,
+        "p99": null,
+        "max": 92660.0,
+        "mean": 92660.0,
+        "minimum": 92660.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "canvas_runtime_contract",
+      "profile": "canvas-contract",
+      "mode": "release_sources",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "canvas_runtime_contract",
+      "profile": "canvas-contract",
+      "mode": "release_sources",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 7319.093,
+        "p95": 7319.093,
+        "p99": null,
+        "max": 7319.093,
+        "mean": 7319.093,
+        "minimum": 7319.093,
+        "unit": "ms"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "canvas_runtime_contract",
+      "profile": "canvas-contract",
+      "mode": "release_sources",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "document_switch",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 5989.0,
+        "p95": 9863.0,
+        "p99": null,
+        "max": 9882.0,
+        "mean": 6017.733,
+        "minimum": 1964.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "document_switch",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 10308.0,
+        "p95": 16194.0,
+        "p99": null,
+        "max": 16817.0,
+        "mean": 10493.533,
+        "minimum": 3400.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "document_switch",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 18741.0,
+        "p95": 30592.0,
+        "p99": null,
+        "max": 30907.0,
+        "mean": 19133.167,
+        "minimum": 3276.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "inspector_toggle",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 50.0,
+        "p95": 66.0,
+        "p99": null,
+        "max": 66.0,
+        "mean": 52.0,
+        "minimum": 30.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "inspector_toggle",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 103.0,
+        "p95": 127.0,
+        "p99": null,
+        "max": 130.0,
+        "mean": 105.9,
+        "minimum": 92.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "inspector_toggle",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 101.0,
+        "p95": 152.0,
+        "p99": null,
+        "max": 3267.0,
+        "mean": 210.7,
+        "minimum": 90.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "pane_tab_switch",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 155.0,
+        "p95": 1195.0,
+        "p99": null,
+        "max": 1198.0,
+        "mean": 636.4,
+        "minimum": 120.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "pane_tab_switch",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 171.0,
+        "p95": 1917.0,
+        "p99": null,
+        "max": 1980.0,
+        "mean": 985.167,
+        "minimum": 122.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "pane_tab_switch",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 173.0,
+        "p95": 3447.0,
+        "p99": null,
+        "max": 3472.0,
+        "mean": 1746.367,
+        "minimum": 139.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "selection_contract",
+      "profile": "canvas-contract",
+      "mode": "functional",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "selection_overlay",
+      "profile": "canvas-contract",
+      "mode": "sustained",
+      "metric": "render_duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 7.0,
+        "p95": 14.0,
+        "p99": 18.0,
+        "max": 18.0,
+        "mean": 7.86,
+        "minimum": 5.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "interactions",
+      "scenario": "structural_operation",
+      "profile": "canvas-contract",
+      "mode": "functional",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "interactions",
+      "scenario": "undo_redo_contract",
+      "profile": "canvas-contract",
+      "mode": "functional",
+      "metric": "contract_pass",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "boolean"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "kernel",
+      "scenario": "css_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 2.465,
+        "p95": 2.465,
+        "p99": null,
+        "max": 2.465,
+        "mean": 2.465,
+        "minimum": 2.465,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "css_edit",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 1.973,
+        "p95": 2.521,
+        "p99": 3.178,
+        "max": 3.284,
+        "mean": 2.075,
+        "minimum": 1.83,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "css_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 10.324,
+        "p95": 10.324,
+        "p99": null,
+        "max": 10.324,
+        "mean": 10.324,
+        "minimum": 10.324,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "css_edit",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 11.362,
+        "p95": 19.199,
+        "p99": 21.185,
+        "max": 22.02,
+        "mean": 12.271,
+        "minimum": 9.913,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "css_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 13.529,
+        "p95": 13.529,
+        "p99": null,
+        "max": 13.529,
+        "mean": 13.529,
+        "minimum": 13.529,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "css_edit",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 13.473,
+        "p95": 15.498,
+        "p99": 17.347,
+        "max": 21.345,
+        "mean": 13.734,
+        "minimum": 12.2,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "css_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.952,
+        "p95": 1.952,
+        "p99": null,
+        "max": 1.952,
+        "mean": 1.952,
+        "minimum": 1.952,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "css_edit",
+      "profile": "margine-disk",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 2.126,
+        "p95": 2.577,
+        "p99": 3.053,
+        "max": 3.526,
+        "mean": 2.183,
+        "minimum": 1.742,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "external_reconcile",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 4.98,
+        "p95": 6.555,
+        "p99": 7.035,
+        "max": 7.087,
+        "mean": 5.103,
+        "minimum": 3.722,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "external_reconcile",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 4.846,
+        "p95": 5.74,
+        "p99": 6.468,
+        "max": 7.63,
+        "mean": 4.985,
+        "minimum": 4.599,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "external_reconcile",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 4.516,
+        "p95": 5.083,
+        "p99": 5.498,
+        "max": 5.652,
+        "mean": 4.549,
+        "minimum": 3.971,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "external_reconcile",
+      "profile": "margine-disk",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 4.96,
+        "p95": 6.748,
+        "p99": 7.449,
+        "max": 7.837,
+        "mean": 5.252,
+        "minimum": 4.78,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "control",
+      "mode": "release",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 130.0,
+        "p95": 130.0,
+        "p99": null,
+        "max": 130.0,
+        "mean": 130.0,
+        "minimum": 130.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "control",
+      "mode": "release",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 276740.0,
+        "p95": 276740.0,
+        "p99": null,
+        "max": 276740.0,
+        "mean": 276740.0,
+        "minimum": 276740.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "control",
+      "mode": "release",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 286280.0,
+        "p95": 286280.0,
+        "p99": null,
+        "max": 286280.0,
+        "mean": 286280.0,
+        "minimum": 286280.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "control",
+      "mode": "release",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "control",
+      "mode": "release",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 441247.632,
+        "p95": 441247.632,
+        "p99": null,
+        "max": 441247.632,
+        "mean": 441247.632,
+        "minimum": 441247.632,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "control",
+      "mode": "release",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "densitate",
+      "mode": "release",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 85.0,
+        "p95": 85.0,
+        "p99": null,
+        "max": 85.0,
+        "mean": 85.0,
+        "minimum": 85.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "densitate",
+      "mode": "release",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 482006.0,
+        "p95": 482006.0,
+        "p99": null,
+        "max": 482006.0,
+        "mean": 482006.0,
+        "minimum": 482006.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "densitate",
+      "mode": "release",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 491460.0,
+        "p95": 491460.0,
+        "p99": null,
+        "max": 491460.0,
+        "mean": 491460.0,
+        "minimum": 491460.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "densitate",
+      "mode": "release",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "densitate",
+      "mode": "release",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 125471.664,
+        "p95": 125471.664,
+        "p99": null,
+        "max": 125471.664,
+        "mean": 125471.664,
+        "minimum": 125471.664,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "densitate",
+      "mode": "release",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "mare",
+      "mode": "release",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 141.0,
+        "p95": 141.0,
+        "p99": null,
+        "max": 141.0,
+        "mean": 141.0,
+        "minimum": 141.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "mare",
+      "mode": "release",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 539648.0,
+        "p95": 539648.0,
+        "p99": null,
+        "max": 539648.0,
+        "mean": 539648.0,
+        "minimum": 539648.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "mare",
+      "mode": "release",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 549200.0,
+        "p95": 549200.0,
+        "p99": null,
+        "max": 549200.0,
+        "mean": 549200.0,
+        "minimum": 549200.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "mare",
+      "mode": "release",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "mare",
+      "mode": "release",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 127985.906,
+        "p95": 127985.906,
+        "p99": null,
+        "max": 127985.906,
+        "mean": 127985.906,
+        "minimum": 127985.906,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "mare",
+      "mode": "release",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "margine-disk",
+      "mode": "release",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 84.0,
+        "p95": 84.0,
+        "p99": null,
+        "max": 84.0,
+        "mean": 84.0,
+        "minimum": 84.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "margine-disk",
+      "mode": "release",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 284560.0,
+        "p95": 284560.0,
+        "p99": null,
+        "max": 284560.0,
+        "mean": 284560.0,
+        "minimum": 284560.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "margine-disk",
+      "mode": "release",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 294060.0,
+        "p95": 294060.0,
+        "p99": null,
+        "max": 294060.0,
+        "mean": 294060.0,
+        "minimum": 294060.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "margine-disk",
+      "mode": "release",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "margine-disk",
+      "mode": "release",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 25963.088,
+        "p95": 25963.088,
+        "p99": null,
+        "max": 25963.088,
+        "mean": 25963.088,
+        "minimum": 25963.088,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "margine-disk",
+      "mode": "release",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "peste-limita",
+      "mode": "release",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 83.0,
+        "p95": 83.0,
+        "p99": null,
+        "max": 83.0,
+        "mean": 83.0,
+        "minimum": 83.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "peste-limita",
+      "mode": "release",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 209835.0,
+        "p95": 209835.0,
+        "p99": null,
+        "max": 209835.0,
+        "mean": 209835.0,
+        "minimum": 209835.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "peste-limita",
+      "mode": "release",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 219284.0,
+        "p95": 219284.0,
+        "p99": null,
+        "max": 219284.0,
+        "mean": 219284.0,
+        "minimum": 219284.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "peste-limita",
+      "mode": "release",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "peste-limita",
+      "mode": "release",
+      "metric": "wall",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1782.036,
+        "p95": 1782.036,
+        "p99": null,
+        "max": 1782.036,
+        "mean": 1782.036,
+        "minimum": 1782.036,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "harness",
+      "profile": "peste-limita",
+      "mode": "release",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "fullP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 100.042,
+        "p95": 100.042,
+        "p99": null,
+        "max": 100.042,
+        "mean": 100.042,
+        "minimum": 100.042,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelBlockGraphP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.22,
+        "p95": 0.22,
+        "p99": null,
+        "max": 0.22,
+        "mean": 0.22,
+        "minimum": 0.22,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 2.628,
+        "p95": 2.628,
+        "p99": null,
+        "max": 2.628,
+        "mean": 2.628,
+        "minimum": 2.628,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelComponentGraphP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.534,
+        "p95": 1.534,
+        "p99": null,
+        "max": 1.534,
+        "mean": 1.534,
+        "minimum": 1.534,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelContentModelP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.046,
+        "p95": 0.046,
+        "p99": null,
+        "max": 0.046,
+        "mean": 0.046,
+        "minimum": 0.046,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelDynamicWidgetP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.021,
+        "p95": 0.021,
+        "p99": null,
+        "max": 0.021,
+        "mean": 0.021,
+        "minimum": 0.021,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelListingItemsP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelMarkdownP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.001,
+        "p95": 0.001,
+        "p99": null,
+        "max": 0.001,
+        "mean": 0.001,
+        "minimum": 0.001,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelNodeIndexP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.641,
+        "p95": 0.641,
+        "p99": null,
+        "max": 0.641,
+        "mean": 0.641,
+        "minimum": 0.641,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelTemplateParseP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 27.683,
+        "p95": 27.683,
+        "p99": null,
+        "max": 27.683,
+        "mean": 27.683,
+        "minimum": 27.683,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 28.309,
+        "p95": 33.351,
+        "p99": 35.768,
+        "max": 38.648,
+        "mean": 29.121,
+        "minimum": 26.341,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "fullP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 458.64,
+        "p95": 458.64,
+        "p99": null,
+        "max": 458.64,
+        "mean": 458.64,
+        "minimum": 458.64,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelBlockGraphP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.2,
+        "p95": 1.2,
+        "p99": null,
+        "max": 1.2,
+        "mean": 1.2,
+        "minimum": 1.2,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 13.69,
+        "p95": 13.69,
+        "p99": null,
+        "max": 13.69,
+        "mean": 13.69,
+        "minimum": 13.69,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelComponentGraphP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 7.832,
+        "p95": 7.832,
+        "p99": null,
+        "max": 7.832,
+        "mean": 7.832,
+        "minimum": 7.832,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelContentModelP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.315,
+        "p95": 0.315,
+        "p99": null,
+        "max": 0.315,
+        "mean": 0.315,
+        "minimum": 0.315,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelDynamicWidgetP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.176,
+        "p95": 0.176,
+        "p99": null,
+        "max": 0.176,
+        "mean": 0.176,
+        "minimum": 0.176,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelListingItemsP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelMarkdownP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.002,
+        "p95": 0.002,
+        "p99": null,
+        "max": 0.002,
+        "mean": 0.002,
+        "minimum": 0.002,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelNodeIndexP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 5.123,
+        "p95": 5.123,
+        "p99": null,
+        "max": 5.123,
+        "mean": 5.123,
+        "minimum": 5.123,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelTemplateParseP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 294.441,
+        "p95": 294.441,
+        "p99": null,
+        "max": 294.441,
+        "mean": 294.441,
+        "minimum": 294.441,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 293.366,
+        "p95": 329.536,
+        "p99": 400.346,
+        "max": 442.174,
+        "mean": 297.538,
+        "minimum": 268.839,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "fullP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 527.725,
+        "p95": 527.725,
+        "p99": null,
+        "max": 527.725,
+        "mean": 527.725,
+        "minimum": 527.725,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelBlockGraphP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 15.679,
+        "p95": 15.679,
+        "p99": null,
+        "max": 15.679,
+        "mean": 15.679,
+        "minimum": 15.679,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelComponentGraphP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 5.499,
+        "p95": 5.499,
+        "p99": null,
+        "max": 5.499,
+        "mean": 5.499,
+        "minimum": 5.499,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelContentModelP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.163,
+        "p95": 0.163,
+        "p99": null,
+        "max": 0.163,
+        "mean": 0.163,
+        "minimum": 0.163,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelDynamicWidgetP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.087,
+        "p95": 0.087,
+        "p99": null,
+        "max": 0.087,
+        "mean": 0.087,
+        "minimum": 0.087,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelListingItemsP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelMarkdownP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.002,
+        "p95": 0.002,
+        "p99": null,
+        "max": 0.002,
+        "mean": 0.002,
+        "minimum": 0.002,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelNodeIndexP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 4.149,
+        "p95": 4.149,
+        "p99": null,
+        "max": 4.149,
+        "mean": 4.149,
+        "minimum": 4.149,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelTemplateParseP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 122.363,
+        "p95": 122.363,
+        "p99": null,
+        "max": 122.363,
+        "mean": 122.363,
+        "minimum": 122.363,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 145.845,
+        "p95": 153.223,
+        "p99": 185.984,
+        "max": 207.613,
+        "mean": 147.049,
+        "minimum": 139.228,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "fullP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 86.018,
+        "p95": 86.018,
+        "p99": null,
+        "max": 86.018,
+        "mean": 86.018,
+        "minimum": 86.018,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelBlockGraphP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.202,
+        "p95": 0.202,
+        "p99": null,
+        "max": 0.202,
+        "mean": 0.202,
+        "minimum": 0.202,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 2.558,
+        "p95": 2.558,
+        "p99": null,
+        "max": 2.558,
+        "mean": 2.558,
+        "minimum": 2.558,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelComponentGraphP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1.305,
+        "p95": 1.305,
+        "p99": null,
+        "max": 1.305,
+        "mean": 1.305,
+        "minimum": 1.305,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelContentModelP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.052,
+        "p95": 0.052,
+        "p99": null,
+        "max": 0.052,
+        "mean": 0.052,
+        "minimum": 0.052,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelDynamicWidgetP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.022,
+        "p95": 0.022,
+        "p99": null,
+        "max": 0.022,
+        "mean": 0.022,
+        "minimum": 0.022,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelListingItemsP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelMarkdownP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.001,
+        "p95": 0.001,
+        "p99": null,
+        "max": 0.001,
+        "mean": 0.001,
+        "minimum": 0.001,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelNodeIndexP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.589,
+        "p95": 0.589,
+        "p99": null,
+        "max": 0.589,
+        "mean": 0.589,
+        "minimum": 0.589,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelTemplateParseP95Us",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 25.869,
+        "p95": 25.869,
+        "p99": null,
+        "max": 25.869,
+        "mean": 25.869,
+        "minimum": 25.869,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "html_edit",
+      "profile": "margine-disk",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 28.062,
+        "p95": 31.834,
+        "p99": 32.519,
+        "max": 33.513,
+        "mean": 28.561,
+        "minimum": 26.277,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_build",
+      "profile": "control",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 2.628,
+        "p95": 2.628,
+        "p99": null,
+        "max": 2.628,
+        "mean": 2.628,
+        "minimum": 2.628,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_build",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 28.309,
+        "p95": 33.351,
+        "p99": 35.768,
+        "max": 38.648,
+        "mean": 29.121,
+        "minimum": 26.341,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_build",
+      "profile": "densitate",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 13.69,
+        "p95": 13.69,
+        "p99": null,
+        "max": 13.69,
+        "mean": 13.69,
+        "minimum": 13.69,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_build",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 293.366,
+        "p95": 329.536,
+        "p99": 400.346,
+        "max": 442.174,
+        "mean": 297.538,
+        "minimum": 268.839,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_build",
+      "profile": "mare",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 15.679,
+        "p95": 15.679,
+        "p99": null,
+        "max": 15.679,
+        "mean": 15.679,
+        "minimum": 15.679,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_build",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 145.845,
+        "p95": 153.223,
+        "p99": 185.984,
+        "max": 207.613,
+        "mean": 147.049,
+        "minimum": 139.228,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_build",
+      "profile": "margine-disk",
+      "mode": "diagnostic",
+      "metric": "projectModelCloneUs",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 2.558,
+        "p95": 2.558,
+        "p99": null,
+        "max": 2.558,
+        "mean": 2.558,
+        "minimum": 2.558,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_build",
+      "profile": "margine-disk",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 28.062,
+        "p95": 31.834,
+        "p99": 32.519,
+        "max": 33.513,
+        "mean": 28.561,
+        "minimum": 26.277,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_full_build",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 78.021,
+        "p95": 100.042,
+        "p99": 112.0,
+        "max": 140.149,
+        "mean": 81.801,
+        "minimum": 72.912,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_full_build",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 402.603,
+        "p95": 458.64,
+        "p99": 512.583,
+        "max": 514.773,
+        "mean": 410.821,
+        "minimum": 387.147,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_full_build",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 472.309,
+        "p95": 527.725,
+        "p99": 551.758,
+        "max": 558.272,
+        "mean": 480.71,
+        "minimum": 454.15,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_model_full_build",
+      "profile": "margine-disk",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 82.107,
+        "p95": 86.018,
+        "p99": 87.806,
+        "max": 93.249,
+        "mean": 82.56,
+        "minimum": 78.056,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 79.105,
+        "p95": 89.644,
+        "p99": 94.068,
+        "max": 94.948,
+        "mean": 80.924,
+        "minimum": 75.311,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 387.591,
+        "p95": 434.098,
+        "p99": 452.393,
+        "max": 456.182,
+        "mean": 395.569,
+        "minimum": 371.811,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 460.861,
+        "p95": 522.448,
+        "p99": 543.988,
+        "max": 561.271,
+        "mean": 469.44,
+        "minimum": 437.408,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "project_open",
+      "profile": "margine-disk",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 95.516,
+        "p95": 105.175,
+        "p99": 119.585,
+        "max": 120.986,
+        "mean": 96.819,
+        "minimum": 90.805,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "startup_inspection",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 1.602,
+        "p95": 2.041,
+        "p99": 2.151,
+        "max": 2.574,
+        "mean": 1.658,
+        "minimum": 1.519,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "startup_inspection",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 2.164,
+        "p95": 2.465,
+        "p99": 2.632,
+        "max": 2.777,
+        "mean": 2.181,
+        "minimum": 1.868,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "startup_inspection",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 3.836,
+        "p95": 4.188,
+        "p99": 4.734,
+        "max": 5.257,
+        "mean": 3.91,
+        "minimum": 3.743,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "startup_inspection",
+      "profile": "margine-disk",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 8.142,
+        "p95": 9.205,
+        "p99": 9.718,
+        "max": 10.408,
+        "mean": 8.225,
+        "minimum": 7.479,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel",
+      "scenario": "startup_inspection",
+      "profile": "peste-limita",
+      "mode": "warm",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 100,
+        "p50": 7.813,
+        "p95": 8.852,
+        "p99": 9.259,
+        "max": 9.503,
+        "mean": 7.872,
+        "minimum": 6.885,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "currentRootLockHeldUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.106,
+        "p95": 0.257,
+        "p99": null,
+        "max": 0.257,
+        "mean": 0.132,
+        "minimum": 0.081,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "currentRootLockWaitUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 798.849,
+        "p95": 934.807,
+        "p99": null,
+        "max": 934.807,
+        "mean": 834.604,
+        "minimum": 762.689,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "previewPrepareUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 697.0,
+        "p95": 829.0,
+        "p99": null,
+        "max": 829.0,
+        "mean": 722.2,
+        "minimum": 666.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "projectModelBuildUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 94.0,
+        "p95": 141.0,
+        "p99": null,
+        "max": 141.0,
+        "mean": 96.9,
+        "minimum": 82.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "projectWorkspaceLockHeldUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.106,
+        "p95": 0.256,
+        "p99": null,
+        "max": 0.256,
+        "mean": 0.132,
+        "minimum": 0.081,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "projectWorkspaceLockWaitUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "zolaRenderUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 186.0,
+        "p95": 216.0,
+        "p99": null,
+        "max": 216.0,
+        "mean": 187.6,
+        "minimum": 161.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "currentRootLockHeldUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.091,
+        "p95": 0.175,
+        "p99": null,
+        "max": 0.175,
+        "mean": 0.109,
+        "minimum": 0.088,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "currentRootLockWaitUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 3570.333,
+        "p95": 3683.935,
+        "p99": null,
+        "max": 3683.935,
+        "mean": 3572.078,
+        "minimum": 3468.525,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "previewPrepareUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 3395.0,
+        "p95": 3506.0,
+        "p99": null,
+        "max": 3506.0,
+        "mean": 3389.1,
+        "minimum": 3293.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "projectModelBuildUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 453.0,
+        "p95": 504.0,
+        "p99": null,
+        "max": 504.0,
+        "mean": 455.7,
+        "minimum": 400.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "projectWorkspaceLockHeldUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.09,
+        "p95": 0.174,
+        "p99": null,
+        "max": 0.174,
+        "mean": 0.108,
+        "minimum": 0.088,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "projectWorkspaceLockWaitUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "zolaRenderUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 406.0,
+        "p95": 455.0,
+        "p99": null,
+        "max": 455.0,
+        "mean": 407.6,
+        "minimum": 384.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "currentRootLockHeldUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.098,
+        "p95": 0.211,
+        "p99": null,
+        "max": 0.211,
+        "mean": 0.116,
+        "minimum": 0.078,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "currentRootLockWaitUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "duration",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 3210.668,
+        "p95": 3341.899,
+        "p99": null,
+        "max": 3341.899,
+        "mean": 3209.965,
+        "minimum": 3070.082,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "previewPrepareUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 2981.0,
+        "p95": 3106.0,
+        "p99": null,
+        "max": 3106.0,
+        "mean": 2974.7,
+        "minimum": 2830.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "projectModelBuildUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 523.0,
+        "p95": 540.0,
+        "p99": null,
+        "max": 540.0,
+        "mean": 519.5,
+        "minimum": 477.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "projectWorkspaceLockHeldUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.097,
+        "p95": 0.21,
+        "p99": null,
+        "max": 0.21,
+        "mean": 0.116,
+        "minimum": 0.078,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "projectWorkspaceLockWaitUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "kernel_runtime",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "zolaRenderUs",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 440.0,
+        "p95": 473.0,
+        "p99": null,
+        "max": 473.0,
+        "mean": 441.5,
+        "minimum": 390.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "limits",
+      "scenario": "file_explorer_projection",
+      "profile": "control",
+      "mode": "snapshot",
+      "metric": "published_entry_count",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 146.0,
+        "p95": 146.0,
+        "p99": null,
+        "max": 146.0,
+        "mean": 146.0,
+        "minimum": 146.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "limits",
+      "scenario": "file_explorer_projection",
+      "profile": "densitate",
+      "mode": "snapshot",
+      "metric": "published_entry_count",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 248.0,
+        "p95": 248.0,
+        "p99": null,
+        "max": 248.0,
+        "mean": 248.0,
+        "minimum": 248.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "limits",
+      "scenario": "file_explorer_projection",
+      "profile": "mare",
+      "mode": "snapshot",
+      "metric": "published_entry_count",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 466.0,
+        "p95": 466.0,
+        "p99": null,
+        "max": 466.0,
+        "mean": 466.0,
+        "minimum": 466.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "limits",
+      "scenario": "file_explorer_projection",
+      "profile": "margine-disk",
+      "mode": "snapshot",
+      "metric": "published_entry_count",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 500.0,
+        "p95": 500.0,
+        "p99": null,
+        "max": 500.0,
+        "mean": 500.0,
+        "minimum": 500.0,
+        "unit": "count"
+      },
+      "failedSamples": 1
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "event_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 48.0,
+        "p95": 316.0,
+        "p99": null,
+        "max": 316.0,
+        "mean": 73.6,
+        "minimum": 37.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "log_bytes",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 33556.0,
+        "p95": 191572.0,
+        "p99": null,
+        "max": 191572.0,
+        "mean": 48332.6,
+        "minimum": 23806.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "control",
+      "mode": "native_release",
+      "metric": "performance_command_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "event_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 48.0,
+        "p95": 336.0,
+        "p99": null,
+        "max": 336.0,
+        "mean": 75.4,
+        "minimum": 41.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "log_bytes",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 33595.0,
+        "p95": 203827.0,
+        "p99": null,
+        "max": 203827.0,
+        "mean": 49122.8,
+        "minimum": 26114.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "densitate",
+      "mode": "native_release",
+      "metric": "performance_command_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "event_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 48.0,
+        "p95": 330.0,
+        "p99": null,
+        "max": 330.0,
+        "mean": 75.5,
+        "minimum": 41.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "log_bytes",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 33520.0,
+        "p95": 200509.0,
+        "p99": null,
+        "max": 200509.0,
+        "mean": 49472.1,
+        "minimum": 26079.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "mare",
+      "mode": "native_release",
+      "metric": "performance_command_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1.0,
+        "p95": 1.0,
+        "p99": null,
+        "max": 1.0,
+        "mean": 1.0,
+        "minimum": 1.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "margine-disk",
+      "mode": "native_release",
+      "metric": "event_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 15.0,
+        "p95": 15.0,
+        "p99": null,
+        "max": 15.0,
+        "mean": 15.0,
+        "minimum": 15.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "margine-disk",
+      "mode": "native_release",
+      "metric": "log_bytes",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 9212.0,
+        "p95": 9212.0,
+        "p99": null,
+        "max": 9212.0,
+        "mean": 9212.0,
+        "minimum": 9212.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "margine-disk",
+      "mode": "native_release",
+      "metric": "performance_command_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "peste-limita",
+      "mode": "native_release",
+      "metric": "event_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 9.0,
+        "p95": 9.0,
+        "p99": null,
+        "max": 9.0,
+        "mean": 9.0,
+        "minimum": 9.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "peste-limita",
+      "mode": "native_release",
+      "metric": "log_bytes",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 4927.0,
+        "p95": 4927.0,
+        "p99": null,
+        "max": 4927.0,
+        "mean": 4927.0,
+        "minimum": 4927.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "observability",
+      "scenario": "kernel_runtime_log",
+      "profile": "peste-limita",
+      "mode": "native_release",
+      "metric": "performance_command_count",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "activity_switch",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 129.0,
+        "p95": 205.0,
+        "p99": null,
+        "max": 208.0,
+        "mean": 131.933,
+        "minimum": 81.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "activity_switch",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 146.0,
+        "p95": 245.0,
+        "p99": null,
+        "max": 246.0,
+        "mean": 161.0,
+        "minimum": 90.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "activity_switch",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 150.0,
+        "p95": 263.0,
+        "p99": null,
+        "max": 282.0,
+        "mean": 158.233,
+        "minimum": 85.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "control",
+      "mode": "snapshot",
+      "metric": "css_rule_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "control",
+      "mode": "snapshot",
+      "metric": "element_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "control",
+      "mode": "snapshot",
+      "metric": "image_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "control",
+      "mode": "snapshot",
+      "metric": "loaded_image_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "load_to_two_raf",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 545.0,
+        "p95": 729.0,
+        "p99": null,
+        "max": 729.0,
+        "mean": 604.667,
+        "minimum": 540.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "densitate",
+      "mode": "snapshot",
+      "metric": "css_rule_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "densitate",
+      "mode": "snapshot",
+      "metric": "element_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "densitate",
+      "mode": "snapshot",
+      "metric": "image_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "densitate",
+      "mode": "snapshot",
+      "metric": "loaded_image_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "load_to_two_raf",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 5960.0,
+        "p95": 6074.0,
+        "p99": null,
+        "max": 6074.0,
+        "mean": 4936.333,
+        "minimum": 2775.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "mare",
+      "mode": "snapshot",
+      "metric": "css_rule_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "mare",
+      "mode": "snapshot",
+      "metric": "element_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "mare",
+      "mode": "snapshot",
+      "metric": "image_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "mare",
+      "mode": "snapshot",
+      "metric": "loaded_image_count",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "count"
+      },
+      "failedSamples": 3
+    },
+    {
+      "layer": "rendering",
+      "scenario": "preview_route",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "load_to_two_raf",
+      "distribution": {
+        "sampleCount": 3,
+        "p50": 3144.0,
+        "p95": 3662.0,
+        "p99": null,
+        "max": 3662.0,
+        "mean": 3126.667,
+        "minimum": 2574.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "workspace_frames",
+      "profile": "control",
+      "mode": "sustained",
+      "metric": "frame_delta",
+      "distribution": {
+        "sampleCount": 180,
+        "p50": 17.0,
+        "p95": 34.0,
+        "p99": 34.0,
+        "max": 34.0,
+        "mean": 23.611,
+        "minimum": 1.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "workspace_frames",
+      "profile": "densitate",
+      "mode": "sustained",
+      "metric": "frame_delta",
+      "distribution": {
+        "sampleCount": 180,
+        "p50": 17.0,
+        "p95": 34.0,
+        "p99": 34.0,
+        "max": 34.0,
+        "mean": 24.444,
+        "minimum": 16.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "rendering",
+      "scenario": "workspace_frames",
+      "profile": "mare",
+      "mode": "sustained",
+      "metric": "frame_delta",
+      "distribution": {
+        "sampleCount": 180,
+        "p50": 17.0,
+        "p95": 34.0,
+        "p99": 34.0,
+        "max": 34.0,
+        "mean": 21.756,
+        "minimum": 16.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "cpu_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1414.0,
+        "p95": 3992.0,
+        "p99": null,
+        "max": 3992.0,
+        "mean": 1609.6,
+        "minimum": 793.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 641320.0,
+        "p95": 908215.0,
+        "p99": null,
+        "max": 908215.0,
+        "mean": 663953.0,
+        "minimum": 601989.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 834008.0,
+        "p95": 1088372.0,
+        "p99": null,
+        "max": 1088372.0,
+        "mean": 858246.4,
+        "minimum": 809524.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "read_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 4096.0,
+        "p95": 286720.0,
+        "p99": null,
+        "max": 286720.0,
+        "mean": 32358.4,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "write_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 6385664.0,
+        "p95": 6422528.0,
+        "p99": null,
+        "max": 6422528.0,
+        "mean": 5361664.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "cpu_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 993.0,
+        "p95": 10846.0,
+        "p99": null,
+        "max": 10846.0,
+        "mean": 2503.2,
+        "minimum": 889.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 979731.0,
+        "p95": 1420364.0,
+        "p99": null,
+        "max": 1420364.0,
+        "mean": 1002340.1,
+        "minimum": 859881.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1160224.0,
+        "p95": 1601492.0,
+        "p99": null,
+        "max": 1601492.0,
+        "mean": 1183272.4,
+        "minimum": 1042488.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "read_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 4096.0,
+        "p99": null,
+        "max": 4096.0,
+        "mean": 409.6,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "write_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 8892416.0,
+        "p99": null,
+        "max": 8892416.0,
+        "mean": 2908979.2,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "cpu_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1292.0,
+        "p95": 9932.0,
+        "p99": null,
+        "max": 9932.0,
+        "mean": 2276.7,
+        "minimum": 1228.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1272572.0,
+        "p95": 1613387.0,
+        "p99": null,
+        "max": 1613387.0,
+        "mean": 1282276.4,
+        "minimum": 1054496.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1454988.0,
+        "p95": 1794660.0,
+        "p99": null,
+        "max": 1794660.0,
+        "mean": 1463081.2,
+        "minimum": 1235064.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "read_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "write_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 8740864.0,
+        "p99": null,
+        "max": 8740864.0,
+        "mean": 874086.4,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "cpu_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 9995.0,
+        "p95": 10097.0,
+        "p99": null,
+        "max": 10097.0,
+        "mean": 7208.9,
+        "minimum": 788.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 370626.0,
+        "p95": 388187.0,
+        "p99": null,
+        "max": 388187.0,
+        "mean": 372502.0,
+        "minimum": 369936.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 545792.0,
+        "p95": 546916.0,
+        "p99": null,
+        "max": 546916.0,
+        "mean": 545898.4,
+        "minimum": 545288.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "read_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 8192.0,
+        "p99": null,
+        "max": 8192.0,
+        "mean": 1228.8,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "write_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 1015808.0,
+        "p95": 1015808.0,
+        "p99": null,
+        "max": 1015808.0,
+        "mean": 688128.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "peste-limita",
+      "mode": "cold_process",
+      "metric": "cpu_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 408.0,
+        "p95": 435.0,
+        "p99": null,
+        "max": 435.0,
+        "mean": 352.2,
+        "minimum": 171.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "peste-limita",
+      "mode": "cold_process",
+      "metric": "peak_pss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 354547.0,
+        "p95": 380619.0,
+        "p99": null,
+        "max": 380619.0,
+        "mean": 356998.9,
+        "minimum": 352962.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "peste-limita",
+      "mode": "cold_process",
+      "metric": "peak_rss",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 531480.0,
+        "p95": 535836.0,
+        "p99": null,
+        "max": 535836.0,
+        "mean": 531828.8,
+        "minimum": 530104.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "peste-limita",
+      "mode": "cold_process",
+      "metric": "read_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 0.0,
+        "p95": 4096.0,
+        "p99": null,
+        "max": 4096.0,
+        "mean": 1638.4,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_lifetime",
+      "profile": "peste-limita",
+      "mode": "cold_process",
+      "metric": "write_delta",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 950272.0,
+        "p95": 970752.0,
+        "p99": null,
+        "max": 970752.0,
+        "mean": 742195.2,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "after_settle",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 51810.0,
+        "p95": 51810.0,
+        "p99": null,
+        "max": 51810.0,
+        "mean": 51810.0,
+        "minimum": 51810.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "after_settle",
+      "metric": "pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 821879.0,
+        "p95": 821879.0,
+        "p99": null,
+        "max": 821879.0,
+        "mean": 821879.0,
+        "minimum": 821879.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "after_settle",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 92553216.0,
+        "p95": 92553216.0,
+        "p99": null,
+        "max": 92553216.0,
+        "mean": 92553216.0,
+        "minimum": 92553216.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "after_settle",
+      "metric": "rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1000848.0,
+        "p95": 1000848.0,
+        "p99": null,
+        "max": 1000848.0,
+        "mean": 1000848.0,
+        "minimum": 1000848.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "after_settle",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 8855552.0,
+        "p95": 8855552.0,
+        "p99": null,
+        "max": 8855552.0,
+        "mean": 8855552.0,
+        "minimum": 8855552.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "before_sustained",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1499.0,
+        "p95": 1499.0,
+        "p99": null,
+        "max": 1499.0,
+        "mean": 1499.0,
+        "minimum": 1499.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "before_sustained",
+      "metric": "pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 615824.0,
+        "p95": 615824.0,
+        "p99": null,
+        "max": 615824.0,
+        "mean": 615824.0,
+        "minimum": 615824.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "before_sustained",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 90263552.0,
+        "p95": 90263552.0,
+        "p99": null,
+        "max": 90263552.0,
+        "mean": 90263552.0,
+        "minimum": 90263552.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "before_sustained",
+      "metric": "rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 794056.0,
+        "p95": 794056.0,
+        "p99": null,
+        "max": 794056.0,
+        "mean": 794056.0,
+        "minimum": 794056.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "control",
+      "mode": "before_sustained",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 6389760.0,
+        "p95": 6389760.0,
+        "p99": null,
+        "max": 6389760.0,
+        "mean": 6389760.0,
+        "minimum": 6389760.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "after_settle",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 110966.0,
+        "p95": 110966.0,
+        "p99": null,
+        "max": 110966.0,
+        "mean": 110966.0,
+        "minimum": 110966.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "after_settle",
+      "metric": "pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1188943.0,
+        "p95": 1188943.0,
+        "p99": null,
+        "max": 1188943.0,
+        "mean": 1188943.0,
+        "minimum": 1188943.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "after_settle",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 4096.0,
+        "p95": 4096.0,
+        "p99": null,
+        "max": 4096.0,
+        "mean": 4096.0,
+        "minimum": 4096.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "after_settle",
+      "metric": "rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1369932.0,
+        "p95": 1369932.0,
+        "p99": null,
+        "max": 1369932.0,
+        "mean": 1369932.0,
+        "minimum": 1369932.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "after_settle",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 11681792.0,
+        "p95": 11681792.0,
+        "p99": null,
+        "max": 11681792.0,
+        "mean": 11681792.0,
+        "minimum": 11681792.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "before_sustained",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 2600.0,
+        "p95": 2600.0,
+        "p99": null,
+        "max": 2600.0,
+        "mean": 2600.0,
+        "minimum": 2600.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "before_sustained",
+      "metric": "pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 929043.0,
+        "p95": 929043.0,
+        "p99": null,
+        "max": 929043.0,
+        "mean": 929043.0,
+        "minimum": 929043.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "before_sustained",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 4096.0,
+        "p95": 4096.0,
+        "p99": null,
+        "max": 4096.0,
+        "mean": 4096.0,
+        "minimum": 4096.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "before_sustained",
+      "metric": "rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1109568.0,
+        "p95": 1109568.0,
+        "p99": null,
+        "max": 1109568.0,
+        "mean": 1109568.0,
+        "minimum": 1109568.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "densitate",
+      "mode": "before_sustained",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 8892416.0,
+        "p95": 8892416.0,
+        "p99": null,
+        "max": 8892416.0,
+        "mean": 8892416.0,
+        "minimum": 8892416.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "after_settle",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 130520.0,
+        "p95": 130520.0,
+        "p99": null,
+        "max": 130520.0,
+        "mean": 130520.0,
+        "minimum": 130520.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "after_settle",
+      "metric": "pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1520363.0,
+        "p95": 1520363.0,
+        "p99": null,
+        "max": 1520363.0,
+        "mean": 1520363.0,
+        "minimum": 1520363.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "after_settle",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 135168.0,
+        "p95": 135168.0,
+        "p99": null,
+        "max": 135168.0,
+        "mean": 135168.0,
+        "minimum": 135168.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "after_settle",
+      "metric": "rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1701464.0,
+        "p95": 1701464.0,
+        "p99": null,
+        "max": 1701464.0,
+        "mean": 1701464.0,
+        "minimum": 1701464.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "after_settle",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 11411456.0,
+        "p95": 11411456.0,
+        "p99": null,
+        "max": 11411456.0,
+        "mean": 11411456.0,
+        "minimum": 11411456.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "before_sustained",
+      "metric": "cpu",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 2549.0,
+        "p95": 2549.0,
+        "p99": null,
+        "max": 2549.0,
+        "mean": 2549.0,
+        "minimum": 2549.0,
+        "unit": "ticks"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "before_sustained",
+      "metric": "pss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1183122.0,
+        "p95": 1183122.0,
+        "p99": null,
+        "max": 1183122.0,
+        "mean": 1183122.0,
+        "minimum": 1183122.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "before_sustained",
+      "metric": "read",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": null,
+        "max": 0.0,
+        "mean": 0.0,
+        "minimum": 0.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "before_sustained",
+      "metric": "rss",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 1363440.0,
+        "p95": 1363440.0,
+        "p99": null,
+        "max": 1363440.0,
+        "mean": 1363440.0,
+        "minimum": 1363440.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_process_tree",
+      "profile": "mare",
+      "mode": "before_sustained",
+      "metric": "write",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 8744960.0,
+        "p95": 8744960.0,
+        "p99": null,
+        "max": 8744960.0,
+        "mean": 8744960.0,
+        "minimum": 8744960.0,
+        "unit": "bytes"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_retention",
+      "profile": "control",
+      "mode": "after_settle",
+      "metric": "retained_pss_delta",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 206055.0,
+        "p95": 206055.0,
+        "p99": null,
+        "max": 206055.0,
+        "mean": 206055.0,
+        "minimum": 206055.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_retention",
+      "profile": "control",
+      "mode": "after_settle",
+      "metric": "retained_rss_delta",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 206792.0,
+        "p95": 206792.0,
+        "p99": null,
+        "max": 206792.0,
+        "mean": 206792.0,
+        "minimum": 206792.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_retention",
+      "profile": "densitate",
+      "mode": "after_settle",
+      "metric": "retained_pss_delta",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 259900.0,
+        "p95": 259900.0,
+        "p99": null,
+        "max": 259900.0,
+        "mean": 259900.0,
+        "minimum": 259900.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_retention",
+      "profile": "densitate",
+      "mode": "after_settle",
+      "metric": "retained_rss_delta",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 260364.0,
+        "p95": 260364.0,
+        "p99": null,
+        "max": 260364.0,
+        "mean": 260364.0,
+        "minimum": 260364.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_retention",
+      "profile": "mare",
+      "mode": "after_settle",
+      "metric": "retained_pss_delta",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 337241.0,
+        "p95": 337241.0,
+        "p99": null,
+        "max": 337241.0,
+        "mean": 337241.0,
+        "minimum": 337241.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "resources",
+      "scenario": "application_retention",
+      "profile": "mare",
+      "mode": "after_settle",
+      "metric": "retained_rss_delta",
+      "distribution": {
+        "sampleCount": 1,
+        "p50": 338024.0,
+        "p95": 338024.0,
+        "p99": null,
+        "max": 338024.0,
+        "mean": 338024.0,
+        "minimum": 338024.0,
+        "unit": "KiB"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "action_to_accessibility_state",
+      "distribution": {
+        "sampleCount": 90,
+        "p50": 111.898,
+        "p95": 220.341,
+        "p99": null,
+        "max": 229.12,
+        "mean": 135.943,
+        "minimum": 84.298,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "action_to_accessibility_state",
+      "distribution": {
+        "sampleCount": 90,
+        "p50": 123.412,
+        "p95": 240.014,
+        "p99": null,
+        "max": 468.622,
+        "mean": 135.614,
+        "minimum": 83.104,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "action_to_accessibility_state",
+      "distribution": {
+        "sampleCount": 90,
+        "p50": 114.662,
+        "p95": 250.533,
+        "p99": null,
+        "max": 263.57,
+        "mean": 131.583,
+        "minimum": 81.357,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch_sustained",
+      "profile": "control",
+      "mode": "sustained",
+      "metric": "action_to_accessibility_state",
+      "distribution": {
+        "sampleCount": 500,
+        "p50": 110.245,
+        "p95": 207.021,
+        "p99": 222.598,
+        "max": 251.126,
+        "mean": 131.066,
+        "minimum": 75.017,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch_sustained",
+      "profile": "densitate",
+      "mode": "sustained",
+      "metric": "action_to_accessibility_state",
+      "distribution": {
+        "sampleCount": 500,
+        "p50": 115.785,
+        "p95": 238.474,
+        "p99": 276.443,
+        "max": 305.399,
+        "mean": 128.668,
+        "minimum": 75.741,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch_sustained",
+      "profile": "mare",
+      "mode": "sustained",
+      "metric": "action_to_accessibility_state",
+      "distribution": {
+        "sampleCount": 500,
+        "p50": 114.192,
+        "p95": 232.417,
+        "p99": 267.429,
+        "max": 287.301,
+        "mean": 125.473,
+        "minimum": 77.327,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "application_launch",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "launch_to_adapter_complete",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 16111.779,
+        "p95": 17255.827,
+        "p99": null,
+        "max": 17255.827,
+        "mean": 16019.453,
+        "minimum": 14564.879,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "application_launch",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "launch_to_adapter_complete",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 25516.894,
+        "p95": 26215.99,
+        "p99": null,
+        "max": 26215.99,
+        "mean": 25255.497,
+        "minimum": 23587.133,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "application_launch",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "launch_to_adapter_complete",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 21824.688,
+        "p95": 22316.664,
+        "p99": null,
+        "max": 22316.664,
+        "mean": 21689.51,
+        "minimum": 20025.952,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "application_launch",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "launch_to_adapter_complete",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 189023.042,
+        "p95": 189209.692,
+        "p99": null,
+        "max": 189209.692,
+        "mean": 189038.072,
+        "minimum": 188864.714,
+        "unit": "ms"
+      },
+      "failedSamples": 10
+    },
+    {
+      "layer": "ui",
+      "scenario": "application_launch",
+      "profile": "peste-limita",
+      "mode": "cold_process",
+      "metric": "launch_to_adapter_complete",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 9076.82,
+        "p95": 9619.577,
+        "p99": null,
+        "max": 9619.577,
+        "mean": 9145.158,
+        "minimum": 8943.59,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "canvas_accessible",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 6442.179,
+        "p95": 6908.5,
+        "p99": null,
+        "max": 6908.5,
+        "mean": 6413.355,
+        "minimum": 5545.111,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "terminal_state",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 6442.179,
+        "p95": 6908.5,
+        "p99": null,
+        "max": 6908.5,
+        "mean": 6413.355,
+        "minimum": 5545.111,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "workspace_ready",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 6113.187,
+        "p95": 7189.949,
+        "p99": null,
+        "max": 7189.949,
+        "mean": 6279.646,
+        "minimum": 5210.865,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "warm_process",
+      "metric": "canvas_accessible",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 252.0,
+        "p95": 505.0,
+        "p99": null,
+        "max": 689.0,
+        "mean": 232.2,
+        "minimum": 51.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "canvas_accessible",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 15563.93,
+        "p95": 16572.462,
+        "p99": null,
+        "max": 16572.462,
+        "mean": 15479.244,
+        "minimum": 14489.169,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "terminal_state",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 15563.93,
+        "p95": 16572.462,
+        "p99": null,
+        "max": 16572.462,
+        "mean": 15479.244,
+        "minimum": 14489.169,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "workspace_ready",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 15833.52,
+        "p95": 16619.459,
+        "p99": null,
+        "max": 16619.459,
+        "mean": 14964.285,
+        "minimum": 8043.588,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "warm_process",
+      "metric": "canvas_accessible",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 87.0,
+        "p95": 6955.0,
+        "p99": null,
+        "max": 7257.0,
+        "mean": 2050.8,
+        "minimum": 58.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "canvas_accessible",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 12210.167,
+        "p95": 12736.287,
+        "p99": null,
+        "max": 12736.287,
+        "mean": 12162.341,
+        "minimum": 10768.513,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "terminal_state",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 12210.167,
+        "p95": 12736.287,
+        "p99": null,
+        "max": 12736.287,
+        "mean": 12162.341,
+        "minimum": 10768.513,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "workspace_ready",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 12214.087,
+        "p95": 13120.894,
+        "p99": null,
+        "max": 13120.894,
+        "mean": 11891.378,
+        "minimum": 8190.433,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "warm_process",
+      "metric": "canvas_accessible",
+      "distribution": {
+        "sampleCount": 30,
+        "p50": 106.0,
+        "p95": 3616.0,
+        "p99": null,
+        "max": 3772.0,
+        "mean": 764.833,
+        "minimum": 60.0,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "margine-disk",
+      "mode": "cold_process",
+      "metric": "terminal_state",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 180057.406,
+        "p95": 180174.952,
+        "p99": null,
+        "max": 180174.952,
+        "mean": 180094.02,
+        "minimum": 180009.957,
+        "unit": "ms"
+      },
+      "failedSamples": 10
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "peste-limita",
+      "mode": "cold_process",
+      "metric": "terminal_state",
+      "distribution": {
+        "sampleCount": 10,
+        "p50": 223.446,
+        "p95": 257.178,
+        "p99": null,
+        "max": 257.178,
+        "mean": 227.652,
+        "minimum": 200.142,
+        "unit": "ms"
+      },
+      "failedSamples": 0
+    }
+  ],
+  "aspirationalBudgets": [
+    {
+      "layer": "frontend",
+      "scenario": "reactive_workspace_layout",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "flush_sync",
+      "statistic": "p95",
+      "actual": 3.0,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "pass",
+      "rationale": "Actualizare reactivă p95 ≤ 50 ms"
+    },
+    {
+      "layer": "frontend",
+      "scenario": "reactive_workspace_layout",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "flush_sync",
+      "statistic": "p95",
+      "actual": 2.0,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "pass",
+      "rationale": "Actualizare reactivă p95 ≤ 50 ms"
+    },
+    {
+      "layer": "frontend",
+      "scenario": "reactive_workspace_layout",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "flush_sync",
+      "statistic": "p95",
+      "actual": 1.0,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "pass",
+      "rationale": "Actualizare reactivă p95 ≤ 50 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "document_switch",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 9863.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare document p95 ≤ 100 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "document_switch",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 16194.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare document p95 ≤ 100 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "document_switch",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 30592.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare document p95 ≤ 100 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "inspector_toggle",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 66.0,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Comutare Inspector p95 ≤ 50 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "inspector_toggle",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 127.0,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Comutare Inspector p95 ≤ 50 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "inspector_toggle",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 152.0,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Comutare Inspector p95 ≤ 50 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "pane_tab_switch",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 1195.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare tab p95 ≤ 100 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "pane_tab_switch",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 1917.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare tab p95 ≤ 100 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "pane_tab_switch",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 3447.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare tab p95 ≤ 100 ms"
+    },
+    {
+      "layer": "interactions",
+      "scenario": "selection_overlay",
+      "profile": "canvas-contract",
+      "mode": "sustained",
+      "metric": "render_duration",
+      "statistic": "p95",
+      "actual": 14.0,
+      "budget": 16.7,
+      "unit": "ms",
+      "status": "pass",
+      "rationale": "Proiecție selecție într-un cadru p95 ≤ 16,7 ms"
+    },
+    {
+      "layer": "rendering",
+      "scenario": "activity_switch",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 205.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Input-to-paint pentru activitate p95 ≤ 100 ms"
+    },
+    {
+      "layer": "rendering",
+      "scenario": "activity_switch",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 245.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Input-to-paint pentru activitate p95 ≤ 100 ms"
+    },
+    {
+      "layer": "rendering",
+      "scenario": "activity_switch",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "input_to_two_raf",
+      "statistic": "p95",
+      "actual": 263.0,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Input-to-paint pentru activitate p95 ≤ 100 ms"
+    },
+    {
+      "layer": "rendering",
+      "scenario": "workspace_frames",
+      "profile": "control",
+      "mode": "sustained",
+      "metric": "frame_delta",
+      "statistic": "p95",
+      "actual": 34.0,
+      "budget": 16.7,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Cadru fluid p95 ≤ 16,7 ms"
+    },
+    {
+      "layer": "rendering",
+      "scenario": "workspace_frames",
+      "profile": "densitate",
+      "mode": "sustained",
+      "metric": "frame_delta",
+      "statistic": "p95",
+      "actual": 34.0,
+      "budget": 16.7,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Cadru fluid p95 ≤ 16,7 ms"
+    },
+    {
+      "layer": "rendering",
+      "scenario": "workspace_frames",
+      "profile": "mare",
+      "mode": "sustained",
+      "metric": "frame_delta",
+      "statistic": "p95",
+      "actual": 34.0,
+      "budget": 16.7,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Cadru fluid p95 ≤ 16,7 ms"
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch",
+      "profile": "control",
+      "mode": "warm",
+      "metric": "action_to_accessibility_state",
+      "statistic": "p95",
+      "actual": 220.341,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare activitate/document p95 ≤ 100 ms"
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch",
+      "profile": "densitate",
+      "mode": "warm",
+      "metric": "action_to_accessibility_state",
+      "statistic": "p95",
+      "actual": 240.014,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare activitate/document p95 ≤ 100 ms"
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch",
+      "profile": "mare",
+      "mode": "warm",
+      "metric": "action_to_accessibility_state",
+      "statistic": "p95",
+      "actual": 250.533,
+      "budget": 100.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Schimbare activitate/document p95 ≤ 100 ms"
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch_sustained",
+      "profile": "control",
+      "mode": "sustained",
+      "metric": "action_to_accessibility_state",
+      "statistic": "p95",
+      "actual": 207.021,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Acțiune frecventă p95 ≤ 50 ms"
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch_sustained",
+      "profile": "densitate",
+      "mode": "sustained",
+      "metric": "action_to_accessibility_state",
+      "statistic": "p95",
+      "actual": 238.474,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Acțiune frecventă p95 ≤ 50 ms"
+    },
+    {
+      "layer": "ui",
+      "scenario": "activity_switch_sustained",
+      "profile": "mare",
+      "mode": "sustained",
+      "metric": "action_to_accessibility_state",
+      "statistic": "p95",
+      "actual": 232.417,
+      "budget": 50.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Acțiune frecventă p95 ≤ 50 ms"
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "cold_process",
+      "metric": "canvas_accessible",
+      "statistic": "p95",
+      "actual": 6908.5,
+      "budget": 2000.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Canvas cold p95 ≤ 2 s"
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "control",
+      "mode": "warm_process",
+      "metric": "canvas_accessible",
+      "statistic": "p95",
+      "actual": 505.0,
+      "budget": 1000.0,
+      "unit": "ms",
+      "status": "pass",
+      "rationale": "Canvas warm p95 ≤ 1 s"
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "cold_process",
+      "metric": "canvas_accessible",
+      "statistic": "p95",
+      "actual": 16572.462,
+      "budget": 2000.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Canvas cold p95 ≤ 2 s"
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "densitate",
+      "mode": "warm_process",
+      "metric": "canvas_accessible",
+      "statistic": "p95",
+      "actual": 6955.0,
+      "budget": 1000.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Canvas warm p95 ≤ 1 s"
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "cold_process",
+      "metric": "canvas_accessible",
+      "statistic": "p95",
+      "actual": 12736.287,
+      "budget": 2000.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Canvas cold p95 ≤ 2 s"
+    },
+    {
+      "layer": "ui",
+      "scenario": "project_open",
+      "profile": "mare",
+      "mode": "warm_process",
+      "metric": "canvas_accessible",
+      "statistic": "p95",
+      "actual": 3616.0,
+      "budget": 1000.0,
+      "unit": "ms",
+      "status": "fail",
+      "rationale": "Canvas warm p95 ≤ 1 s"
+    }
+  ],
+  "budgetFailureCount": 26,
+  "comparisonBaseline": null,
+  "comparisons": [],
+  "regressionCount": 0
+}

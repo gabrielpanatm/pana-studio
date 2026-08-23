@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 function source(relativePath) {
@@ -64,14 +64,15 @@ test("formularele modelelor oferă exemple contextuale pentru datele cerute", ()
 test("metadatele .panastudio sunt surse de proiect și mutațiile sunt tranzacții ProjectWorkspace", () => {
   const scope = source("../src-tauri/src/project/scope.rs");
   const files = source("../src-tauri/src/project_model/files.rs");
-  const kernel = source("../src-tauri/src/kernel/content_models.rs");
+  const facade = source("../src-tauri/src/kernel/content_models/mod.rs");
+  const staging = source("../src-tauri/src/kernel/content_models/staging.rs");
   const commands = source("../src-tauri/src/commands/content_models.rs");
 
   assert.doesNotMatch(scope, /const DERIVED_OR_INTERNAL_DIRS[\s\S]*"\.panastudio",/);
   assert.doesNotMatch(files, /const SKIP_DIRS[\s\S]*"\.panastudio",/);
-  assert.match(kernel, /\.panastudio\/project\.toml/);
-  assert.match(kernel, /\.panastudio\/content-models/);
-  assert.match(kernel, /stage_composite_changes/);
+  assert.match(facade, /\.panastudio\/project\.toml/);
+  assert.match(facade, /\.panastudio\/content-models/);
+  assert.match(staging, /stage_composite_changes/);
   assert.match(commands, /require_bound_workspace/);
   assert.match(commands, /expected_plan_id/);
   assert.match(commands, /commit_project_workspace_session_mutation/);
@@ -79,21 +80,42 @@ test("metadatele .panastudio sunt surse de proiect și mutațiile sunt tranzacț
 });
 
 test("contractul acoperă tipurile, nesting, attach/detach și replace/migrate", () => {
-  const kernel = source("../src-tauri/src/kernel/content_models.rs");
+  const schema = source("../src-tauri/src/kernel/content_schema.rs");
+  const plan = source("../src-tauri/src/kernel/content_models/mutation_plan.rs");
+  const frontmatter = source("../src-tauri/src/kernel/content_models/rewrite/frontmatter.rs");
+  const templates = source("../src-tauri/src/kernel/content_models/rewrite/templates.rs");
   for (const kind of [
     "Text", "Textarea", "Markdown", "Number", "Boolean", "Date",
     "Select", "Url", "Color", "Image", "Group", "Repeater",
-  ]) assert.match(kernel, new RegExp(`\\b${kind},`));
-  assert.match(kernel, /parent_field_id/);
-  assert.match(kernel, /ReplaceModel/);
-  assert.match(kernel, /RenameModel/);
-  assert.match(kernel, /stage_rename_dynamic_marker_model/);
-  assert.match(kernel, /stage_replace_model_values/);
-  assert.match(kernel, /stage_remove_model_values/);
-  assert.match(kernel, /stage_rename_template_references/);
-  assert.match(kernel, /affected_keys/);
-  assert.match(kernel, /remove_nested_value/);
-  assert.match(kernel, /blocked:\s*!blockers\.is_empty\(\)/);
+  ]) assert.match(schema, new RegExp(`\\b${kind},`));
+  assert.match(plan, /parent_field_id/);
+  assert.match(plan, /ReplaceModel/);
+  assert.match(plan, /RenameModel/);
+  assert.match(plan, /affected_keys/);
+  assert.match(plan, /blocked:\s*!blockers\.is_empty\(\)/);
+  assert.match(templates, /stage_rename_dynamic_marker_model/);
+  assert.match(templates, /stage_replace_model_values/);
+  assert.match(templates, /stage_remove_model_values/);
+  assert.match(templates, /stage_rename_template_references/);
+  assert.match(frontmatter, /remove_nested_value/);
+});
+
+test("nucleul Content Models rămâne modular și fără cuplaj circular", () => {
+  const facade = source("../src-tauri/src/kernel/content_models/mod.rs");
+  const plan = source("../src-tauri/src/kernel/content_models/mutation_plan.rs");
+  const widgets = source("../src-tauri/src/kernel/dynamic_widgets.rs");
+  const legacyMonolith = new URL("../src-tauri/src/kernel/content_models.rs", import.meta.url);
+
+  for (const moduleName of [
+    "catalog", "mutation_plan", "rewrite", "staging", "usage_index", "validation",
+  ]) assert.match(facade, new RegExp(`mod ${moduleName};`));
+  assert.doesNotMatch(facade, /\b(?:pub\s+)?fn\s+/);
+  assert.match(facade, /pub use usage_index::refresh_content_model_template_usages;/);
+  assert.equal(existsSync(legacyMonolith), false);
+  assert.match(widgets, /kernel::content_schema/);
+  assert.doesNotMatch(widgets, /kernel::content_models/);
+  assert.match(plan, /let catalog = &graph\.content_models;/);
+  assert.doesNotMatch(plan, /content_models\.clone\(\)/);
 });
 
 test("editorul de conținut separă Setări, SEO și Câmpuri personalizate", () => {
@@ -106,7 +128,7 @@ test("editorul de conținut separă Setări, SEO și Câmpuri personalizate", ()
   assert.match(content, /<PageCustomFieldsPanel/);
   assert.match(settings, /view:\s*"settings"\s*\|\s*"seo"/);
   assert.match(custom, /kind:\s*"set_page_values"/);
-  assert.match(custom, /settleProjectWorkspaceMutation/);
+  assert.match(custom, /workspaceMutations\.settle/);
   assert.match(recursive, /field\.kind === "group"/);
   assert.match(recursive, /field\.kind === "repeater"/);
   assert.match(recursive, /Adaugă element/);

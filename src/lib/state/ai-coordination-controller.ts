@@ -8,28 +8,28 @@ import {
   completeAiReconciliationRecoveryReload,
   completeAiEditReconciliation,
   readAiCoordinationState,
+} from "$lib/ai/io";
+import {
   readProjectWorkspaceState,
-} from "$lib/project/io";
+} from "$lib/project/io/workspace";
 import { flushWorkspaceMutationInputs } from "$lib/session/workspace-mutation-coordinator";
 import {
   EXTERNAL_CHANGE_NOTIFICATION_ID,
   EXTERNAL_CHANGE_RELOAD_ACTION_ID,
-  resumeExternalDiskMonitoringAfterTransitionLease,
-  startExternalDiskMonitoring,
-  suspendAndDrainExternalDiskMonitoring,
-  type ExternalDiskControllerHost,
-} from "$lib/state/external-disk-controller";
+} from "$lib/session/external-disk/contracts";
+import type { ExternalDiskState } from "$lib/session/external-disk-state.svelte";
 import type {
   AiCoordinationSnapshot,
   EditAuthority,
-  ProjectWorkspaceSnapshot,
-} from "$lib/types";
+} from "$lib/ai/contracts";
+import type { ProjectWorkspaceSnapshot } from "$lib/project/workspace-contract";
 import type {
   GlobalStatusEscalationRequest,
   GlobalStatusKind,
   GlobalStatusPublishOptions,
 } from "$lib/status/global-status";
-import type { ProjectReloadOutcome } from "$lib/state/project-controller";
+import type { ProjectReloadOutcome } from "$lib/project/controller-contracts";
+import type { AiContextState } from "$lib/ai/context-state.svelte";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export const AI_COORDINATION_NOTIFICATION_ID = "ai.edit-authority";
@@ -37,46 +37,55 @@ export const AI_COORDINATION_ACCEPT_DISK_ACTION_ID = "ai.edit-authority.accept-d
 const aiRecoveryReloadFlights = new WeakMap<object, Promise<ProjectReloadOutcome>>();
 
 export type AiCoordinationControllerHost = {
-  aiCoordinationSnapshot: AiCoordinationSnapshot | null;
-  aiCoordinationUnlisten: (() => void) | null;
-  aiCoordinationSubscriptionGeneration: number;
-  aiCoordinationPendingSnapshot: AiCoordinationSnapshot | null;
-  aiCoordinationOperationInFlight: boolean;
-  aiCoordinationHandledRequestId: string | null;
-  aiCoordinationReconciliationLeaseId: string | null;
-  aiCoordinationAutomaticReloadLeaseId: string | null;
-  aiEditLeaseFrontendLockActive: boolean;
-  aiReconciliationRecoveryReloadAuthorized: boolean;
-  aiContextUiRevision: number;
-  activeScannedPath: string | null;
-  projectWorkspaceSnapshot: ProjectWorkspaceSnapshot | null;
-  externalDiskState: ExternalDiskControllerHost["externalDiskState"];
-  quiesceExternalReconcileInteractions: () => void;
-  externalDiskControllerHost: () => ExternalDiskControllerHost;
-  discardSessionAndReloadFromDisk: (
-    preferredRelativePath?: string | null,
-  ) => Promise<ProjectReloadOutcome>;
-  setGlobalStatus: (
-    text: string,
-    kind: GlobalStatusKind,
-    options?: GlobalStatusPublishOptions,
-  ) => void;
-  escalateGlobalStatus: (notification: GlobalStatusEscalationRequest) => void;
-  clearNotification: (id: string) => void;
+  state: {
+    snapshot: AiCoordinationSnapshot | null;
+    unlisten: (() => void) | null;
+    subscriptionGeneration: number;
+    pendingSnapshot: AiCoordinationSnapshot | null;
+    operationInFlight: boolean;
+    handledRequestId: string | null;
+    reconciliationLeaseId: string | null;
+    automaticReloadLeaseId: string | null;
+    frontendLockActive: boolean;
+    recoveryReloadAuthorized: boolean;
+  };
+  session: {
+    activeScannedPath: string | null;
+    workspace: ProjectWorkspaceSnapshot | null;
+    externalDisk: ExternalDiskState["snapshot"];
+  };
+  context: Pick<AiContextState, "uiRevision">;
+  commands: {
+    quiesceInteractions: () => void;
+    externalDisk: Pick<
+      ExternalDiskState,
+      "resumeAfterTransition" | "start" | "suspendAndDrain"
+    >;
+    discardAndReload: (
+      preferredRelativePath?: string | null,
+    ) => Promise<ProjectReloadOutcome>;
+    setStatus: (
+      text: string,
+      kind: GlobalStatusKind,
+      options?: GlobalStatusPublishOptions,
+    ) => void;
+    escalateStatus: (notification: GlobalStatusEscalationRequest) => void;
+    clearStatus: (id: string) => void;
+  };
 };
 
 export function startAiCoordinationEvents(host: AiCoordinationControllerHost) {
   stopAiCoordinationEvents(host);
-  const generation = host.aiCoordinationSubscriptionGeneration;
+  const generation = host.state.subscriptionGeneration;
   void subscribeAiCoordinationChanges((snapshot) => {
-    if (host.aiCoordinationSubscriptionGeneration !== generation) return;
+    if (host.state.subscriptionGeneration !== generation) return;
     enqueueAiCoordinationSnapshot(host, snapshot);
   }).then((unlisten) => {
-    if (host.aiCoordinationSubscriptionGeneration !== generation) {
+    if (host.state.subscriptionGeneration !== generation) {
       unlisten();
       return;
     }
-    host.aiCoordinationUnlisten = unlisten;
+    host.state.unlisten = unlisten;
     void readAiCoordinationState()
       .then((snapshot) => enqueueAiCoordinationSnapshot(host, snapshot))
       .catch((error) => reportAiCoordinationReadFailure(host, error));
@@ -84,10 +93,10 @@ export function startAiCoordinationEvents(host: AiCoordinationControllerHost) {
 }
 
 export function stopAiCoordinationEvents(host: AiCoordinationControllerHost) {
-  host.aiCoordinationSubscriptionGeneration += 1;
-  host.aiCoordinationUnlisten?.();
-  host.aiCoordinationUnlisten = null;
-  host.aiCoordinationPendingSnapshot = null;
+  host.state.subscriptionGeneration += 1;
+  host.state.unlisten?.();
+  host.state.unlisten = null;
+  host.state.pendingSnapshot = null;
 }
 
 function enqueueAiCoordinationSnapshot(
@@ -95,37 +104,37 @@ function enqueueAiCoordinationSnapshot(
   snapshot: AiCoordinationSnapshot,
 ) {
   if (
-    host.aiCoordinationSnapshot
-    && snapshot.coordinationRevision < host.aiCoordinationSnapshot.coordinationRevision
+    host.state.snapshot
+    && snapshot.coordinationRevision < host.state.snapshot.coordinationRevision
   ) return;
   if (
-    !host.aiCoordinationPendingSnapshot
-    || snapshot.coordinationRevision >= host.aiCoordinationPendingSnapshot.coordinationRevision
+    !host.state.pendingSnapshot
+    || snapshot.coordinationRevision >= host.state.pendingSnapshot.coordinationRevision
   ) {
-    host.aiCoordinationPendingSnapshot = snapshot;
+    host.state.pendingSnapshot = snapshot;
   }
   void drainAiCoordinationSnapshots(host);
 }
 
 async function drainAiCoordinationSnapshots(host: AiCoordinationControllerHost) {
-  if (host.aiCoordinationOperationInFlight) {
+  if (host.state.operationInFlight) {
     return;
   }
-  host.aiCoordinationOperationInFlight = true;
+  host.state.operationInFlight = true;
   try {
-    while (host.aiCoordinationPendingSnapshot) {
-      const snapshot = host.aiCoordinationPendingSnapshot;
-      host.aiCoordinationPendingSnapshot = null;
+    while (host.state.pendingSnapshot) {
+      const snapshot = host.state.pendingSnapshot;
+      host.state.pendingSnapshot = null;
       if (
-        host.aiCoordinationSnapshot
-        && snapshot.coordinationRevision < host.aiCoordinationSnapshot.coordinationRevision
+        host.state.snapshot
+        && snapshot.coordinationRevision < host.state.snapshot.coordinationRevision
       ) continue;
-      host.aiCoordinationSnapshot = snapshot;
+      host.state.snapshot = snapshot;
       await applyCoordinationState(host, snapshot.authority);
     }
   } finally {
-    host.aiCoordinationOperationInFlight = false;
-    if (host.aiCoordinationPendingSnapshot) {
+    host.state.operationInFlight = false;
+    if (host.state.pendingSnapshot) {
       void drainAiCoordinationSnapshots(host);
     }
   }
@@ -135,7 +144,7 @@ function reportAiCoordinationReadFailure(
   host: AiCoordinationControllerHost,
   error: unknown,
 ) {
-  host.setGlobalStatus(
+  host.commands.setStatus(
     t("ai-coordination-read-failed", { message: errorMessage(error) }),
     "error",
     {
@@ -153,18 +162,18 @@ async function applyCoordinationState(
 ) {
   switch (authority.state) {
     case "user_active":
-      host.aiCoordinationHandledRequestId = null;
-      host.aiCoordinationReconciliationLeaseId = null;
-      host.aiCoordinationAutomaticReloadLeaseId = null;
+      host.state.handledRequestId = null;
+      host.state.reconciliationLeaseId = null;
+      host.state.automaticReloadLeaseId = null;
       releaseFrontendLock(host);
-      host.clearNotification(AI_COORDINATION_NOTIFICATION_ID);
+      host.commands.clearStatus(AI_COORDINATION_NOTIFICATION_ID);
       return;
     case "ai_requested":
       await acknowledgePendingRequest(host, authority.detail.request);
       return;
     case "ai_active":
-      host.aiEditLeaseFrontendLockActive = true;
-      host.setGlobalStatus(
+      host.state.frontendLockActive = true;
+      host.commands.setStatus(
         t("ai-coordination-editing-message", {
           session: authority.detail.lease.clientSessionId,
         }),
@@ -180,13 +189,13 @@ async function applyCoordinationState(
       );
       return;
     case "ai_orphaned":
-      host.aiEditLeaseFrontendLockActive = true;
-      if (host.aiCoordinationReconciliationLeaseId !== authority.detail.leaseId) {
-        host.aiCoordinationReconciliationLeaseId = authority.detail.leaseId;
-        resumeExternalDiskMonitoringAfterTransitionLease(host.externalDiskControllerHost());
-        startExternalDiskMonitoring(host.externalDiskControllerHost());
+      host.state.frontendLockActive = true;
+      if (host.state.reconciliationLeaseId !== authority.detail.leaseId) {
+        host.state.reconciliationLeaseId = authority.detail.leaseId;
+        host.commands.externalDisk.resumeAfterTransition();
+        host.commands.externalDisk.start();
       }
-      host.escalateGlobalStatus({
+      host.commands.escalateStatus({
         id: AI_COORDINATION_NOTIFICATION_ID,
         level: "error",
         title: t("ai-coordination-orphaned-title"),
@@ -196,12 +205,12 @@ async function applyCoordinationState(
       });
       return;
     case "reconciling":
-      host.aiEditLeaseFrontendLockActive = true;
+      host.state.frontendLockActive = true;
       await reconcileReleasedLease(host, authority.detail);
       return;
     case "conflict":
-      host.aiEditLeaseFrontendLockActive = true;
-      host.escalateGlobalStatus({
+      host.state.frontendLockActive = true;
+      host.commands.escalateStatus({
         id: AI_COORDINATION_NOTIFICATION_ID,
         level: "error",
         title: t("ai-coordination-conflict-title"),
@@ -218,11 +227,11 @@ async function acknowledgePendingRequest(
   host: AiCoordinationControllerHost,
   request: Extract<EditAuthority, { state: "ai_requested" }>["detail"]["request"],
 ) {
-  if (host.aiCoordinationHandledRequestId === request.requestId) return;
-  host.aiCoordinationHandledRequestId = request.requestId;
-  host.aiEditLeaseFrontendLockActive = true;
-  host.quiesceExternalReconcileInteractions();
-  host.setGlobalStatus(
+  if (host.state.handledRequestId === request.requestId) return;
+  host.state.handledRequestId = request.requestId;
+  host.state.frontendLockActive = true;
+  host.commands.quiesceInteractions();
+  host.commands.setStatus(
     t("ai-coordination-transfer-message"),
     "saving",
     {
@@ -241,7 +250,7 @@ async function acknowledgePendingRequest(
     await tick();
     await flushWorkspaceMutationInputs("snapshot");
     await drainPreviewStructuralLanes();
-    await suspendAndDrainExternalDiskMonitoring(host.externalDiskControllerHost());
+    await host.commands.externalDisk.suspendAndDrain();
   } catch (error) {
     uiQuiescent = false;
     blockerReason = t("ai-coordination-quiesce-failed", {
@@ -249,12 +258,12 @@ async function acknowledgePendingRequest(
     });
   }
   if (
-    host.externalDiskState.checking
-    || host.externalDiskState.reconciling
-    || host.externalDiskState.changed
-    || host.externalDiskState.blockedByDirtySession
-    || host.externalDiskState.workspaceProjectionRecoveryRequired
-    || host.externalDiskState.truncated
+    host.session.externalDisk.checking
+    || host.session.externalDisk.reconciling
+    || host.session.externalDisk.changed
+    || host.session.externalDisk.blockedByDirtySession
+    || host.session.externalDisk.workspaceProjectionRecoveryRequired
+    || host.session.externalDisk.truncated
   ) {
     uiQuiescent = false;
     blockerReason = t("ai-coordination-projection-unstable");
@@ -262,9 +271,9 @@ async function acknowledgePendingRequest(
 
   try {
     const workspace = await readProjectWorkspaceState();
-    host.projectWorkspaceSnapshot = workspace;
+    host.session.workspace = workspace;
     const live = await readAiCoordinationState();
-    host.aiCoordinationSnapshot = live;
+    host.state.snapshot = live;
     if (
       live.authority.state !== "ai_requested"
       || live.authority.detail.request.requestId !== request.requestId
@@ -277,15 +286,15 @@ async function acknowledgePendingRequest(
       requestId: request.requestId,
       projectSessionId: request.expectedProjectSessionId,
       projectRevision: request.expectedProjectRevision,
-      uiRevision: host.aiContextUiRevision,
+      uiRevision: host.context.uiRevision,
       uiQuiescent,
       blockerReason,
       dirtyFiles: [],
     });
     const refreshed = await readAiCoordinationState();
-    host.aiCoordinationSnapshot = refreshed;
+    host.state.snapshot = refreshed;
     if (receipt.status === "granted") {
-      host.setGlobalStatus(t("ai-coordination-transfer-complete"), "restored", {
+      host.commands.setStatus(t("ai-coordination-transfer-complete"), "restored", {
         code: "ai.coordination.transfer-complete",
         source: "ai",
         dedupeKey: AI_COORDINATION_NOTIFICATION_ID,
@@ -299,7 +308,7 @@ async function acknowledgePendingRequest(
     const userInstruction = receipt.requiredUserAction === "save_or_discard"
       ? ` ${t("ai-coordination-save-or-discard")}`
       : "";
-    host.escalateGlobalStatus({
+    host.commands.escalateStatus({
       id: AI_COORDINATION_NOTIFICATION_ID,
       level: "warning",
       title: t("ai-coordination-awaiting-user"),
@@ -307,8 +316,8 @@ async function acknowledgePendingRequest(
     });
   } catch (error) {
     releaseFrontendLock(host);
-    host.aiCoordinationHandledRequestId = null;
-    host.setGlobalStatus(t("ai-coordination-transfer-failed", {
+    host.state.handledRequestId = null;
+    host.commands.setStatus(t("ai-coordination-transfer-failed", {
       message: errorMessage(error),
     }), "error");
   }
@@ -318,11 +327,11 @@ async function reconcileReleasedLease(
   host: AiCoordinationControllerHost,
   detail: Extract<EditAuthority, { state: "reconciling" }>["detail"],
 ) {
-  if (host.aiCoordinationReconciliationLeaseId !== detail.leaseId) {
-    host.aiCoordinationReconciliationLeaseId = detail.leaseId;
-    resumeExternalDiskMonitoringAfterTransitionLease(host.externalDiskControllerHost());
-    startExternalDiskMonitoring(host.externalDiskControllerHost());
-    host.setGlobalStatus(
+  if (host.state.reconciliationLeaseId !== detail.leaseId) {
+    host.state.reconciliationLeaseId = detail.leaseId;
+    host.commands.externalDisk.resumeAfterTransition();
+    host.commands.externalDisk.start();
+    host.commands.setStatus(
       t("ai-coordination-reconciling-message"),
       "saving",
       {
@@ -337,7 +346,7 @@ async function reconcileReleasedLease(
     return;
   }
 
-  const external = host.externalDiskState;
+  const external = host.session.externalDisk;
   const diskCheckedAfterRelease = (external.lastCheckedAt ?? 0) >= detail.releasedAtMs;
   if (
     diskCheckedAfterRelease
@@ -357,7 +366,7 @@ async function reconcileReleasedLease(
   ) return;
 
   const workspace = await readProjectWorkspaceState();
-  host.projectWorkspaceSnapshot = workspace;
+  host.session.workspace = workspace;
   if (
     !workspace
     || workspace.runtimeSessionId !== detail.projectSessionId
@@ -373,17 +382,17 @@ async function reconcileReleasedLease(
       : [],
   );
   const refreshed = await readAiCoordinationState();
-  host.aiCoordinationSnapshot = refreshed;
+  host.state.snapshot = refreshed;
   if (receipt.status === "released_to_user") {
     releaseFrontendLock(host);
-    host.setGlobalStatus(t("ai-coordination-reconciled"), "restored", {
+    host.commands.setStatus(t("ai-coordination-reconciled"), "restored", {
       code: "ai.coordination.reconciled",
       source: "ai",
       dedupeKey: AI_COORDINATION_NOTIFICATION_ID,
       resolutionKey: AI_COORDINATION_NOTIFICATION_ID,
     });
   } else if (receipt.status === "conflict") {
-    host.escalateGlobalStatus({
+    host.commands.escalateStatus({
       id: AI_COORDINATION_NOTIFICATION_ID,
       level: "error",
       title: t("ai-coordination-reconcile-conflict-title"),
@@ -393,7 +402,7 @@ async function reconcileReleasedLease(
 }
 
 export function shouldAutomaticallyReloadAiReconciliation(
-  external: ExternalDiskControllerHost["externalDiskState"],
+  external: ExternalDiskState["snapshot"],
   detail: Extract<EditAuthority, { state: "reconciling" }>["detail"],
 ) {
   if (
@@ -438,9 +447,9 @@ async function automaticallyReloadAuthorizedAiReconciliation(
   host: AiCoordinationControllerHost,
   leaseId: string,
 ) {
-  if (host.aiCoordinationAutomaticReloadLeaseId === leaseId) return;
-  host.aiCoordinationAutomaticReloadLeaseId = leaseId;
-  host.setGlobalStatus(
+  if (host.state.automaticReloadLeaseId === leaseId) return;
+  host.state.automaticReloadLeaseId = leaseId;
+  host.commands.setStatus(
     t("ai-coordination-applying-message"),
     "saving",
     {
@@ -455,14 +464,14 @@ async function automaticallyReloadAuthorizedAiReconciliation(
   try {
     await reloadAuthorizedAiReconciliationFromDisk(host);
     const refreshed = await readAiCoordinationState();
-    host.aiCoordinationSnapshot = refreshed;
+    host.state.snapshot = refreshed;
     if (refreshed.authority.state !== "user_active") {
       throw new Error(
         t("ai-coordination-rebuild-not-user-active"),
       );
     }
   } catch (error) {
-    host.escalateGlobalStatus({
+    host.commands.escalateStatus({
       id: EXTERNAL_CHANGE_NOTIFICATION_ID,
       level: "error",
       title: t("ai-coordination-apply-stopped"),
@@ -476,10 +485,7 @@ async function automaticallyReloadAuthorizedAiReconciliation(
 export function reloadAuthorizedAiReconciliationFromDisk(
   host: Pick<
     AiCoordinationControllerHost,
-    | "aiCoordinationSnapshot"
-    | "aiReconciliationRecoveryReloadAuthorized"
-    | "activeScannedPath"
-    | "discardSessionAndReloadFromDisk"
+    "state" | "session" | "commands"
   >,
 ): Promise<ProjectReloadOutcome> {
   const flightKey = host as object;
@@ -500,14 +506,11 @@ export function reloadAuthorizedAiReconciliationFromDisk(
 async function performAuthorizedAiReconciliationReload(
   host: Pick<
     AiCoordinationControllerHost,
-    | "aiCoordinationSnapshot"
-    | "aiReconciliationRecoveryReloadAuthorized"
-    | "activeScannedPath"
-    | "discardSessionAndReloadFromDisk"
+    "state" | "session" | "commands"
   >,
 ): Promise<ProjectReloadOutcome> {
   let live = await readAiCoordinationState();
-  host.aiCoordinationSnapshot = live;
+  host.state.snapshot = live;
   let reconciliationLeaseId: string | null = null;
   let readyToReload = false;
   for (let transitionCount = 0; transitionCount < 4; transitionCount += 1) {
@@ -523,7 +526,7 @@ async function performAuthorizedAiReconciliationReload(
         throw new Error(t("ai-coordination-conflict-not-reconciling"));
       }
       live = await readAiCoordinationState();
-      host.aiCoordinationSnapshot = live;
+      host.state.snapshot = live;
       continue;
     }
     if (disposition === "authorize_recovery") {
@@ -538,7 +541,7 @@ async function performAuthorizedAiReconciliationReload(
         );
       }
       live = await readAiCoordinationState();
-      host.aiCoordinationSnapshot = live;
+      host.state.snapshot = live;
       continue;
     }
 
@@ -555,9 +558,9 @@ async function performAuthorizedAiReconciliationReload(
     );
   }
 
-  host.aiReconciliationRecoveryReloadAuthorized = true;
+  host.state.recoveryReloadAuthorized = true;
   try {
-    const outcome = await host.discardSessionAndReloadFromDisk(host.activeScannedPath);
+    const outcome = await host.commands.discardAndReload(host.session.activeScannedPath);
     if (outcome.status !== "completed") {
       throw new Error(outcome.message);
     }
@@ -576,7 +579,7 @@ async function performAuthorizedAiReconciliationReload(
       }
     }
     const terminal = await readAiCoordinationState();
-    host.aiCoordinationSnapshot = terminal;
+    host.state.snapshot = terminal;
     if (terminal.authority.state !== "user_active") {
       throw new Error(
         t("ai-coordination-reload-not-user-active"),
@@ -584,7 +587,7 @@ async function performAuthorizedAiReconciliationReload(
     }
     return outcome;
   } finally {
-    host.aiReconciliationRecoveryReloadAuthorized = false;
+    host.state.recoveryReloadAuthorized = false;
   }
 }
 
@@ -595,10 +598,10 @@ function sameFileSet(left: string[], right: string[]) {
 }
 
 function releaseFrontendLock(host: AiCoordinationControllerHost) {
-  const wasLocked = host.aiEditLeaseFrontendLockActive;
-  host.aiEditLeaseFrontendLockActive = false;
+  const wasLocked = host.state.frontendLockActive;
+  host.state.frontendLockActive = false;
   if (wasLocked) {
-    resumeExternalDiskMonitoringAfterTransitionLease(host.externalDiskControllerHost());
+    host.commands.externalDisk.resumeAfterTransition();
   }
 }
 

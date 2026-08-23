@@ -9,12 +9,10 @@ import {
   resolveCssInspectorContext,
   setCssRuleAtViewport,
   setScssVariable,
-} from "$lib/project/io";
+} from "$lib/css/io";
 import { hashFileBufferText } from "$lib/session/file-buffer-draft-sync";
-import {
-  CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
-  PROJECT_WORKSPACE_SCHEMA_VERSION,
-} from "$lib/types";
+import { CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION } from "$lib/css/contracts";
+import { PROJECT_WORKSPACE_SCHEMA_VERSION } from "$lib/project/workspace-contract";
 
 if (!globalThis.window) globalThis.window = globalThis;
 
@@ -93,7 +91,6 @@ test("CSS read receipt from another runtime is rejected", async () => {
 
   await assert.rejects(getScssVariables(identity), /\[css_stale_receipt\]/);
 });
-
 test("CSS mutation is staged in the captured ProjectWorkspace session", async () => {
   const identity = createCssRequestIdentity(projectRoot, runtimeA);
   const calls = [];
@@ -315,7 +312,7 @@ test("CSS identity distinguishes same-root runtime replacements", () => {
 
 test("CSS panel presents session staging and Save as the only disk boundary", () => {
   const source = readFileSync(
-    new URL("../src/lib/components/InspectorPane.svelte", import.meta.url),
+    new URL("../src/lib/components/inspector/CssInspectorCoordinator.svelte", import.meta.url),
     "utf8",
   );
   assert.match(source, /t\("inspector-css-session-saved"/);

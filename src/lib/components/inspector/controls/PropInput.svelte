@@ -4,7 +4,7 @@
 
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import type { CssPropertySuggestion } from "$lib/types";
+  import type { CssPropertySuggestion } from "$lib/css/contracts";
   import { IconBolt } from "@tabler/icons-svelte";
   import VariablePopover from "./VariablePopover.svelte";
   import { t } from "$lib/i18n/runtime.svelte";

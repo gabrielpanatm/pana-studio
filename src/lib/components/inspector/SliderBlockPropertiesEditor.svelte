@@ -11,7 +11,7 @@
   import type {
     NativeBlockSlotMutationRequest,
     UiBlockSourceInstance,
-  } from "$lib/types";
+  } from "$lib/blocks/contracts";
 
   let {
     sourceInstance,

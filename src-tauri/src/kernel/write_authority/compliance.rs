@@ -33,45 +33,6 @@ const LOW_LEVEL_CAPABILITY_PRIMITIVES: &[&str] = &[
     "symlinkat",
 ];
 
-const CAPABILITY_BACKEND_FILE: &str = "kernel/write_authority/capability.rs";
-const CAPABILITY_LIFECYCLE_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/lifecycle.rs";
-const CAPABILITY_COPY_BACKEND_FILE: &str = "kernel/write_authority/capability/platform/copy.rs";
-const CAPABILITY_COPY_RECOVERY_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/copy/recovery.rs";
-const CAPABILITY_DIRECTORY_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/directory.rs";
-const CAPABILITY_DIRECTORY_RECOVERY_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/directory/recovery.rs";
-const CAPABILITY_SYMLINK_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/symlink.rs";
-const CAPABILITY_SYMLINK_RECOVERY_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/symlink/recovery.rs";
-const CAPABILITY_ANONYMOUS_FILE_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/anonymous_file.rs";
-const CAPABILITY_APPEND_BACKEND_FILE: &str = "kernel/write_authority/capability/platform/append.rs";
-const CAPABILITY_APPEND_RECOVERY_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/append/recovery.rs";
-const CAPABILITY_EXTERNAL_CONFIG_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/external_config.rs";
-const CAPABILITY_EXTERNAL_CONFIG_SNAPSHOT_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/external_config/snapshot.rs";
-const CAPABILITY_EXTERNAL_CONFIG_RECOVERY_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/external_config/recovery.rs";
-const CAPABILITY_EXTERNAL_CONFIG_RECOVERY_SNAPSHOT_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/external_config/recovery/snapshot.rs";
-const CAPABILITY_RENAME_BACKEND_FILE: &str = "kernel/write_authority/capability/platform/rename.rs";
-const CAPABILITY_REMOVE_BACKEND_FILE: &str = "kernel/write_authority/capability/platform/remove.rs";
-const CAPABILITY_REMOVE_TREE_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/remove_tree.rs";
-const CAPABILITY_REMOVE_TREE_RECOVERY_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/remove_tree/recovery.rs";
-const CAPABILITY_REMOVE_TREE_SNAPSHOT_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/remove_tree/snapshot.rs";
-const CAPABILITY_REMOVE_TREE_TRAVERSAL_BACKEND_FILE: &str =
-    "kernel/write_authority/capability/platform/remove_tree/traversal.rs";
-const TREE_FINGERPRINT_BACKEND_FILE: &str = "kernel/write_authority/tree_fingerprint.rs";
-const WAL_IO_BACKEND_FILE: &str = "kernel/write_authority/recovery/wal_io.rs";
 const COMPLIANCE_SCANNER_FILE: &str = "kernel/write_authority/compliance.rs";
 const CAPABILITY_ADAPTER_DEFINITION_FILE: &str = "kernel/write_authority/mod.rs";
 const ROOT_AUTHORITY_DEFINITION_FILE: &str = "kernel/write_authority/root_authority.rs";
@@ -80,7 +41,8 @@ const BOUNDED_JOURNAL_READER_FILE: &str = "kernel/bounded_journal_reader.rs";
 // This is deliberately separate from the write-capability/WAL trust-base.
 // The reader owns stable, no-follow journal reads and may only use this small
 // read-only rustix surface. It is intentionally not added to
-// DECLARED_WRITE_RUNTIME_FILES, so the mutation scanner still audits it.
+// CAPABILITY_TRUST_BASE_FILES/WRITE_RUNTIME_SUPPORT_FILES, so the mutation
+// scanner still audits it.
 const READ_ONLY_LOW_LEVEL_TRUST_FILES: &[&str] = &[BOUNDED_JOURNAL_READER_FILE];
 const READ_ONLY_RUSTIX_FS_IMPORT: &str =
     "userustix::fs::{selfasrustix_fs,FileType,FlockOperation,Mode,OFlags};";
@@ -131,28 +93,46 @@ const MAINTENANCE_CAPABILITY_ADAPTERS: &[(&str, &[&str])] = &[
     ),
 ];
 
-const DECLARED_WRITE_RUNTIME_FILES: &[&str] = &[
+// Inventarul canonic al backend-ului capability. Atât scannerul de mutații,
+// cât și cel de primitive low-level consumă această listă; adăugarea unui
+// modul nou nu mai cere sincronizarea unor allowlist-uri paralele.
+const CAPABILITY_TRUST_BASE_FILES: &[&str] = &[
     "kernel/write_authority/capability.rs",
-    "kernel/write_authority/capability/platform/anonymous_file.rs",
-    "kernel/write_authority/capability/platform/append.rs",
-    "kernel/write_authority/capability/platform/append/recovery.rs",
-    "kernel/write_authority/capability/platform/copy.rs",
-    "kernel/write_authority/capability/platform/copy/recovery.rs",
-    "kernel/write_authority/capability/platform/directory.rs",
-    "kernel/write_authority/capability/platform/directory/recovery.rs",
-    "kernel/write_authority/capability/platform/symlink.rs",
-    "kernel/write_authority/capability/platform/symlink/recovery.rs",
-    "kernel/write_authority/capability/platform/external_config.rs",
-    "kernel/write_authority/capability/platform/external_config/snapshot.rs",
-    "kernel/write_authority/capability/platform/external_config/recovery.rs",
-    "kernel/write_authority/capability/platform/external_config/recovery/snapshot.rs",
-    "kernel/write_authority/capability/platform/lifecycle.rs",
-    "kernel/write_authority/capability/platform/rename.rs",
-    "kernel/write_authority/capability/platform/remove.rs",
-    "kernel/write_authority/capability/platform/remove_tree.rs",
-    "kernel/write_authority/capability/platform/remove_tree/recovery.rs",
-    "kernel/write_authority/capability/platform/remove_tree/snapshot.rs",
-    "kernel/write_authority/capability/platform/remove_tree/traversal.rs",
+    "kernel/write_authority/capability/platform/mod.rs",
+    "kernel/write_authority/capability/platform/unsupported.rs",
+    "kernel/write_authority/capability/platform/linux/mod.rs",
+    "kernel/write_authority/capability/platform/linux/anonymous_file.rs",
+    "kernel/write_authority/capability/platform/linux/append.rs",
+    "kernel/write_authority/capability/platform/linux/append/recovery.rs",
+    "kernel/write_authority/capability/platform/linux/atomic.rs",
+    "kernel/write_authority/capability/platform/linux/atomic_commit.rs",
+    "kernel/write_authority/capability/platform/linux/authority.rs",
+    "kernel/write_authority/capability/platform/linux/backend_recovery.rs",
+    "kernel/write_authority/capability/platform/linux/copy.rs",
+    "kernel/write_authority/capability/platform/linux/copy/recovery.rs",
+    "kernel/write_authority/capability/platform/linux/directory.rs",
+    "kernel/write_authority/capability/platform/linux/directory/recovery.rs",
+    "kernel/write_authority/capability/platform/linux/external_config.rs",
+    "kernel/write_authority/capability/platform/linux/external_config/snapshot.rs",
+    "kernel/write_authority/capability/platform/linux/external_config/recovery.rs",
+    "kernel/write_authority/capability/platform/linux/external_config/recovery/snapshot.rs",
+    "kernel/write_authority/capability/platform/linux/hooks.rs",
+    "kernel/write_authority/capability/platform/linux/lifecycle.rs",
+    "kernel/write_authority/capability/platform/linux/maintenance.rs",
+    "kernel/write_authority/capability/platform/linux/path.rs",
+    "kernel/write_authority/capability/platform/linux/read.rs",
+    "kernel/write_authority/capability/platform/linux/rebuildable.rs",
+    "kernel/write_authority/capability/platform/linux/remove.rs",
+    "kernel/write_authority/capability/platform/linux/remove_tree.rs",
+    "kernel/write_authority/capability/platform/linux/remove_tree/recovery.rs",
+    "kernel/write_authority/capability/platform/linux/remove_tree/snapshot.rs",
+    "kernel/write_authority/capability/platform/linux/remove_tree/traversal.rs",
+    "kernel/write_authority/capability/platform/linux/rename.rs",
+    "kernel/write_authority/capability/platform/linux/symlink.rs",
+    "kernel/write_authority/capability/platform/linux/symlink/recovery.rs",
+];
+
+const WRITE_RUNTIME_SUPPORT_FILES: &[&str] = &[
     "kernel/write_authority/tree_fingerprint.rs",
     "kernel/write_authority/compliance.rs",
     "kernel/write_authority/recovery/wal_io.rs",
@@ -193,7 +173,7 @@ fn low_level_filesystem_primitives_stay_in_capability_backend() {
 
     assert!(
         violations.is_empty(),
-        "low-level rustix filesystem primitives are restricted to the declared capability/WAL trust-base (root {CAPABILITY_BACKEND_FILE}):\n{}",
+        "low-level rustix filesystem primitives are restricted to the declared capability/WAL trust-base:\n{}",
         violations.join("\n")
     );
 }
@@ -504,11 +484,10 @@ fn scan_low_level_primitive_file(source_root: &Path, path: &Path, violations: &m
             if code.contains(';') {
                 if let Some(primitive) = low_level_import_primitive(statement) {
                     violations.push(format!(
-                        "{}:{} imports low-level `{}` outside {}: {}",
+                        "{}:{} imports low-level `{}` outside capability trust-base: {}",
                         relative_path(source_root, path),
                         *start_line,
                         primitive,
-                        CAPABILITY_BACKEND_FILE,
                         statement.trim()
                     ));
                 }
@@ -521,11 +500,10 @@ fn scan_low_level_primitive_file(source_root: &Path, path: &Path, violations: &m
             if code.contains(';') {
                 if let Some(primitive) = low_level_import_primitive(code) {
                     violations.push(format!(
-                        "{}:{} imports low-level `{}` outside {}: {}",
+                        "{}:{} imports low-level `{}` outside capability trust-base: {}",
                         relative_path(source_root, path),
                         index + 1,
                         primitive,
-                        CAPABILITY_BACKEND_FILE,
                         code
                     ));
                 }
@@ -537,11 +515,10 @@ fn scan_low_level_primitive_file(source_root: &Path, path: &Path, violations: &m
 
         if let Some(primitive) = low_level_call_primitive(code) {
             violations.push(format!(
-                "{}:{} uses low-level `{}` outside {}: {}",
+                "{}:{} uses low-level `{}` outside capability trust-base: {}",
                 relative_path(source_root, path),
                 index + 1,
                 primitive,
-                CAPABILITY_BACKEND_FILE,
                 code
             ));
         }
@@ -924,35 +901,9 @@ fn is_test_file(source_root: &Path, path: &Path) -> bool {
 }
 
 fn is_low_level_backend_file(source_root: &Path, path: &Path) -> bool {
-    is_allowed_file(
-        source_root,
-        path,
-        &[
-            CAPABILITY_BACKEND_FILE,
-            CAPABILITY_ANONYMOUS_FILE_BACKEND_FILE,
-            CAPABILITY_APPEND_BACKEND_FILE,
-            CAPABILITY_APPEND_RECOVERY_BACKEND_FILE,
-            CAPABILITY_COPY_BACKEND_FILE,
-            CAPABILITY_COPY_RECOVERY_BACKEND_FILE,
-            CAPABILITY_DIRECTORY_BACKEND_FILE,
-            CAPABILITY_DIRECTORY_RECOVERY_BACKEND_FILE,
-            CAPABILITY_SYMLINK_BACKEND_FILE,
-            CAPABILITY_SYMLINK_RECOVERY_BACKEND_FILE,
-            CAPABILITY_EXTERNAL_CONFIG_BACKEND_FILE,
-            CAPABILITY_EXTERNAL_CONFIG_SNAPSHOT_BACKEND_FILE,
-            CAPABILITY_EXTERNAL_CONFIG_RECOVERY_BACKEND_FILE,
-            CAPABILITY_EXTERNAL_CONFIG_RECOVERY_SNAPSHOT_BACKEND_FILE,
-            CAPABILITY_LIFECYCLE_BACKEND_FILE,
-            CAPABILITY_RENAME_BACKEND_FILE,
-            CAPABILITY_REMOVE_BACKEND_FILE,
-            CAPABILITY_REMOVE_TREE_BACKEND_FILE,
-            CAPABILITY_REMOVE_TREE_RECOVERY_BACKEND_FILE,
-            CAPABILITY_REMOVE_TREE_SNAPSHOT_BACKEND_FILE,
-            CAPABILITY_REMOVE_TREE_TRAVERSAL_BACKEND_FILE,
-            TREE_FINGERPRINT_BACKEND_FILE,
-            WAL_IO_BACKEND_FILE,
-        ],
-    )
+    is_allowed_file(source_root, path, CAPABILITY_TRUST_BASE_FILES)
+        || (is_allowed_file(source_root, path, WRITE_RUNTIME_SUPPORT_FILES)
+            && !is_compliance_scanner_file(source_root, path))
 }
 
 fn is_compliance_scanner_file(source_root: &Path, path: &Path) -> bool {
@@ -964,7 +915,8 @@ fn is_read_only_low_level_trust_file(source_root: &Path, path: &Path) -> bool {
 }
 
 fn is_allowed_runtime_file(source_root: &Path, path: &Path) -> bool {
-    is_allowed_file(source_root, path, DECLARED_WRITE_RUNTIME_FILES)
+    is_allowed_file(source_root, path, CAPABILITY_TRUST_BASE_FILES)
+        || is_allowed_file(source_root, path, WRITE_RUNTIME_SUPPORT_FILES)
         || is_allowed_file(source_root, path, LEGACY_AMBIENT_RUNTIME_EXCEPTIONS)
 }
 
@@ -991,16 +943,64 @@ fn brace_delta(line: &str) -> isize {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeSet,
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::{
         is_low_level_backend_file, low_level_call_primitive, low_level_import_primitive,
-        scan_low_level_primitive_file, source_without_cfg_test_blocks,
-        DECLARED_WRITE_RUNTIME_FILES, LEGACY_AMBIENT_RUNTIME_EXCEPTIONS,
+        scan_low_level_primitive_file, source_without_cfg_test_blocks, CAPABILITY_TRUST_BASE_FILES,
+        LEGACY_AMBIENT_RUNTIME_EXCEPTIONS, WRITE_RUNTIME_SUPPORT_FILES,
     };
+
+    fn capability_file(suffix: &str) -> &'static str {
+        CAPABILITY_TRUST_BASE_FILES
+            .iter()
+            .copied()
+            .find(|path| path.ends_with(suffix))
+            .unwrap_or_else(|| panic!("capability trust-base nu conține sufixul {suffix}"))
+    }
+
+    fn collect_production_rust_files(
+        source_root: &Path,
+        directory: &Path,
+        files: &mut BTreeSet<String>,
+    ) {
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect_production_rust_files(source_root, &path, files);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("rs")
+                && path.file_name().and_then(|value| value.to_str()) != Some("tests.rs")
+            {
+                files.insert(
+                    path.strip_prefix(source_root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn capability_trust_base_matches_every_production_module() {
+        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut discovered = BTreeSet::from(["kernel/write_authority/capability.rs".to_string()]);
+        collect_production_rust_files(
+            &source_root,
+            &source_root.join("kernel/write_authority/capability"),
+            &mut discovered,
+        );
+        let declared = CAPABILITY_TRUST_BASE_FILES
+            .iter()
+            .map(|path| (*path).to_string())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(declared, discovered);
+    }
 
     #[test]
     fn low_level_scanner_detects_qualified_unqualified_and_imported_primitives() {
@@ -1079,120 +1079,34 @@ use rustix::fs::{
     fn only_capability_family_and_wal_trust_base_are_allowlisted() {
         let source_root = PathBuf::from("/workspace/src");
 
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/lifecycle.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/copy.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/copy/recovery.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join(super::CAPABILITY_DIRECTORY_BACKEND_FILE)
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join(super::CAPABILITY_DIRECTORY_RECOVERY_BACKEND_FILE)
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join(super::CAPABILITY_SYMLINK_BACKEND_FILE)
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join(super::CAPABILITY_SYMLINK_RECOVERY_BACKEND_FILE)
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/anonymous_file.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join(super::CAPABILITY_APPEND_BACKEND_FILE)
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join(super::CAPABILITY_APPEND_RECOVERY_BACKEND_FILE)
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/external_config.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root
-                .join("kernel/write_authority/capability/platform/external_config/snapshot.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root
-                .join("kernel/write_authority/capability/platform/external_config/recovery.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join(
-                "kernel/write_authority/capability/platform/external_config/recovery/snapshot.rs"
-            )
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/rename.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/remove.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/remove_tree.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/remove_tree/recovery.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/capability/platform/remove_tree/snapshot.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root
-                .join("kernel/write_authority/capability/platform/remove_tree/traversal.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/tree_fingerprint.rs")
-        ));
-        assert!(is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/recovery/wal_io.rs")
-        ));
-        assert!(!is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/write_authority/authority.rs")
-        ));
-        assert!(!is_low_level_backend_file(
-            &source_root,
-            &source_root.join("kernel/observability/mod.rs")
-        ));
+        for allowed in CAPABILITY_TRUST_BASE_FILES
+            .iter()
+            .chain(WRITE_RUNTIME_SUPPORT_FILES)
+        {
+            assert!(
+                is_low_level_backend_file(&source_root, &source_root.join(allowed))
+                    || *allowed == super::COMPLIANCE_SCANNER_FILE,
+                "{allowed} lipsește din trust-base"
+            );
+        }
+        for denied in [
+            "kernel/write_authority/authority.rs",
+            "kernel/observability/mod.rs",
+        ] {
+            assert!(!is_low_level_backend_file(
+                &source_root,
+                &source_root.join(denied)
+            ));
+        }
     }
 
     #[test]
     fn directory_direct_backend_has_no_temporary_or_destructive_namespace_protocol() {
         let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
         let runtime =
-            fs::read_to_string(source_root.join(super::CAPABILITY_DIRECTORY_BACKEND_FILE)).unwrap();
+            fs::read_to_string(source_root.join(capability_file("linux/directory.rs"))).unwrap();
         let recovery =
-            fs::read_to_string(source_root.join(super::CAPABILITY_DIRECTORY_RECOVERY_BACKEND_FILE))
+            fs::read_to_string(source_root.join(capability_file("linux/directory/recovery.rs")))
                 .unwrap();
         assert!(runtime.contains("fs::mkdirat("));
         for forbidden in [
@@ -1218,10 +1132,10 @@ use rustix::fs::{
     fn symlink_direct_backend_has_one_create_and_no_cleanup_namespace_protocol() {
         let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
         let runtime = source_without_cfg_test_blocks(
-            &fs::read_to_string(source_root.join(super::CAPABILITY_SYMLINK_BACKEND_FILE)).unwrap(),
+            &fs::read_to_string(source_root.join(capability_file("linux/symlink.rs"))).unwrap(),
         );
         let recovery = source_without_cfg_test_blocks(
-            &fs::read_to_string(source_root.join(super::CAPABILITY_SYMLINK_RECOVERY_BACKEND_FILE))
+            &fs::read_to_string(source_root.join(capability_file("linux/symlink/recovery.rs")))
                 .unwrap(),
         );
         assert_eq!(runtime.matches("fs::symlinkat(").count(), 1);
@@ -1255,52 +1169,13 @@ use rustix::fs::{
     #[test]
     fn ambient_bootstrap_and_observability_exceptions_are_eliminated() {
         assert!(LEGACY_AMBIENT_RUNTIME_EXCEPTIONS.is_empty());
-        assert!(DECLARED_WRITE_RUNTIME_FILES.contains(&"kernel/write_authority/capability.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/anonymous_file.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/append.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/append/recovery.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/copy/recovery.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/directory.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/directory/recovery.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/symlink.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/symlink/recovery.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/lifecycle.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/external_config.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/external_config/snapshot.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/external_config/recovery.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES.contains(
-            &"kernel/write_authority/capability/platform/external_config/recovery/snapshot.rs"
-        ));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/rename.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/remove.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/remove_tree.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/remove_tree/recovery.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/remove_tree/snapshot.rs"));
-        assert!(DECLARED_WRITE_RUNTIME_FILES
-            .contains(&"kernel/write_authority/capability/platform/remove_tree/traversal.rs"));
-        assert!(
-            DECLARED_WRITE_RUNTIME_FILES.contains(&"kernel/write_authority/tree_fingerprint.rs")
-        );
-        assert!(DECLARED_WRITE_RUNTIME_FILES.contains(&"kernel/write_authority/recovery/wal_io.rs"));
-        assert!(!DECLARED_WRITE_RUNTIME_FILES.contains(&"kernel/write_authority/authority.rs"));
-        assert!(!DECLARED_WRITE_RUNTIME_FILES.contains(&"app_home.rs"));
+        assert!(CAPABILITY_TRUST_BASE_FILES
+            .iter()
+            .all(|path| path.starts_with("kernel/write_authority/capability")));
+        assert!(WRITE_RUNTIME_SUPPORT_FILES.contains(&"kernel/write_authority/tree_fingerprint.rs"));
+        assert!(WRITE_RUNTIME_SUPPORT_FILES.contains(&"kernel/write_authority/recovery/wal_io.rs"));
+        assert!(!CAPABILITY_TRUST_BASE_FILES.contains(&"kernel/write_authority/authority.rs"));
+        assert!(!WRITE_RUNTIME_SUPPORT_FILES.contains(&"app_home.rs"));
     }
 
     fn unique_test_dir(label: &str) -> PathBuf {

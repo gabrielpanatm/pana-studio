@@ -14,23 +14,24 @@
 
   $: t = legacyTranslator($localeRevision);
   import { resetPreviewFrameDocumentAccess } from "$lib/preview/frame-origin";
+  import type { SourceLanguage } from "$lib/application/contracts";
   import type {
-    SourceLanguage,
     WorkbenchCanvasMode,
     WorkbenchCanvasPreset,
     WorkbenchCanvasViewportSnapshot,
     WorkbenchDocumentSnapshot,
+    WorkbenchDocumentActivationSnapshot,
     WorkbenchGroupId,
     WorkbenchSnapshot,
     WorkbenchSplit,
     WorkbenchSurface,
-  } from "$lib/types";
+  } from "$lib/workbench/contracts";
   import type { InteractivePreviewDomNode } from "$lib/preview/interactive";
   import type {
     MotionPreviewMode,
     MotionPreviewRequest,
     MotionPreviewStatus,
-  } from "$lib/state/motion-workspace.svelte";
+  } from "$lib/motion/workspace.svelte";
 
   type CenterView = "preview" | "code" | "kernel";
 
@@ -53,6 +54,22 @@
   export let source = "";
   export let sourceLanguage: SourceLanguage = "plain";
   export let workbenchSnapshot: WorkbenchSnapshot | null = null;
+  export let documentActivation: WorkbenchDocumentActivationSnapshot = {
+    serial: 0,
+    phase: "idle",
+    documentId: null,
+    relativePath: null,
+    surface: null,
+    cacheOutcome: "unknown",
+    diagnostic: null,
+    metrics: {
+      intentMs: null,
+      resolveMs: null,
+      loadMs: null,
+      surfaceMs: null,
+      totalMs: null,
+    },
+  };
   export let dirtyWorkbenchPaths: string[] = [];
   export let activateWorkbenchDocument: (
     groupId: WorkbenchGroupId,
@@ -92,10 +109,6 @@
   $: workbenchSplit = workbenchSnapshot?.split ?? "none";
   $: splitActive = workbenchSplit !== "none";
   $: splitRatioBasisPoints = workbenchSnapshot?.splitRatioBasisPoints ?? 5_000;
-  $: secondaryGroup = workbenchSnapshot?.groups.find((group) => group.groupId === "secondary");
-  $: secondaryDocument = secondaryGroup?.documents.find(
-    (document) => document.documentId === secondaryGroup?.activeDocumentId,
-  );
   $: showPreview = splitActive || centerView === "preview";
   $: showSource = splitActive || centerView === "code";
   $: canvasViewport = {
@@ -210,10 +223,27 @@
   }
 </script>
 
-<section class="editor-shell" aria-label={t("workbench-editor-shell-aria")}>
+<section
+  class="editor-shell"
+  aria-label={t("workbench-editor-shell-aria")}
+  data-active-document-path={currentSourcePath || undefined}
+  data-document-activation-serial={documentActivation.serial}
+  data-document-activation-phase={documentActivation.phase}
+  data-document-activation-path={documentActivation.relativePath ?? undefined}
+  data-document-activation-surface={documentActivation.surface ?? undefined}
+  data-document-activation-cache-outcome={documentActivation.cacheOutcome}
+  data-document-activation-intent-ms={documentActivation.metrics.intentMs ?? undefined}
+  data-document-activation-resolve-ms={documentActivation.metrics.resolveMs ?? undefined}
+  data-document-activation-load-ms={documentActivation.metrics.loadMs ?? undefined}
+  data-document-activation-surface-ms={documentActivation.metrics.surfaceMs ?? undefined}
+  data-document-activation-total-ms={documentActivation.metrics.totalMs ?? undefined}
+  data-source-loading={sourceIsLoading ? "true" : "false"}
+  data-center-view={centerView}
+>
   <DocumentBar
     active={surfaceActive}
     snapshot={workbenchSnapshot}
+    {documentActivation}
     dirtyPaths={dirtyWorkbenchPaths}
     activateDocument={activateWorkbenchDocument}
     closeDocument={closeWorkbenchDocument}

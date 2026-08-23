@@ -6,19 +6,37 @@ import {
   failedAction,
 } from "$lib/editor-runtime/action-outcome";
 import { createEditorRuntime } from "$lib/editor-runtime/runtime";
-import { drainPreviewStructuralLanes } from "$lib/kernel/preview-structural-lane";
+import {
+  drainPreviewStructuralLanes,
+  previewStructuralSessionLeaseMatches,
+  runInPreviewStructuralLane,
+} from "$lib/kernel/preview-structural-lane";
+import {
+  projectCommittedPreviewSelectionBatchMutation,
+  projectCommittedPreviewStructuralMutation,
+} from "$lib/kernel/preview-projection-control";
 import { registerEditFlushHandler } from "$lib/session/edit-flush-registry";
 import { committedDraftCanSettle } from "$lib/session/committed-draft-settlement";
 import { resetPageJsDraftSyncState } from "$lib/session/page-js-draft-sync";
+import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
+import { reconcilePageAssetContracts } from "$lib/page-assets/contract";
 import { saveActiveFile } from "$lib/state/save-controller";
+import { applyTextContentToCapturedHtmlTarget } from "$lib/editor/html-actions/text";
 import {
-  applyTextContentToCapturedHtmlTarget,
   applyAttributesToHtml,
+} from "$lib/editor/html-actions/attributes";
+import {
   attributeMutationsFromRecord,
   batchCommonAttributeMutations,
+} from "$lib/editor/html-actions/attribute-values";
+import {
+  deleteSelectedHtmlElement,
+  duplicateSelectedHtmlElement,
+} from "$lib/editor/html-actions/structure";
+import {
   generateClassForSelectedHtml,
   generateDataAnimForSelectedHtml,
-} from "$lib/state/html-actions-controller";
+} from "$lib/editor/html-actions/identity";
 import { deleteSelectedTeraNode } from "$lib/state/tera-actions-controller";
 
 if (!globalThis.window) globalThis.window = globalThis;
@@ -152,6 +170,73 @@ function coordinatedElementSelection({
   };
 }
 
+function htmlActionsHost(host) {
+  return {
+    context: () => ({
+      coordinatedSelection: host.coordinatedElementSelection ?? null,
+      canEditStructure: host.canEditHtmlStructure ?? false,
+      activeScannedPath: host.activeScannedPath ?? null,
+      project: host.scannedProject ?? null,
+    }),
+    html: host,
+    draft: host.htmlDraft ?? {},
+    source: host,
+    editorSelection: host.editorSelection ?? { selectionSnapshot: null },
+    structural: {
+      run: (operation) => runInPreviewStructuralLane(host, operation),
+      leaseMatches: (lease) => previewStructuralSessionLeaseMatches(host, lease),
+      projectCommitted: (lease, receipt, patch, projectLocalState) => (
+        projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, projectLocalState)
+      ),
+      projectCommittedBatch: (lease, receipt) => (
+        projectCommittedPreviewSelectionBatchMutation(host, lease, receipt)
+      ),
+      settleMutation: (receipt, options) => settleProjectWorkspaceMutation(host, receipt, options),
+    },
+    commands: {
+      setPending: (area, pending) => host.setHtmlPending(area, pending),
+      setStatus: (text, kind) => host.setGlobalStatus(text, kind),
+      loadProjectFile: (file) => host.loadScannedProjectFile(file),
+      reconcilePageAssets: (tpl) => reconcilePageAssetContracts(host, tpl),
+    },
+  };
+}
+
+function saveControllerHost(host) {
+  return {
+    context: () => ({
+      projectRoot: host.sessionProjectRoot,
+      runtimeSessionId: host.kernelProjectSessionId,
+      editorMutationEpoch: host.editorMutationEpoch ?? 0,
+      workspace: host.projectWorkspaceSnapshot ?? null,
+      diskState: host.diskState ?? { kind: "clean" },
+      activeScannedPath: host.activeScannedPath ?? null,
+    }),
+    incrementSaveRequest: () => { host.saveRequest += 1; },
+    acceptWorkspace: (workspace) => { host.projectWorkspaceSnapshot = workspace; },
+    markDiskSaved() {},
+    bumpRefreshTokens() {},
+    setGlobalStatus: (text, kind) => host.setGlobalStatus(text, kind),
+    html: {
+      inspectorPending: host.inspectorPending,
+      pending: host.htmlPending,
+      pendingTag: host.pendingTag,
+      setInspectorPending: (area, pending) => { host.inspectorPending[area] = pending; },
+      applyTagChange: () => host.applyTagChange(),
+      applyClasses: () => host.applyClassesToHtml(),
+      draft: host.htmlDraft,
+      applyImageSource: (src) => host.applyImageSourceToHtml(src),
+    },
+    async reconcileWorkspaceDerivedState() {
+      return { topology: "current", sourceGraph: "current", scss: "current", warnings: [] };
+    },
+    async projectLatestPreview() {
+      return { status: "current", warnings: [] };
+    },
+    acceptProjectWorkspaceSaveBaseline() {},
+  };
+}
+
 test("a generated attribute settles the untouched baseline but preserves a concurrent edit", () => {
   const baseline = JSON.stringify({ title: "Titlu" });
   const generated = JSON.stringify({ "data-anim": "ps-h1-generated", title: "Titlu" });
@@ -220,17 +305,19 @@ test("controllerul păstrează aria pending când kernelul blochează commit-ul 
     projectTransitionFrontendLeaseActive: false,
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
-    selectionSnapshot: resolvedSelectionSnapshot({
+    editorSelection: { selectionSnapshot: resolvedSelectionSnapshot({
       editorNodeId: "editor_render:h1",
       sourceNodeId: "source-h1",
       renderInstanceId: "render-h1",
-    }),
+    }) },
     coordinatedElementSelection: coordinatedElementSelection({
       sourceNodeId: "source-h1",
       observation: { attributes: { title: "vechi" } },
     }),
-    attributeValues: { title: "nou" },
-    attributeStatus: "",
+    htmlDraft: {
+      attributeValues: { title: "nou" },
+      attributeStatus: "",
+    },
     htmlPending,
     pageSections: [],
     isActivePreviewHtmlSource: false,
@@ -244,11 +331,11 @@ test("controllerul păstrează aria pending când kernelul blochează commit-ul 
     setGlobalStatus() {},
   };
 
-  const result = await applyAttributesToHtml(host);
+  const result = await applyAttributesToHtml(htmlActionsHost(host));
   assert.equal(result.status, "blocked");
   assert.match(result.reason, /not safe for this source/);
   assert.equal(host.htmlPending.attributes, true);
-  assert.deepEqual(host.attributeValues, { title: "nou" });
+  assert.deepEqual(host.htmlDraft.attributeValues, { title: "nou" });
 });
 
 test("o sesiune text persistentă folosește Source ID-ul Rust fără locația sau selecția curentă", async () => {
@@ -282,21 +369,23 @@ test("o sesiune text persistentă folosește Source ID-ul Rust fără locația s
     projectTransitionFrontendLeaseActive: false,
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
-    selectionSnapshot: resolvedSelectionSnapshot({
+    editorSelection: { selectionSnapshot: resolvedSelectionSnapshot({
       selectionRevision: 8,
       editorNodeId: "editor_render:paragraph",
       sourceNodeId: "source-paragraph",
       renderInstanceId: "render-paragraph",
-    }),
+    }) },
     coordinatedElementSelection: coordinatedElementSelection({
       selectionRevision: 8,
       sourceNodeId: "source-paragraph",
       renderInstanceId: "render-paragraph",
     }),
-    textContentValue: "Titlu nou",
-    textEditOriginalKey: null,
-    textEditOriginalText: null,
-    textStatus: "",
+    htmlDraft: {
+      textContentValue: "Titlu nou",
+      textEditOriginalKey: null,
+      textEditOriginalText: null,
+      textStatus: "",
+    },
     htmlPending,
     pageSections: [],
     isActivePreviewHtmlSource: false,
@@ -322,7 +411,7 @@ test("o sesiune text persistentă folosește Source ID-ul Rust fără locația s
   };
 
   const result = await applyTextContentToCapturedHtmlTarget(
-    host,
+    htmlActionsHost(host),
     capturedTarget,
     "Titlu nou",
     {
@@ -369,12 +458,12 @@ test("generarea data-anim blocată nu inventează un draft pending și expune ca
     projectTransitionFrontendLeaseActive: false,
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
-    selectionSnapshot: resolvedSelectionSnapshot({
+    editorSelection: { selectionSnapshot: resolvedSelectionSnapshot({
       selectionRevision: 2,
       editorNodeId: "editor_render:h1",
       sourceNodeId: "source-h1-stale",
       renderInstanceId: "render-h1",
-    }),
+    }) },
     coordinatedElementSelection: coordinatedElementSelection({
       selectionRevision: 2,
       sourceNodeId: "source-h1-stale",
@@ -383,8 +472,10 @@ test("generarea data-anim blocată nu inventează un draft pending și expune ca
         classes: ["hero-title"],
       },
     }),
-    attributeValues: { title: "Titlu" },
-    attributeStatus: "",
+    htmlDraft: {
+      attributeValues: { title: "Titlu" },
+      attributeStatus: "",
+    },
     classEditorValue: "hero-title",
     htmlPending,
     pageSections: [],
@@ -408,13 +499,13 @@ test("generarea data-anim blocată nu inventează un draft pending și expune ca
     },
   };
 
-  const result = await generateDataAnimForSelectedHtml(host);
+  const result = await generateDataAnimForSelectedHtml(htmlActionsHost(host));
   assert.equal(result.status, "blocked");
   assert.equal(htmlPending.attributes, false);
-  assert.deepEqual(host.attributeValues, { title: "Titlu" });
-  assert.match(host.attributeStatus, /not safe for this source/);
+  assert.deepEqual(host.htmlDraft.attributeValues, { title: "Titlu" });
+  assert.match(host.htmlDraft.attributeStatus, /not safe for this source/);
   assert.deepEqual(statuses.at(-1), {
-    text: host.attributeStatus,
+    text: host.htmlDraft.attributeStatus,
     kind: "error",
   });
 });
@@ -471,12 +562,12 @@ test("receipt-ul Rust pentru clasa generată actualizează draftul vizual fără
     projectTransitionFrontendLeaseActive: false,
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
-    selectionSnapshot: resolvedSelectionSnapshot({
+    editorSelection: { selectionSnapshot: resolvedSelectionSnapshot({
       selectionRevision: 3,
       editorNodeId: "editor_render:h1",
       sourceNodeId: "source-h1",
       renderInstanceId: "render-h1",
-    }),
+    }) },
     coordinatedElementSelection: coordinatedElementSelection({
       selectionRevision: 3,
       sourceNodeId: "source-h1",
@@ -484,8 +575,10 @@ test("receipt-ul Rust pentru clasa generată actualizează draftul vizual fără
     }),
     classEditorValue: "hero-title",
     classStatus: "",
-    attributeValues: {},
-    attributeStatus: "",
+    htmlDraft: {
+      attributeValues: {},
+      attributeStatus: "",
+    },
     htmlPending,
     pageSections: [],
     sourceCache: {},
@@ -498,7 +591,7 @@ test("receipt-ul Rust pentru clasa generată actualizează draftul vizual fără
     setGlobalStatus() {},
   };
 
-  const result = await generateClassForSelectedHtml(host);
+  const result = await generateClassForSelectedHtml(htmlActionsHost(host));
 
   assert.equal(result.status, "committed");
   assert.deepEqual(submitted.attributes, []);
@@ -547,13 +640,15 @@ test("Save rămâne eșuat și păstrează HTML pending după flush-uri CSS/JS r
     async applyClassesToHtml() {
       return committedAction();
     },
-    async applyAttributesToHtml() {
-      return failedAction("commit HTML refuzat de kernel");
+    htmlDraft: {
+      async applyAttributes() {
+        return failedAction("commit HTML refuzat de kernel");
+      },
+      async applyText() {
+        return committedAction();
+      },
     },
     async applyImageSourceToHtml() {
-      return committedAction();
-    },
-    async applyTextContentToHtml() {
       return committedAction();
     },
     setGlobalStatus(text, kind) {
@@ -561,7 +656,7 @@ test("Save rămâne eșuat și păstrează HTML pending după flush-uri CSS/JS r
     },
   };
 
-  assert.equal(await saveActiveFile(host), false);
+  assert.equal(await saveActiveFile(saveControllerHost(host)), false);
   assert.deepEqual(flushed, ["css:save", "js:save"]);
   assert.equal(host.htmlPending.attributes, true);
   assert.deepEqual(host.kernelSourceDirtyPaths, ["templates/index.html"]);
@@ -599,12 +694,19 @@ test("Save păstrează terminală eroarea saveSessionDrafts și nu o rescrie cu 
     pageJsEdits: {},
     centerView: "preview",
     currentSourceRelativePath: "",
+    async applyTagChange() { return committedAction(); },
+    async applyClassesToHtml() { return committedAction(); },
+    htmlDraft: {
+      async applyAttributes() { return committedAction(); },
+      async applyText() { return committedAction(); },
+    },
+    async applyImageSourceToHtml() { return committedAction(); },
     setGlobalStatus(text, kind) {
       statuses.push({ text, kind });
     },
   };
 
-  assert.equal(await saveActiveFile(host), false);
+  assert.equal(await saveActiveFile(saveControllerHost(host)), false);
   assert.equal(flushCount, 2);
   assert.equal(statuses.at(-1)?.kind, "error");
   assert.match(statuses.at(-1)?.text ?? "", /al doilea flush a eșuat/);
@@ -641,8 +743,11 @@ test("EditorRuntime nu raportează ok când controllerul contextual blochează m
     async setCenterView() {
       return true;
     },
-    htmlActionsControllerHost() {
-      return htmlHost;
+    async deleteHtmlTarget(target) {
+      return await deleteSelectedHtmlElement(htmlActionsHost(htmlHost), target);
+    },
+    async duplicateHtmlTarget(target) {
+      return await duplicateSelectedHtmlElement(htmlActionsHost(htmlHost), target);
     },
     selectionControllerHost() {
       return {};
@@ -681,8 +786,11 @@ function teraRuntimeHost(teraHost) {
     async setCenterView() {
       return true;
     },
-    htmlActionsControllerHost() {
-      return {};
+    async deleteHtmlTarget() {
+      return failedAction("Operația HTML nu aparține acestui host Tera.");
+    },
+    async duplicateHtmlTarget() {
+      return failedAction("Operația HTML nu aparține acestui host Tera.");
     },
     selectionControllerHost() {
       return {};
@@ -704,18 +812,36 @@ function teraRuntimeHost(teraHost) {
 }
 
 function minimalTeraControllerHost(statuses) {
-  return {
+  const source = { source: "", sourceCache: {} };
+  const host = {
     sessionProjectRoot: "/project",
     kernelProjectSessionId: "session:runtime",
     projectSessionEpoch: 9,
     projectTransitionFrontendLeaseActive: false,
+    editorSelection: { selectionSnapshot: null },
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
     selectedTemplateSourceNode: null,
+    sourceGraph: null,
+    activeScannedPath: null,
+    activeRenderedTemplatePath: null,
     setGlobalStatus(text, kind) {
       statuses.push({ text, kind });
     },
   };
+  return Object.assign(host, {
+    context: () => ({
+      sourceGraph: host.sourceGraph,
+      selectedTemplateSourceNode: host.selectedTemplateSourceNode,
+      activeScannedPath: host.activeScannedPath,
+      activeRenderedTemplatePath: host.activeRenderedTemplatePath,
+    }),
+    source,
+    runStructural: (operation) => runInPreviewStructuralLane(host, operation),
+    projectCommitted: (lease, receipt, patch, projectLocalState) => (
+      projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, projectLocalState)
+    ),
+  });
 }
 
 test("EditorRuntime propagă blocked din controllerul Tera delete", async () => {
@@ -754,7 +880,7 @@ test("EditorRuntime propagă failed din controllerul Tera delete", async () => {
     capabilities: {},
   };
   const teraHost = minimalTeraControllerHost(statuses);
-  teraHost.selectionSnapshot = resolvedSelectionSnapshot({
+  teraHost.editorSelection.selectionSnapshot = resolvedSelectionSnapshot({
     selectionRevision: 3,
     editorNodeId: "editor_boundary:include:1",
     sourceNodeId: sourceNode.id,

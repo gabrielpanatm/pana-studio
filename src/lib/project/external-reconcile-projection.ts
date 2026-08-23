@@ -2,7 +2,7 @@ import { scannedCacheKey } from "$lib/project/files";
 import type {
   KernelExternalDiskReconcileReceipt,
   ProjectDiskManifest,
-} from "$lib/types";
+} from "$lib/project/external-disk-contract";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export type ExternalSourceProjection = {

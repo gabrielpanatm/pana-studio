@@ -81,6 +81,20 @@ pub(crate) fn build_markdown_projections(graph: &SourceGraph) -> Vec<MarkdownPro
         .iter()
         .flat_map(|template| template.markdown_projections.iter().cloned())
         .collect::<Vec<_>>();
+    normalize_markdown_projections(&mut projections);
+    projections
+}
+
+pub(crate) fn upsert_markdown_template(
+    projections: &mut Vec<MarkdownProjection>,
+    template: &crate::source_graph::model::SourceGraphTemplate,
+) {
+    projections.retain(|projection| projection.template_file != template.file);
+    projections.extend(template.markdown_projections.iter().cloned());
+    normalize_markdown_projections(projections);
+}
+
+fn normalize_markdown_projections(projections: &mut Vec<MarkdownProjection>) {
     projections.sort_by(|left, right| {
         left.template_file
             .cmp(&right.template_file)
@@ -93,7 +107,6 @@ pub(crate) fn build_markdown_projections(graph: &SourceGraph) -> Vec<MarkdownPro
             .then_with(|| left.id.cmp(&right.id))
     });
     projections.dedup_by(|left, right| left.id == right.id);
-    projections
 }
 
 pub(crate) fn analyze_template_markdown_with_source_nodes(

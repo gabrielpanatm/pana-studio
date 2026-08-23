@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Laborator CSS | INDEX ZERO{% endblock title %}
+{% block description %}Matrice vizibilă conectată la setul generat de reguli CSS.{% endblock description %}
+{% block css_pagina %}<link rel="stylesheet" href="{{ get_url(path='pagini/laborator-css-generat.css', cachebust=true) }}">{% endblock css_pagina %}
+{% block content %}
+<section class="laborator laborator-css">
+  <header class="laborator-antet container-larg"><p class="eticheta-tehnica">LAB / CSSOM</p><h1>Cascadă în 1.200 de pași</h1><p>Matricea aplică 288 dintre clasele unice; restul rămân în stylesheet pentru costul de parsare și indexare.</p></header>
+  <div class="matrice-css">
+    {% for indice in range(end=288) %}
+    <div class="esantion-css matrice-stil-{% if indice < 10 %}000{% elif indice < 100 %}00{% else %}0{% endif %}{{ indice }}"><span>{% if indice < 10 %}000{% elif indice < 100 %}00{% else %}0{% endif %}{{ indice }}</span><i></i></div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock content %}

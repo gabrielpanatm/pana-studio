@@ -1,12 +1,10 @@
 import { formatSourceEditLocation } from "$lib/source-graph/location";
 import { projectRelativeZolaPath } from "$lib/project/files";
 import { t } from "$lib/i18n/runtime.svelte";
-import type {
-  EditorSourceReference,
-  SelectionSnapshot,
-  SourceNodeKind,
-  SourceRange,
-} from "$lib/types";
+import type { EditorSourceReference } from "$lib/editor/contracts";
+import type { SelectionSnapshot } from "$lib/editor/contracts";
+import type { SourceNodeKind } from "$lib/source-graph/contracts";
+import type { SourceRange } from "$lib/source-graph/contracts";
 import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
 
 export type WorkbenchSourceRole = "html" | "css" | "js";

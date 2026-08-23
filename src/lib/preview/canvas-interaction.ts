@@ -1,20 +1,29 @@
-import type { CanvasProjectionIdentity } from "$lib/project/io";
+import type {
+  CanvasProjectionIdentity,
+} from "$lib/contracts/canvas-projection";
 import {
   CANVAS_INTERACTION_SCHEMA_VERSION,
-  type CanvasHitCandidate,
-  type CanvasHitCandidateKind,
   type CanvasDragPosition,
   type CanvasDragSample,
+  type CanvasHitCandidate,
+  type CanvasHitCandidateKind,
   type CanvasInteractionGesture,
   type CanvasInteractionIdentity,
   type CanvasInteractionRequest,
   type CanvasPointerButton,
   type CanvasPointerModifiers,
   type CanvasPointerSample,
-  type CanvasElementObservation,
-} from "$lib/types";
+} from "$lib/canvas/contracts";
+import type { CanvasElementObservation } from "$lib/canvas/contracts";
 
 export const CANVAS_AGENT_MESSAGE_SOURCE = "pana-studio-canvas-agent";
+/**
+ * Versiunea protocolului fizic dintre iframe și frontend.
+ *
+ * Este deliberat independentă de CANVAS_INTERACTION_SCHEMA_VERSION, care
+ * version-ează contractul semantic frontend <-> kernel Rust.
+ */
+export const CANVAS_AGENT_MESSAGE_SCHEMA_VERSION = 2 as const;
 const MAX_AGENT_INSTANCE_ID_BYTES = 128;
 const MAX_HIT_CANDIDATES = 64;
 const MAX_INSTRUMENTED_ID_BYTES = 512;
@@ -47,14 +56,14 @@ const DRAG_POSITIONS = new Set<CanvasDragPosition>(["before", "after", "inside"]
 
 export type CanvasAgentReadyMessage = {
   source: typeof CANVAS_AGENT_MESSAGE_SOURCE;
-  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  schemaVersion: typeof CANVAS_AGENT_MESSAGE_SCHEMA_VERSION;
   type: "agentReady";
   agentInstanceId: string;
 };
 
 export type CanvasAgentActivatedMessage = {
   source: typeof CANVAS_AGENT_MESSAGE_SOURCE;
-  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  schemaVersion: typeof CANVAS_AGENT_MESSAGE_SCHEMA_VERSION;
   type: "agentActivated";
   agentInstanceId: string;
   documentEpoch: number;
@@ -62,7 +71,7 @@ export type CanvasAgentActivatedMessage = {
 
 export type CanvasAgentDragPreviewAppliedMessage = {
   source: typeof CANVAS_AGENT_MESSAGE_SOURCE;
-  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  schemaVersion: typeof CANVAS_AGENT_MESSAGE_SCHEMA_VERSION;
   type: "dragPreviewApplied";
   agentInstanceId: string;
   documentEpoch: number;
@@ -74,7 +83,7 @@ export type CanvasAgentDragPreviewAppliedMessage = {
 
 export type CanvasAgentGestureMessage = {
   source: typeof CANVAS_AGENT_MESSAGE_SOURCE;
-  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  schemaVersion: typeof CANVAS_AGENT_MESSAGE_SCHEMA_VERSION;
   type: "gesture";
   agentInstanceId: string;
   documentEpoch: number;
@@ -88,7 +97,7 @@ export type CanvasAgentGestureMessage = {
 
 export type CanvasAgentDomInspectionMessage = {
   source: typeof CANVAS_AGENT_MESSAGE_SOURCE;
-  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  schemaVersion: typeof CANVAS_AGENT_MESSAGE_SCHEMA_VERSION;
   type: "domInspection";
   agentInstanceId: string;
   documentEpoch: number;
@@ -99,7 +108,7 @@ export type CanvasAgentDomInspectionMessage = {
 
 export type CanvasAgentActionMessage = {
   source: typeof CANVAS_AGENT_MESSAGE_SOURCE;
-  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  schemaVersion: typeof CANVAS_AGENT_MESSAGE_SCHEMA_VERSION;
   type: "action";
   agentInstanceId: string;
   documentEpoch: number;
@@ -133,7 +142,7 @@ export function parseCanvasAgentMessage(
   const data = event.data;
   if (
     data.source !== CANVAS_AGENT_MESSAGE_SOURCE
-    || data.schemaVersion !== CANVAS_INTERACTION_SCHEMA_VERSION
+    || data.schemaVersion !== CANVAS_AGENT_MESSAGE_SCHEMA_VERSION
   ) return null;
 
   const agentInstanceId = boundedNonEmptyString(
@@ -148,7 +157,7 @@ export function parseCanvasAgentMessage(
   if (data.type === "agentReady") {
     return {
       source: CANVAS_AGENT_MESSAGE_SOURCE,
-      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: "agentReady",
       agentInstanceId,
     };
@@ -158,7 +167,7 @@ export function parseCanvasAgentMessage(
     if (documentEpoch === null) return null;
     return {
       source: CANVAS_AGENT_MESSAGE_SOURCE,
-      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: "agentActivated",
       agentInstanceId,
       documentEpoch,
@@ -186,7 +195,7 @@ export function parseCanvasAgentMessage(
     ) return null;
     return {
       source: CANVAS_AGENT_MESSAGE_SOURCE,
-      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: "dragPreviewApplied",
       agentInstanceId,
       documentEpoch,
@@ -217,7 +226,7 @@ export function parseCanvasAgentMessage(
     ) return null;
     return {
       source: CANVAS_AGENT_MESSAGE_SOURCE,
-      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: "domInspection",
       agentInstanceId,
       documentEpoch,
@@ -243,7 +252,7 @@ export function parseCanvasAgentMessage(
     ) return null;
     return {
       source: CANVAS_AGENT_MESSAGE_SOURCE,
-      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
       type: "action",
       agentInstanceId,
       documentEpoch,
@@ -274,7 +283,7 @@ export function parseCanvasAgentMessage(
 
   return {
     source: CANVAS_AGENT_MESSAGE_SOURCE,
-    schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+    schemaVersion: CANVAS_AGENT_MESSAGE_SCHEMA_VERSION,
     type: "gesture",
     agentInstanceId,
     documentEpoch,

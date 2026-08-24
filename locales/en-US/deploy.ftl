@@ -1,21 +1,16 @@
 deploy-config-load-error = Error loading configuration: { $error }
 deploy-config-saving = Saving configuration…
-deploy-config-saved = Project settings were saved.
 deploy-config-error = Configuration error: { $error }
 deploy-config-dirty-status = Settings changed — use Save configuration.
 deploy-build-running-status = Building the project with Zola…
 deploy-build-complete = Zola build completed.
 deploy-build-error = Build error: { $error }
-deploy-cancel-no-session = The operation cannot be cancelled without the project session identity.
 deploy-cancel-log = Cancellation requested for { $kind } ({ $operation }).
 deploy-cancel-requested = Publishing operation cancellation was requested.
 deploy-cancel-failed = Publishing cancellation failed: { $error }
 deploy-open-folder = Open a folder to configure the project.
 deploy-config-loading = Loading configuration…
-deploy-unsaved = Unsaved changes
-deploy-synchronized = Configuration synchronized
 deploy-save-config = Save configuration
-deploy-save-before-build = Save the configuration before building
 deploy-build-title = Build the project with Zola
 deploy-building = Building…
 deploy-build = Build
@@ -58,4 +53,3 @@ deploy-search-date = Date
 deploy-search-path = Path
 deploy-search-content = Content
 deploy-complete-placeholder = empty = complete
-deploy-build-zola = Zola build

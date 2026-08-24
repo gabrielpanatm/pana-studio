@@ -173,7 +173,7 @@
 
   .context-menu kbd {
     color: var(--text-muted);
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 700;
   }

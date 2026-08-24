@@ -11,6 +11,10 @@
   } from "$lib/project/assets";
   import type { ProjectFile as InspectorProjectFile } from "$lib/project/lifecycle-contract";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
+  import {
+    calculateAnchoredPopoverPlacement,
+    observeAnchoredPopoverPosition,
+  } from "$lib/ui/anchored-popover";
 
   let {
     pendingValues,
@@ -97,19 +101,20 @@
   let bdFilterBtnRef = $state<HTMLButtonElement | null>(null);
   let showFilter   = $state(false);
   let showBdFilter = $state(false);
-  let filterPos   = $state({ top: 0, left: 0, width: 220 });
-  let bdFilterPos = $state({ top: 0, left: 0, width: 220 });
+  let filterPos   = $state({ top: 0, left: 0, width: 220, maxHeight: 280 });
+  let bdFilterPos = $state({ top: 0, left: 0, width: 220, maxHeight: 280 });
 
-  function calcPos(btn: HTMLButtonElement | null, width = 220) {
-    if (!btn) return { top: 0, left: 0, width };
+  function calcPos(btn: HTMLButtonElement | null) {
+    if (!btn) return { top: 0, left: 0, width: 220, maxHeight: 280 };
     const rect = btn.getBoundingClientRect();
-    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
-    const spaceBelow = window.innerHeight - rect.bottom - 8;
-    const spaceAbove = rect.top - 8;
-    const top = spaceBelow >= 180 || spaceBelow >= spaceAbove
-      ? rect.bottom + 4
-      : Math.max(8, rect.top - Math.min(240, spaceAbove) - 4);
-    return { top, left, width };
+    return calculateAnchoredPopoverPlacement({
+      anchorRect: rect,
+      itemCount: FILTER_FNS.length,
+      itemHeight: 42,
+      preferredWidth: 220,
+      horizontalAlign: "end",
+      maxHeight: 280,
+    });
   }
 
   function openFilter() {
@@ -141,6 +146,16 @@
     edit.commit("backdrop-filter", next);
     closeAll();
   }
+
+  $effect(() => {
+    const anchor = showFilter ? filterBtnRef : showBdFilter ? bdFilterBtnRef : null;
+    if (!anchor) return;
+    const update = () => {
+      if (showFilter) filterPos = calcPos(filterBtnRef);
+      if (showBdFilter) bdFilterPos = calcPos(bdFilterBtnRef);
+    };
+    return observeAnchoredPopoverPosition(anchor, update);
+  });
 </script>
 
 <!-- Backdrop -->
@@ -151,14 +166,17 @@
 <!-- Filter popover -->
 {#if showFilter}
   <div
-    class="effects-popover"
+    class="effects-popover ui-popover"
     role="listbox"
-    style="top:{filterPos.top}px; left:{filterPos.left}px; width:{filterPos.width}px;"
+    style:top={`${filterPos.top}px`}
+    style:left={`${filterPos.left}px`}
+    style:width={`${filterPos.width}px`}
+    style:max-height={`${filterPos.maxHeight}px`}
   >
     {#each FILTER_FNS as f}
       <button
         type="button"
-        class="effects-option"
+        class="effects-option ui-option"
         onmousedown={(e) => e.preventDefault()}
         onclick={() => addFilter(f.fn)}
       >
@@ -172,14 +190,17 @@
 <!-- Backdrop-filter popover -->
 {#if showBdFilter}
   <div
-    class="effects-popover"
+    class="effects-popover ui-popover"
     role="listbox"
-    style="top:{bdFilterPos.top}px; left:{bdFilterPos.left}px; width:{bdFilterPos.width}px;"
+    style:top={`${bdFilterPos.top}px`}
+    style:left={`${bdFilterPos.left}px`}
+    style:width={`${bdFilterPos.width}px`}
+    style:max-height={`${bdFilterPos.maxHeight}px`}
   >
     {#each FILTER_FNS as f}
       <button
         type="button"
-        class="effects-option"
+        class="effects-option ui-option"
         onmousedown={(e) => e.preventDefault()}
         onclick={() => addBdFilter(f.fn)}
       >
@@ -203,7 +224,7 @@
   />
 
   <!-- Mix Blend Mode -->
-  <div class="row-label" style="margin-top: 4px;">{t("inspector-effects-blend-mode")}</div>
+  <div class="row-label spaced-small">{t("inspector-effects-blend-mode")}</div>
   <TextWithOptions
     value={getValue("mix-blend-mode")}
     placeholder="normal"
@@ -212,7 +233,7 @@
   />
 
   <!-- Clip Path -->
-  <div class="row-label" style="margin-top: 4px;">{t("inspector-effects-clip-path")}</div>
+  <div class="row-label spaced-small">{t("inspector-effects-clip-path")}</div>
   <TextWithOptions
     value={getValue("clip-path")}
     placeholder="none"
@@ -221,13 +242,14 @@
   />
 
   <!-- Filter -->
-  <div class="effects-subheader" style="margin-top: 6px;">
+  <div class="effects-subheader spaced-large">
     <span class="effects-label" class:has-value={getValue("filter") !== ""}>{t("inspector-effects-filter")}</span>
     <button
       bind:this={filterBtnRef}
       type="button"
-      class="add-btn"
+      class="add-btn ui-icon-button mini"
       class:active={showFilter}
+      aria-pressed={showFilter}
       title={t("inspector-effects-add-filter")}
       aria-label={t("inspector-effects-add-filter")}
       onclick={openFilter}
@@ -242,13 +264,14 @@
   />
 
   <!-- Backdrop Filter -->
-  <div class="effects-subheader" style="margin-top: 4px;">
+  <div class="effects-subheader spaced-small">
     <span class="effects-label" class:has-value={getValue("backdrop-filter") !== ""}>{t("inspector-effects-backdrop-filter")}</span>
     <button
       bind:this={bdFilterBtnRef}
       type="button"
-      class="add-btn"
+      class="add-btn ui-icon-button mini"
       class:active={showBdFilter}
+      aria-pressed={showBdFilter}
       title={t("inspector-effects-add-backdrop-filter")}
       aria-label={t("inspector-effects-add-backdrop-filter")}
       onclick={openBdFilter}
@@ -263,7 +286,7 @@
   />
 
   <!-- Mask -->
-  <div class="effects-subheader" style="margin-top: 6px;">
+  <div class="effects-subheader spaced-large">
     <span class="effects-label" class:has-value={getValue("mask-image") !== ""}>{t("inspector-effects-mask")}</span>
   </div>
   <div class="row-label">{t("inspector-effects-mask-image")}</div>
@@ -277,7 +300,7 @@
     oncancel={() => edit.cancel("mask-image")}
   />
 
-  <div class="row-2 label-row" style="margin-top: 4px;">
+  <div class="row-2 label-row spaced-small">
     <span class="row-label">{t("inspector-effects-mask-size")}</span>
     <span class="row-label">{t("inspector-effects-mask-repeat")}</span>
   </div>
@@ -296,7 +319,7 @@
     />
   </div>
 
-  <div class="row-label" style="margin-top: 2px;">{t("inspector-effects-mask-position")}</div>
+  <div class="row-label spaced-tiny">{t("inspector-effects-mask-position")}</div>
   <TextWithOptions
     value={getValue("mask-position")}
     placeholder="center"
@@ -324,28 +347,6 @@
     color: var(--brand-strong);
   }
 
-  .add-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid var(--border-3);
-    border-radius: 4px;
-    background: var(--surface-4);
-    color: var(--text-muted);
-    font-size: 14px;
-    line-height: 1;
-    cursor: pointer;
-    transition: color 80ms, border-color 80ms, background 80ms;
-  }
-
-  .add-btn:hover, .add-btn.active {
-    border-color: var(--brand);
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-  }
-
   .row-label {
     font-size: 12px;
     color: var(--text-muted);
@@ -360,6 +361,10 @@
 
   .label-row { align-items: center; }
 
+  .spaced-tiny { margin-top: 2px; }
+  .spaced-small { margin-top: 4px; }
+  .spaced-large { margin-top: 6px; }
+
   /* ── Backdrop ──────────────────────────────────────────────────────────── */
 
   .effects-backdrop {
@@ -371,15 +376,7 @@
   /* ── Popover ───────────────────────────────────────────────────────────── */
 
   .effects-popover {
-    position: fixed;
-    z-index: 1000;
     overflow-y: auto;
-    max-height: 280px;
-    padding: 4px;
-    border: 1px solid var(--border-4);
-    border-radius: 8px;
-    background: var(--surface-2);
-    box-shadow: var(--shadow);
   }
 
   .effects-option {
@@ -387,18 +384,7 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 1px;
-    width: 100%;
     padding: 6px 9px;
-    border: 0;
-    border-radius: 5px;
-    background: transparent;
-    cursor: pointer;
-    text-align: left;
-    transition: background 80ms;
-  }
-
-  .effects-option:hover {
-    background: var(--brand-soft);
   }
 
   .effects-opt-name {
@@ -409,7 +395,7 @@
 
   .effects-opt-val {
     font-size: 12px;
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     color: var(--text-muted);
   }
 </style>

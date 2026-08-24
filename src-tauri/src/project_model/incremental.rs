@@ -112,6 +112,11 @@ pub(crate) struct ProjectModelIncrementalBuildOutcome {
     pub(crate) report: ProjectModelIncrementalBuildReport,
 }
 
+pub(crate) struct ProjectModelComposedBuildOutcome {
+    pub(crate) intermediate_model: ProjectModel,
+    pub(crate) final_build: ProjectModelIncrementalBuildOutcome,
+}
+
 pub(crate) fn rebuild_project_model_after_workspace_change(
     project_root: &Path,
     previous_model: Option<&ProjectModel>,
@@ -195,6 +200,69 @@ pub(crate) fn rebuild_project_model_after_workspace_change_with_source_changes(
             })
         }
     }
+}
+
+/// Rebuilds one published workspace revision whose source was produced by two
+/// ordered semantic transitions: the user structural edit, followed by a
+/// native-block contract rewrite. Each transition owns its own SourceChangeSet
+/// so identity reconciliation never attributes contract-owned topology to the
+/// user's tree insertion.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rebuild_project_model_after_composed_workspace_change_with_source_changes(
+    project_root: &Path,
+    previous_model: Option<&ProjectModel>,
+    previous_workspace_revision: Option<u64>,
+    intermediate_projection: &WorkspaceProjectionSnapshot,
+    final_projection: &WorkspaceProjectionSnapshot,
+    intermediate_changed_paths: &[String],
+    final_changed_paths: &[String],
+    intent: ProjectModelIncrementalIntent,
+    supplied_source_changes: Option<Vec<SourceChangeSet>>,
+) -> Result<ProjectModelComposedBuildOutcome, String> {
+    let mut intermediate = rebuild_project_model_after_workspace_change_with_source_changes(
+        project_root,
+        previous_model,
+        previous_workspace_revision,
+        intermediate_projection,
+        intermediate_changed_paths,
+        intent,
+        supplied_source_changes,
+    )?;
+
+    let contract_started = Instant::now();
+    let mut final_model =
+        super::build_project_model_from_workspace_projection(project_root, final_projection)?;
+    let mut contract_changes =
+        source_change_sets(&intermediate.model, final_projection, final_changed_paths);
+    reconcile_project_source_node_ids(
+        &intermediate.model.source_graph,
+        &mut final_model.source_graph,
+        &mut contract_changes,
+    )?;
+    rebuild_derived_graphs(project_root, final_projection, &mut final_model);
+
+    intermediate.report.changed_paths =
+        normalized_changed_paths(final_changed_paths).map_err(|reason| {
+            format!(
+                "Tranziția structurală compusă a refuzat căile finale: {}.",
+                reason.code()
+            )
+        })?;
+    intermediate.report.workspace_revision = final_projection.revision;
+    intermediate.report.workspace_transaction_id =
+        final_projection.workspace_transaction_id.clone();
+    intermediate.report.duration_us = intermediate
+        .report
+        .duration_us
+        .saturating_add(elapsed_us(contract_started));
+    intermediate.report.duration_ms = intermediate.report.duration_us / 1_000;
+    Ok(ProjectModelComposedBuildOutcome {
+        intermediate_model: intermediate.model,
+        final_build: ProjectModelIncrementalBuildOutcome {
+            model: final_model,
+            report: intermediate.report,
+        },
+    })
 }
 
 fn require_source_change_revisions(
@@ -877,7 +945,9 @@ mod tests {
             Err(error) => error,
             Ok(_) => panic!("SourceChangeSet stale a fost acceptat."),
         };
-        assert!(error.contains("revizii stale"), "{error}");
+        assert!(error.contains("revizia rezultatului stale"), "{error}");
+        assert!(error.contains("așteptată source_"), "{error}");
+        assert!(error.contains("actuală source_"), "{error}");
         fs::remove_dir_all(root).unwrap();
     }
 

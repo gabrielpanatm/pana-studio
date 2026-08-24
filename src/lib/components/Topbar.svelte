@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ApplicationMenuBar from "$lib/components/topbar/ApplicationMenuBar.svelte";
   import HistoryActionButtons from "$lib/components/topbar/HistoryActionButtons.svelte";
   import PanelLayoutButtons from "$lib/components/topbar/PanelLayoutButtons.svelte";
   import ThemeButton from "$lib/components/topbar/ThemeButton.svelte";
@@ -10,9 +11,9 @@
 
   $: t = legacyTranslator($localeRevision);
   import { IconExternalLink, IconFolderOpen, IconSearch } from "@tabler/icons-svelte";
+  import type { CommandCenterAction } from "$lib/workbench/contracts";
   type UiTheme = "dark" | "light";
 
-  export let currentProjectPath = "";
   export let canUndo = false;
   export let canRedo = false;
   export let inspectorHasPending = false;
@@ -34,20 +35,19 @@
   export let toggleTerminalPane: () => void;
   export let toggleRightPane: () => void | Promise<void>;
   export let openCommandCenter: () => void = () => {};
-
-  $: currentProjectName = currentProjectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? currentProjectPath;
-  $: title = noProject ? "Pană Studio" : currentProjectName;
+  export let executeCommandCenterAction: (action: CommandCenterAction) => void | Promise<void> = () => {};
 </script>
 
 <header class="topbar">
   <div class="topbar-left">
-    <div class="project-meta">
-      <p class="app-name" title={title}>{title}</p>
-      <p
-        class="project-path"
-        title={noProject ? t("workbench-local-studio-description") : currentProjectPath}
-      >{noProject ? t("workbench-local-studio-description") : currentProjectPath}</p>
-    </div>
+    <ApplicationMenuBar
+      {noProject}
+      {canUndo}
+      {canRedo}
+      {sidebarsAvailable}
+      executeAction={executeCommandCenterAction}
+      {openCommandCenter}
+    />
   </div>
 
   <button
@@ -119,7 +119,7 @@
   .topbar {
     flex: 0 0 auto;
     display: grid;
-    grid-template-columns: minmax(160px, 1fr) minmax(260px, 520px) minmax(220px, 1fr);
+    grid-template-columns: minmax(300px, 1fr) minmax(260px, 520px) minmax(220px, 1fr);
     align-items: center;
     gap: 12px;
     min-height: 50px;
@@ -134,39 +134,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .project-meta,
-  .app-name,
-  .project-path,
-  p {
-    margin: 0;
-  }
-
-  .project-meta {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .app-name {
-    max-width: 320px;
-    overflow: hidden;
-    color: var(--text-strong);
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    font-size: 14px;
-    font-weight: 650;
-  }
-
-  .project-path {
-    max-width: 420px;
-    margin-top: 2px;
-    overflow: hidden;
-    color: var(--text-muted);
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    font-size: var(--font-meta);
   }
 
   .workspace-toolbar,
@@ -288,10 +255,9 @@
 
   @media (max-width: 1080px) {
     .topbar {
-      grid-template-columns: minmax(120px, 0.7fr) minmax(220px, 1fr) auto;
+      grid-template-columns: minmax(260px, 0.9fr) minmax(220px, 1fr) auto;
     }
 
-    .project-path,
     .command-center-trigger kbd,
     .theme-actions {
       display: none;

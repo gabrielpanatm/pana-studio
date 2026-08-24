@@ -566,7 +566,7 @@
   <div class="hf-subheader">
     <span class="hf-sublabel">{t("inspector-classes")}</span>
     {#if canEdit}
-      <button type="button" class="hf-add-btn" aria-label={t("inspector-add-class")} disabled={classPending} onclick={() => { addingClass = true; }}>
+      <button type="button" class="ui-icon-button mini" aria-label={t("inspector-add-class")} disabled={classPending} onclick={() => { addingClass = true; }}>
         <IconPlus size={13} stroke={1.9} />
       </button>
     {/if}
@@ -590,7 +590,7 @@
         <span class="cls-chip">
           <span class="cls-chip-name">{cls}</span>
           {#if canEdit}
-            <button type="button" class="cls-chip-del" disabled={classPending} aria-label={t("inspector-remove-class", { name: cls })} onclick={() => removeClass(cls)}>
+            <button type="button" class="ui-icon-button mini danger" disabled={classPending} aria-label={t("inspector-remove-class", { name: cls })} onclick={() => removeClass(cls)}>
               <IconX size={12} stroke={2} />
             </button>
           {/if}
@@ -1158,7 +1158,7 @@
         onkeydown={(e) => { if (e.key === "Enter") confirmAddAria(); if (e.key === "Escape") { addingAria = false; } }} />
       <input class="hf-input" type="text" placeholder={t("inspector-value-placeholder")} bind:value={newAriaValue}
         onkeydown={(e) => { if (e.key === "Enter") confirmAddAria(); if (e.key === "Escape") { addingAria = false; } }} />
-      <button type="button" class="hf-ok-btn" onclick={confirmAddAria}>{t("common-confirm")}</button>
+      <button type="button" class="ui-button primary compact" onclick={confirmAddAria}>{t("common-confirm")}</button>
     </div>
   {:else if canEdit}
     <button type="button" class="hf-ghost-add" onclick={() => { addingAria = true; }}>
@@ -1192,7 +1192,7 @@
         oninput={(e) => setAttr(key, e.currentTarget.value)}
         onblur={(e) => commitAttribute(key, e.currentTarget.value)} />
       {#if canEdit}
-        <button type="button" class="hf-del-btn" aria-label={t("inspector-remove-attribute", { name: key })}
+        <button type="button" class="ui-icon-button mini danger" aria-label={t("inspector-remove-attribute", { name: key })}
           onclick={() => commitAttributeRemoval(key)}>
           <IconX size={13} stroke={1.9} />
         </button>
@@ -1206,7 +1206,7 @@
         onkeydown={(e) => { if (e.key === "Enter") confirmAddData(); if (e.key === "Escape") { addingData = false; newDataKey = ""; newDataValue = ""; } }} />
       <input class="hf-input" type="text" placeholder={t("inspector-value-placeholder")} bind:value={newDataValue}
         onkeydown={(e) => { if (e.key === "Enter") confirmAddData(); if (e.key === "Escape") { addingData = false; } }} />
-      <button type="button" class="hf-ok-btn" onclick={confirmAddData}>{t("common-confirm")}</button>
+      <button type="button" class="ui-button primary compact" onclick={confirmAddData}>{t("common-confirm")}</button>
     </div>
   {:else if canEdit}
     <button type="button" class="hf-ghost-add" onclick={() => { addingData = true; }}>
@@ -1248,7 +1248,7 @@
   }
 
   .hf-label.mono {
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 13px;
     font-weight: 900;
     text-transform: none;
@@ -1257,7 +1257,7 @@
   }
 
   .hf-dims {
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text-muted);
   }
@@ -1274,7 +1274,7 @@
     background: var(--material-inset);
     box-shadow: var(--shadow-inset);
     color: var(--text);
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     outline: none;
     transition:
@@ -1307,7 +1307,7 @@
     background: var(--surface-5);
     color: var(--text-muted);
     font-size: 12px;
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     cursor: pointer;
     transition: border-color 80ms, color 80ms, background 80ms;
   }
@@ -1361,7 +1361,7 @@
     background: var(--surface-5);
     color: var(--text-muted);
     font-size: 12px;
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-weight: 600;
     cursor: pointer;
     transition: border-color 80ms, color 80ms, background 80ms;
@@ -1401,30 +1401,6 @@
     align-items: center;
   }
 
-  /* ── Add buttons ───────────────────────────────────────────────────────── */
-
-  .hf-add-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid var(--border-3);
-    border-radius: calc(var(--radius-control) - 2px);
-    background: var(--material-control);
-    box-shadow: var(--shadow-control);
-    color: var(--text-muted);
-    font-size: 14px;
-    line-height: 1;
-    cursor: pointer;
-    transition: color 80ms, border-color 80ms;
-  }
-
-  .hf-add-btn:hover {
-    color: var(--brand-strong);
-    border-color: var(--brand);
-  }
-
   .hf-ghost-add {
     display: flex;
     align-items: center;
@@ -1458,42 +1434,6 @@
     flex: 1;
   }
 
-  .hf-ok-btn {
-    flex-shrink: 0;
-    height: 26px;
-    padding: 0 8px;
-    border: 1px solid var(--brand);
-    border-radius: 6px;
-    background: var(--brand);
-    color: #fff;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-  }
-
-  /* ── Del button ────────────────────────────────────────────────────────── */
-
-  .hf-del-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-    border: none;
-    border-radius: 3px;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 14px;
-    cursor: pointer;
-    transition: color 80ms, background 80ms;
-  }
-
-  .hf-del-btn:hover {
-    color: #cf4a4a;
-    background: color-mix(in srgb, #cf4a4a 15%, transparent);
-  }
-
   /* ── Data row ──────────────────────────────────────────────────────────── */
 
   .hf-data-row {
@@ -1504,7 +1444,7 @@
   }
 
   .hf-data-key {
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 600;
     color: var(--brand-strong);
@@ -1526,7 +1466,7 @@
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    padding: 2px 6px 2px 8px;
+    padding: 1px 2px 1px 8px;
     border: 1px solid var(--border-4);
     border-radius: 20px;
     background: var(--surface-5);
@@ -1535,29 +1475,8 @@
   }
 
   .cls-chip-name {
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
-  }
-
-  .cls-chip-del {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    border: none;
-    border-radius: 50%;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
-    cursor: pointer;
-    line-height: 1;
-    transition: color 80ms, background 80ms;
-  }
-
-  .cls-chip-del:hover {
-    color: #cf4a4a;
-    background: color-mix(in srgb, #cf4a4a 15%, transparent);
   }
 
   /* ── Misc ──────────────────────────────────────────────────────────────── */

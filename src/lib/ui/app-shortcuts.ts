@@ -5,6 +5,9 @@ export type AppShortcutIntent =
   | "none"
   | "preventNativeZoom"
   | "commandCenter"
+  | "openProject"
+  | "closeApplication"
+  | "openSettings"
   | "toggleTerminal"
   | "togglePrimarySidebar"
   | "showProblems"
@@ -42,6 +45,9 @@ export function appShortcutIntent(event: KeyboardEvent): AppShortcutIntent {
   const key = event.key.toLowerCase();
 
   if (key === "k") return "commandCenter";
+  if (key === "o") return "openProject";
+  if (key === "q") return "closeApplication";
+  if (key === ",") return "openSettings";
   if (key === "`" || key === "~") return "toggleTerminal";
   if (key === "b" && !isAppTextEditingTarget(event.target)) return "togglePrimarySidebar";
   if (key === "m" && event.shiftKey) return "showProblems";

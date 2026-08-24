@@ -10,7 +10,7 @@
     IconStack2,
   } from "@tabler/icons-svelte";
   import InspectorSection from "../InspectorSection.svelte";
-  import SegmentedControl from "../controls/SegmentedControl.svelte";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
   import PropInput from "../controls/PropInput.svelte";
 
   let {

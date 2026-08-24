@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     IconAlertTriangle,
-    IconCheck,
     IconChevronDown,
     IconGitBranch,
     IconGitCommit,
@@ -14,6 +13,9 @@
     IconX,
   } from "@tabler/icons-svelte";
   import { onMount } from "svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { UI_TERM_IDS } from "$lib/i18n/ui-terms";
   import type { GlobalStatusKind } from "$lib/status/global-status";
@@ -310,9 +312,9 @@
     </header>
 
     {#if loading && !snapshot}
-      <p class="empty-text">{t("versions-loading")}</p>
+      <EmptyState title={t("versions-loading")} />
     {:else if !projectRoot || !sessionId}
-      <p class="empty-text">{t("versions-open-project")}</p>
+      <EmptyState title={t("versions-open-project")} />
     {:else if snapshot}
       <section class="repository-card" class:problem={snapshot.repositoryState !== "ready" && snapshot.repositoryState !== "uninitialized"}>
         <div class="repository-state">
@@ -330,7 +332,7 @@
       {#if activePreviewCommitOid}
         <section class="preview-banner">
           <div><IconEye size={15} /><span>{t("versions-isolated-preview")} <code>{activePreviewCommitOid.slice(0, 8)}</code></span></div>
-          <button type="button" onclick={returnToLivePreview}>{t("versions-return-current")}</button>
+          <button class="ui-button compact" type="button" onclick={returnToLivePreview}>{t("versions-return-current")}</button>
         </section>
       {/if}
 
@@ -341,7 +343,7 @@
             <small>{errorMessage(activeNetwork.messageDiagnostic)}</small>
           </div>
           {#if activeNetwork.status === "started" || activeNetwork.status === "progress"}
-            <button type="button" onclick={cancelNetwork}>{t("versions-cancel")}</button>
+            <button class="ui-button compact" type="button" onclick={cancelNetwork}>{t("versions-cancel")}</button>
           {/if}
         </section>
       {/if}
@@ -356,7 +358,7 @@
               {#if item.availableActions.length}
                 <div class="recovery-actions">
                   {#each item.availableActions as action}
-                    <button type="button" disabled={!!busyAction || workspaceDirty} onclick={() => resolveRecovery(item, action)}>{recoveryActionLabel(action)}</button>
+                    <button class="ui-button compact" type="button" disabled={!!busyAction || workspaceDirty} onclick={() => resolveRecovery(item, action)}>{recoveryActionLabel(action)}</button>
                   {/each}
                 </div>
               {/if}
@@ -380,7 +382,7 @@
               {#if item.availableActions.length}
                 <div class="recovery-actions">
                   {#each item.availableActions as action}
-                    <button type="button" disabled={!!busyAction || workspaceDirty} onclick={() => resolveIntegrationRecovery(item, action)}>{integrationRecoveryActionLabel(action)}</button>
+                    <button class="ui-button compact" type="button" disabled={!!busyAction || workspaceDirty} onclick={() => resolveIntegrationRecovery(item, action)}>{integrationRecoveryActionLabel(action)}</button>
                   {/each}
                 </div>
               {/if}
@@ -404,8 +406,8 @@
         <details class="identity-card" open={!snapshot.userName || !snapshot.userEmail}>
           <summary><IconSettings size={15} stroke={1.8} /> {t("versions-local-identity")}</summary>
           <div class="identity-fields">
-            <label>{t("versions-name")}<input bind:value={snapshotController.identityName} autocomplete="name" /></label>
-            <label>{t("versions-email")}<input type="email" bind:value={snapshotController.identityEmail} autocomplete="email" /></label>
+            <label class="ui-form-field"><span class="ui-form-label">{t("versions-name")}</span><input class="ui-input compact" bind:value={snapshotController.identityName} autocomplete="name" /></label>
+            <label class="ui-form-field"><span class="ui-form-label">{t("versions-email")}</span><input class="ui-input compact" type="email" bind:value={snapshotController.identityEmail} autocomplete="email" /></label>
             <button class="ui-button primary" type="button" disabled={!!busyAction || workspaceDirty || !identityName.trim() || !identityEmail.trim()} onclick={snapshotController.saveIdentity.bind(snapshotController)}>
               {t("versions-save-identity")}
             </button>
@@ -423,7 +425,7 @@
                     <strong>{remote.name}</strong>
                     <small title={remote.fetchUrl}>{remote.fetchUrl}</small>
                   </button>
-                  <button type="button" class="mini-button" title={t("versions-remove-remote")} aria-label={t("versions-remove-remote-label", { name: remote.name })} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => networkController.requestRemoteRemoval(remote.name)}>
+                  <button type="button" class="ui-icon-button mini danger" title={t("versions-remove-remote")} aria-label={t("versions-remove-remote-label", { name: remote.name })} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => networkController.requestRemoteRemoval(remote.name)}>
                     <IconX size={13} stroke={1.9} />
                   </button>
                   {#if remote.diagnostic}<p>{t("versions-remote-configuration-invalid")}</p>{/if}
@@ -432,16 +434,16 @@
             </div>
           {/if}
           <div class="remote-form">
-            <label>{t("versions-name")}<input bind:value={networkController.remoteName} placeholder="origin" autocomplete="off" /></label>
-            <label class="span-2">{t("versions-fetch-url")}<input bind:value={networkController.remoteFetchUrl} placeholder="https://github.com/organization/site.git" autocomplete="off" spellcheck="false" /></label>
-            <label class="span-2">{t("versions-push-url-optional")}<input bind:value={networkController.remotePushUrl} placeholder="ssh://git@github.com/organization/site.git" autocomplete="off" spellcheck="false" /></label>
-            <button type="button" class="span-2" disabled={!!busyAction || !!mutationBlockedReason || !remoteName.trim() || !remoteFetchUrl.trim()} onclick={saveRemote}>{t("versions-save-remote")}</button>
+            <label class="ui-form-field"><span class="ui-form-label">{t("versions-name")}</span><input class="ui-input compact" bind:value={networkController.remoteName} placeholder="origin" autocomplete="off" /></label>
+            <label class="ui-form-field span-2"><span class="ui-form-label">{t("versions-fetch-url")}</span><input class="ui-input compact" bind:value={networkController.remoteFetchUrl} placeholder="https://github.com/organization/site.git" autocomplete="off" spellcheck="false" /></label>
+            <label class="ui-form-field span-2"><span class="ui-form-label">{t("versions-push-url-optional")}</span><input class="ui-input compact" bind:value={networkController.remotePushUrl} placeholder="ssh://git@github.com/organization/site.git" autocomplete="off" spellcheck="false" /></label>
+            <button type="button" class="ui-button compact span-2" disabled={!!busyAction || !!mutationBlockedReason || !remoteName.trim() || !remoteFetchUrl.trim()} onclick={saveRemote}>{t("versions-save-remote")}</button>
           </div>
           {#if pendingRemoteRemoval}
             <div class="destructive-confirmation">
               <p>{t("versions-remove-remote-description")}</p>
-              <label>{t("versions-type-value", { value: pendingRemoteRemoval })}<input bind:value={networkController.remoteRemovalConfirmation} autocomplete="off" /></label>
-              <div><button type="button" onclick={() => networkController.cancelRemoteRemoval()}>{t("versions-abandon")}</button><button type="button" class="ui-button danger danger-button" disabled={remoteRemovalConfirmation !== pendingRemoteRemoval} onclick={removeRemoteConfirmed}>{t("versions-remove")}</button></div>
+              <label class="ui-form-field"><span class="ui-form-label">{t("versions-type-value", { value: pendingRemoteRemoval })}</span><input class="ui-input compact" bind:value={networkController.remoteRemovalConfirmation} autocomplete="off" /></label>
+              <div><button class="ui-button compact" type="button" onclick={() => networkController.cancelRemoteRemoval()}>{t("versions-abandon")}</button><button type="button" class="ui-button danger compact" disabled={remoteRemovalConfirmation !== pendingRemoteRemoval} onclick={removeRemoteConfirmed}>{t("versions-remove")}</button></div>
             </div>
           {/if}
         </details>
@@ -453,18 +455,8 @@
               <span class="sync-badge">{versionStateLabel(snapshot.syncState)}</span>
             </div>
             <div class="sync-selectors">
-              <label>{t("versions-remote")}
-                <select bind:value={networkController.selectedRemote} onchange={() => networkController.selectRemote()}>
-                  <option value="">{t("versions-choose-remote")}</option>
-                  {#each usableRemotes as remote}<option value={remote.name}>{remote.name}</option>{/each}
-                </select>
-              </label>
-              <label>{t("versions-remote-branch")}
-                <select bind:value={networkController.selectedRemoteBranch} onchange={() => networkController.selectRemoteBranch()}>
-                  <option value="">{t("versions-choose-branch")}</option>
-                  {#each selectedRemoteBranches as branch}<option value={branch.name}>{branch.name}</option>{/each}
-                </select>
-              </label>
+              <div class="ui-form-field"><span class="ui-form-label">{t("versions-remote")}</span><SelectControl value={networkController.selectedRemote} options={usableRemotes.map((remote) => ({ value: remote.name, label: remote.name }))} placeholder={t("versions-choose-remote")} ariaLabel={t("versions-remote")} onchange={(value) => { networkController.selectedRemote = value; networkController.selectRemote(); }} /></div>
+              <div class="ui-form-field"><span class="ui-form-label">{t("versions-remote-branch")}</span><SelectControl value={networkController.selectedRemoteBranch} options={selectedRemoteBranches.map((branch) => ({ value: branch.name, label: branch.name }))} placeholder={t("versions-choose-branch")} ariaLabel={t("versions-remote-branch")} onchange={(value) => { networkController.selectedRemoteBranch = value; networkController.selectRemoteBranch(); }} /></div>
             </div>
             <div class="sync-counters">
               <span>{t("versions-ahead")} <b>{l10n.formatNumber(snapshot.upstream?.ahead ?? 0)}</b></span>
@@ -472,13 +464,13 @@
               <span>{t("versions-upstream")} <b>{snapshot.upstream ? `${snapshot.upstream.remote}/${snapshot.upstream.remoteBranch}` : t("versions-upstream-unconfigured")}</b></span>
             </div>
             <div class="button-grid">
-              <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !selectedRemote} onclick={fetchRemote}>{t("versions-fetch-prune")}</button>
-              <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.branch || !selectedRemote} onclick={pushBranch}>{t("versions-safe-push")}</button>
-              <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.branch || !selectedRemoteBranch} onclick={saveUpstream}>{t("versions-set-upstream")}</button>
-              <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.upstream} onclick={removeUpstream}>{t("versions-remove-upstream")}</button>
+              <button class="ui-button compact" type="button" disabled={!!busyAction || !!mutationBlockedReason || !selectedRemote} onclick={fetchRemote}>{t("versions-fetch-prune")}</button>
+              <button class="ui-button compact" type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.branch || !selectedRemote} onclick={pushBranch}>{t("versions-safe-push")}</button>
+              <button class="ui-button compact" type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.branch || !selectedRemoteBranch} onclick={saveUpstream}>{t("versions-set-upstream")}</button>
+              <button class="ui-button compact" type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.upstream} onclick={removeUpstream}>{t("versions-remove-upstream")}</button>
             </div>
             <p class="card-hint">{t("versions-no-pull-hint")}</p>
-            <button type="button" class="ui-button wide-button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.clean || !selectedTarget()} onclick={analyzeIntegration}>{t("versions-analyze-integration")}</button>
+            <button type="button" class="ui-button compact wide-button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.clean || !selectedTarget()} onclick={analyzeIntegration}>{t("versions-analyze-integration")}</button>
             {#if integrationPlan}
               <article class="integration-plan">
                 <div><strong>{versionStateLabel(integrationPlan.relationship)}</strong><code>{integrationPlan.targetOid.slice(0, 8)}</code></div>
@@ -518,10 +510,10 @@
                     {/if}
                   </details>
                 {/if}
-                <label>{t("versions-merge-message")}<textarea rows="2" bind:value={integrationController.message}></textarea></label>
+                <label class="ui-form-field"><span class="ui-form-label">{t("versions-merge-message")}</span><textarea class="ui-textarea" rows="2" bind:value={integrationController.message}></textarea></label>
                 <div class="button-grid">
-                  <button type="button" class="ui-button primary primary-button" disabled={!integrationPlan.fastForwardAllowed || !!busyAction} onclick={() => applyIntegration("fast_forward")}>{t("versions-fast-forward")}</button>
-                  <button type="button" class="ui-button primary primary-button" disabled={!integrationPlan.mergeAllowed || !!busyAction || !integrationMessage.trim()} onclick={() => applyIntegration("merge")}>{t("versions-explicit-merge")}</button>
+                  <button type="button" class="ui-button primary" disabled={!integrationPlan.fastForwardAllowed || !!busyAction} onclick={() => applyIntegration("fast_forward")}>{t("versions-fast-forward")}</button>
+                  <button type="button" class="ui-button primary" disabled={!integrationPlan.mergeAllowed || !!busyAction || !integrationMessage.trim()} onclick={() => applyIntegration("merge")}>{t("versions-explicit-merge")}</button>
                 </div>
               </article>
             {/if}
@@ -531,16 +523,16 @@
         <details class="branches-card">
           <summary><IconGitCommit size={15} stroke={1.8} /> {t("versions-local-branches")}</summary>
           <div class="branch-create">
-            <input bind:value={integrationController.newBranchName} placeholder="feature/new-page" autocomplete="off" spellcheck="false" />
-            <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.headOid || !newBranchName.trim()} onclick={createBranch}>{t("versions-create")}</button>
+            <input class="ui-input compact" aria-label={t("versions-local-branches")} bind:value={integrationController.newBranchName} placeholder="feature/new-page" autocomplete="off" spellcheck="false" />
+            <button class="ui-button compact" type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.headOid || !newBranchName.trim()} onclick={createBranch}>{t("versions-create")}</button>
           </div>
           <div class="branch-list">
             {#each snapshot.branches as branch (branch.name)}
               <article class="branch-row" class:current={branch.current}>
                 <div><strong>{branch.name}</strong><small>{branch.current ? t("versions-active") : versionStateLabel(branch.syncState)}</small></div>
                 {#if !branch.current}
-                  <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.clean || !branch.oid} onclick={() => switchBranch(branch.name, branch.oid)}>{t("versions-open")}</button>
-                  <button type="button" class="mini-button" title={t("versions-delete-integrated-title")} aria-label={t("versions-delete-branch-label", { branch: branch.name })} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => integrationController.requestBranchRemoval(branch.name)}>
+                  <button class="ui-button compact" type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.clean || !branch.oid} onclick={() => switchBranch(branch.name, branch.oid)}>{t("versions-open")}</button>
+                  <button type="button" class="ui-icon-button mini danger" title={t("versions-delete-integrated-title")} aria-label={t("versions-delete-branch-label", { branch: branch.name })} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => integrationController.requestBranchRemoval(branch.name)}>
                     <IconX size={13} stroke={1.9} />
                   </button>
                 {/if}
@@ -550,10 +542,10 @@
           {#if pendingBranchRemoval}
             <div class="destructive-confirmation">
               <p>{t("versions-delete-branch-description", { branch: pendingBranchRemoval })}</p>
-              <label>{t("versions-confirmation")}<input bind:value={integrationController.branchRemovalConfirmation} autocomplete="off" spellcheck="false" /></label>
+              <label class="ui-form-field"><span class="ui-form-label">{t("versions-confirmation")}</span><input class="ui-input compact" bind:value={integrationController.branchRemovalConfirmation} autocomplete="off" spellcheck="false" /></label>
               <div>
-                <button type="button" onclick={() => integrationController.cancelBranchRemoval()}>{t("versions-abandon")}</button>
-                <button type="button" class="ui-button danger danger-button" disabled={!!busyAction || branchRemovalConfirmation !== pendingBranchRemoval} onclick={() => deleteBranch(pendingBranchRemoval)}>{t("versions-delete-branch")}</button>
+                <button class="ui-button compact" type="button" onclick={() => integrationController.cancelBranchRemoval()}>{t("versions-abandon")}</button>
+                <button type="button" class="ui-button danger compact" disabled={!!busyAction || branchRemovalConfirmation !== pendingBranchRemoval} onclick={() => deleteBranch(pendingBranchRemoval)}>{t("versions-delete-branch")}</button>
               </div>
             </div>
           {/if}
@@ -562,10 +554,10 @@
         <section class="changes-section">
           <div class="section-heading">
             <div><p class="section-label">{t("versions-staged")}</p><span>{t("versions-files-count", { count: stagedFiles.length })}</span></div>
-            <button type="button" disabled={!!busyAction || workspaceDirty || stagedFiles.length === 0} onclick={() => snapshotController.unstageAll()}>{t("versions-unstage-all")}</button>
+            <button class="ui-button compact" type="button" disabled={!!busyAction || workspaceDirty || stagedFiles.length === 0} onclick={() => snapshotController.unstageAll()}>{t("versions-unstage-all")}</button>
           </div>
           {#if stagedFiles.length === 0}
-            <p class="empty-row">{t("versions-no-staged")}</p>
+            <EmptyState compact title={t("versions-no-staged")} />
           {:else}
             <div class="file-list">
               {#each stagedFiles as file (`staged:${file.path}`)}
@@ -573,7 +565,7 @@
                   <button type="button" class="file-main" title={t("versions-show-staged-diff")} onclick={() => showFileDiff(file, "staged")}>
                     <b>{kindLabel(file)}</b><span>{file.path}</span>
                   </button>
-                  <button type="button" class="mini-button" title={t("versions-unstage-all")} aria-label={t("versions-remove-from-staged", { path: file.path })} disabled={!!busyAction || workspaceDirty} onclick={() => snapshotController.unstagePaths([file.path])}>
+                  <button type="button" class="ui-icon-button mini" title={t("versions-unstage-all")} aria-label={t("versions-remove-from-staged", { path: file.path })} disabled={!!busyAction || workspaceDirty} onclick={() => snapshotController.unstagePaths([file.path])}>
                     <IconMinus size={13} stroke={1.9} />
                   </button>
                 </article>
@@ -583,9 +575,9 @@
         </section>
 
         <section class="commit-card">
-          <label for="version-message">{t("versions-version-message")}</label>
-          <textarea id="version-message" rows="3" bind:value={snapshotController.commitMessage} placeholder={t("versions-version-placeholder")}></textarea>
-          <button type="button" class="ui-button primary primary-button" disabled={!!busyAction || workspaceDirty || stagedFiles.length === 0 || snapshot.conflictedCount > 0 || !snapshot.userName || !snapshot.userEmail || !commitMessage.trim()} onclick={commit}>
+          <label class="ui-form-label" for="version-message">{t("versions-version-message")}</label>
+          <textarea class="ui-textarea" id="version-message" rows="3" bind:value={snapshotController.commitMessage} placeholder={t("versions-version-placeholder")}></textarea>
+          <button type="button" class="ui-button primary" disabled={!!busyAction || workspaceDirty || stagedFiles.length === 0 || snapshot.conflictedCount > 0 || !snapshot.userName || !snapshot.userEmail || !commitMessage.trim()} onclick={commit}>
             <IconGitCommit size={16} stroke={1.9} /> {t("versions-create-version")}
           </button>
         </section>
@@ -593,10 +585,10 @@
         <section class="changes-section">
           <div class="section-heading">
             <div><p class="section-label">{t("versions-changes")}</p><span>{t("versions-files-count", { count: unstagedFiles.length })}</span></div>
-            <button type="button" disabled={!!busyAction || workspaceDirty || unstagedFiles.length === 0} onclick={() => snapshotController.stageAll()}>{t("versions-stage-all")}</button>
+            <button class="ui-button compact" type="button" disabled={!!busyAction || workspaceDirty || unstagedFiles.length === 0} onclick={() => snapshotController.stageAll()}>{t("versions-stage-all")}</button>
           </div>
           {#if unstagedFiles.length === 0}
-            <p class="empty-row"><IconCheck size={14} /> {t("versions-no-working-changes")}</p>
+            <EmptyState compact title={t("versions-no-working-changes")} />
           {:else}
             <div class="file-list">
               {#each unstagedFiles as file (`unstaged:${file.path}`)}
@@ -604,7 +596,7 @@
                   <button type="button" class="file-main" title={t("versions-show-diff")} onclick={() => showFileDiff(file, "unstaged")}>
                     <b>{kindLabel(file)}</b><span>{file.path}</span>
                   </button>
-                  <button type="button" class="mini-button" title={t("versions-staged")} disabled={!!busyAction || workspaceDirty} onclick={() => snapshotController.stagePaths([file.path])}><IconPlus size={13} /></button>
+                  <button type="button" class="ui-icon-button mini" title={t("versions-staged")} disabled={!!busyAction || workspaceDirty} onclick={() => snapshotController.stagePaths([file.path])}><IconPlus size={13} /></button>
                 </article>
               {/each}
             </div>
@@ -615,12 +607,12 @@
           <section class="diff-card">
             <div class="section-heading">
               <div><p class="section-label">{t("versions-diff-title", { kind: diff.kind })}</p><span>{diff.path ?? diff.commitOid?.slice(0, 8) ?? t("versions-version")}</span></div>
-              <button type="button" class="ui-icon-button ui-close-button mini-button" title={t("versions-close-diff")} onclick={() => snapshotController.clearDiff()}><IconX size={13} /></button>
+              <button type="button" class="ui-icon-button compact ui-close-button" title={t("versions-close-diff")} onclick={() => snapshotController.clearDiff()}><IconX size={13} /></button>
             </div>
             {#if diff.binary}
-              <p class="empty-row">{t("versions-binary-file")}</p>
+              <EmptyState compact title={t("versions-binary-file")} />
             {:else if !diff.patch}
-              <p class="empty-row">{t("versions-no-text-diff")}</p>
+              <EmptyState compact title={t("versions-no-text-diff")} />
             {:else}
               <pre>{diff.patch}{diff.truncated ? `\n\n… ${t("versions-diff-truncated")}` : ""}</pre>
             {/if}
@@ -632,7 +624,7 @@
             <div><p class="section-label">{t("versions-git-history")}</p><span>{t("versions-loaded-versions", { count: history.length })}</span></div>
           </div>
           {#if history.length === 0}
-            <p class="empty-row">{t("versions-first-commit")}</p>
+            <EmptyState compact title={t("versions-first-commit")} />
           {:else}
             <div class="commit-list">
               {#each history as entry (entry.oid)}
@@ -645,8 +637,8 @@
                     </span>
                     <code>{entry.shortOid}</code>
                   </button>
-                  <button type="button" class="mini-button" title={t("versions-preview-version")} disabled={!!busyAction} onclick={() => previewCommit(entry)}><IconEye size={14} /></button>
-                  <button type="button" class="mini-button restore-button" title={t("versions-restore-version")} disabled={!!busyAction || workspaceDirty || !snapshot.clean || entry.oid === snapshot.headOid} onclick={() => requestRestore(entry)}><IconRestore size={14} /></button>
+                  <button type="button" class="ui-icon-button mini" title={t("versions-preview-version")} disabled={!!busyAction} onclick={() => previewCommit(entry)}><IconEye size={14} /></button>
+                  <button type="button" class="ui-icon-button mini restore-button" title={t("versions-restore-version")} disabled={!!busyAction || workspaceDirty || !snapshot.clean || entry.oid === snapshot.headOid} onclick={() => requestRestore(entry)}><IconRestore size={14} /></button>
                 </article>
               {/each}
             </div>
@@ -666,24 +658,24 @@
               <code>{restoreEntry.shortOid}</code>
             </div>
             <p>{t("versions-restore-description")}</p>
-            <label>{t("versions-commit-message")}<textarea rows="3" bind:value={recoveryController.restoreMessage}></textarea></label>
-            <label>{t("versions-type-to-confirm", { value: restoreEntry.shortOid })}<input bind:value={recoveryController.restoreConfirmation} autocomplete="off" spellcheck="false" /></label>
+            <label class="ui-form-field"><span class="ui-form-label">{t("versions-commit-message")}</span><textarea class="ui-textarea" rows="3" bind:value={recoveryController.restoreMessage}></textarea></label>
+            <label class="ui-form-field"><span class="ui-form-label">{t("versions-type-to-confirm", { value: restoreEntry.shortOid })}</span><input class="ui-input compact" bind:value={recoveryController.restoreConfirmation} autocomplete="off" spellcheck="false" /></label>
             <div class="restore-actions">
-              <button type="button" disabled={!!busyAction} onclick={cancelRestore}>{t("versions-abandon")}</button>
-              <button type="button" class="ui-button danger danger-button" disabled={!!busyAction || restoreConfirmation.trim() !== restoreEntry.shortOid || !restoreMessage.trim()} onclick={restoreCommit}><IconRestore size={15} /> {t("versions-restore-new-commit")}</button>
+              <button class="ui-button compact" type="button" disabled={!!busyAction} onclick={cancelRestore}>{t("versions-abandon")}</button>
+              <button type="button" class="ui-button danger compact" disabled={!!busyAction || restoreConfirmation.trim() !== restoreEntry.shortOid || !restoreMessage.trim()} onclick={restoreCommit}><IconRestore size={15} /> {t("versions-restore-new-commit")}</button>
             </div>
           </section>
         {/if}
       {/if}
     {/if}
 
-    {#if error}<p class="error-message" role="alert">{error}</p>{/if}
+    {#if error}<div class="error-message"><InlineMessage message={error} tone="error" /></div>{/if}
 </section>
 
 <style>
   .versions-panel { position: relative; width: 100%; }
   .versions-panel .panel-header { position: sticky; top: 0; z-index: 3; }
-  .panel-header, .header-summary, .repository-state, .section-heading, .file-row, .file-main, .commit-row, .guard-message, summary, .primary-button, .load-more, .empty-row { display: flex; align-items: center; }
+  .panel-header, .header-summary, .repository-state, .section-heading, .file-row, .file-main, .commit-row, .guard-message, summary, .load-more { display: flex; align-items: center; }
   .panel-header, .section-heading { justify-content: space-between; gap: 10px; }
   .title-block { min-width: 0; }
   .panel-header h1, .eyebrow, .section-label, p { margin: 0; }
@@ -697,13 +689,7 @@
   .header-metrics dt { color: var(--wb-text-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; }
   .header-metrics dd { overflow: hidden; max-width: 104px; margin: 3px 0 0; color: var(--text-strong); font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
   .header-metrics dd.warning { color: var(--warning-strong, #a66a00); }
-  button, input, textarea, select { font: inherit; }
-  button { cursor: pointer; }
-  button:disabled { cursor: default; opacity: .45; }
-  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--wb-focus-ring, var(--wb-accent)); outline-offset: 1px; }
-  .mini-button { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--wb-border-subtle); border-radius: var(--wb-radius-control, 5px); background: var(--wb-surface-chrome); color: var(--wb-text-muted); }
-  .refresh-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 11px; border: 1px solid var(--wb-border-subtle, var(--border)); border-radius: var(--wb-radius-control, 4px); color: var(--wb-text-primary, var(--text)); background: var(--wb-surface-document, var(--surface)); font-size: 12px; font-weight: 600; }
-  .mini-button { flex: 0 0 27px; width: 27px; height: 27px; }
+  summary:focus-visible { outline: 2px solid var(--wb-focus-ring, var(--wb-accent)); outline-offset: 1px; }
   .repository-card, .setup-card, .identity-card, .remote-card, .sync-card, .branches-card, .changes-section, .commit-card, .diff-card, .history-section, .preview-banner, .network-progress, .restore-card, .recovery-section { margin: 10px 20px 0; border: 1px solid var(--wb-border-subtle, var(--border-3)); border-radius: 7px; background: var(--wb-surface-document, var(--surface-2)); }
   .repository-card { display: grid; gap: 8px; padding: 9px 11px; background: var(--wb-surface-chrome, var(--surface-2)); }
   .repository-card.problem { border-color: color-mix(in srgb, var(--danger, #d64545) 50%, var(--border)); }
@@ -720,26 +706,18 @@
   .guard-message { gap: 6px; color: var(--warning-strong, #a66a00); }
   .preview-banner, .preview-banner > div { display: flex; align-items: center; gap: 7px; }
   .preview-banner { justify-content: space-between; padding: 8px 9px; border-color: color-mix(in srgb, var(--wb-accent) 45%, var(--wb-border-subtle)); background: var(--wb-accent-soft); font-size: 12px; }
-  .preview-banner button { min-height: 27px; padding: 4px 7px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; background: var(--wb-surface-document); color: var(--wb-text-primary); font-size: 12px; }
   .setup-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 18px; }
   .setup-icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 8px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); }
   .setup-card strong { color: var(--text-strong); font-size: 13px; }
   .setup-card p { margin-top: 4px; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
-  .setup-card button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--wb-accent); border-radius: var(--wb-radius-control, 5px); color: #fff; background: var(--wb-accent); font-size: 12px; font-weight: 650; }
   .identity-card { padding: 10px; }
   summary { gap: 7px; color: var(--text-strong); cursor: pointer; font-size: 12px; font-weight: 700; }
   .identity-fields, .commit-card { display: grid; gap: 8px; }
   .identity-fields { grid-template-columns: 1fr 1fr; margin-top: 9px; }
-  .identity-fields label, .commit-card label { display: grid; gap: 4px; color: var(--text-muted); font-size: 12px; }
   .identity-fields button { grid-column: 1 / -1; }
-  input, textarea, select { width: 100%; border: 1px solid var(--wb-border-subtle); border-radius: var(--wb-radius-control, 5px); background: var(--wb-surface-document); color: var(--wb-text-primary); outline: none; }
-  input { min-height: 31px; padding: 5px 7px; }
-  textarea { padding: 7px; resize: vertical; }
-  input:focus, textarea:focus, select:focus { border-color: var(--wb-accent); }
   .changes-section, .history-section, .diff-card { display: grid; gap: 7px; padding: 10px; }
   .section-heading > div { display: grid; gap: 1px; min-width: 0; }
   .section-heading span { color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .section-heading > button:not(.mini-button), .identity-fields button { min-height: 28px; padding: 4px 8px; border: 1px solid var(--wb-border-subtle); border-radius: var(--wb-radius-control, 5px); background: var(--wb-surface-chrome); color: var(--wb-text-primary); font-size: 12px; }
   .file-list, .commit-list { display: grid; gap: 4px; }
   .file-row { gap: 5px; min-width: 0; }
   .file-row.conflict .file-main { border-color: var(--danger, #d64545); }
@@ -748,11 +726,7 @@
   .file-main b { width: 13px; color: var(--text-muted); font-size: 12px; }
   .file-main span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   .commit-card { padding: 10px; }
-  .primary-button { justify-content: center; gap: 7px; min-height: 34px; border: 1px solid var(--wb-accent); border-radius: var(--wb-radius-control, 5px); background: var(--wb-accent); color: #fff; }
-  .empty-row, .empty-text { color: var(--text-muted); font-size: 12px; }
-  .empty-row { justify-content: center; gap: 5px; padding: 9px; }
-  .empty-text { margin: 18px 20px 0; padding: 28px 12px; text-align: center; }
-  .diff-card pre { max-height: 330px; margin: 0; padding: 9px; overflow: auto; border-radius: 7px; background: #151917; color: #d8e2db; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  .diff-card pre { max-height: 330px; margin: 0; padding: 9px; overflow: auto; border-radius: 7px; background: #151917; color: #d8e2db; font: 12px/1.5 var(--font-mono); white-space: pre; }
   .commit-row { gap: 6px; width: 100%; min-width: 0; padding: 4px 5px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--wb-text-primary); text-align: left; }
   .commit-row:hover { background: var(--wb-control-hover); }
   .commit-row.active-preview { border-color: var(--wb-accent); background: var(--wb-accent-soft); }
@@ -772,8 +746,6 @@
   .restore-heading strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .restore-heading code { color: var(--warning-strong, #a66a00); font-size: 12px; }
   .restore-actions { justify-content: flex-end; }
-  .restore-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 31px; padding: 5px 9px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; background: var(--wb-surface-chrome); color: var(--wb-text-primary); font-size: 12px; }
-  .restore-actions .danger-button { border-color: color-mix(in srgb, var(--warning, #d29a3a) 65%, var(--wb-border-subtle)); background: color-mix(in srgb, var(--warning, #d29a3a) 12%, var(--wb-surface-chrome)); }
   .recovery-section { display: grid; gap: 8px; padding: 10px; border-color: color-mix(in srgb, var(--warning, #d29a3a) 60%, var(--wb-border-subtle)); }
   .recovery-title, .recovery-meta, .recovery-actions { display: flex; align-items: center; gap: 7px; }
   .recovery-title > div { display: grid; gap: 1px; }
@@ -785,12 +757,11 @@
   .recovery-meta code { color: var(--warning-strong, #a66a00); font-size: 12px; }
   .recovery-meta span { text-transform: uppercase; }
   .recovery-actions { flex-wrap: wrap; justify-content: flex-end; }
-  .recovery-actions button { min-height: 28px; padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--warning, #d29a3a) 50%, var(--wb-border-subtle)); border-radius: 5px; background: color-mix(in srgb, var(--warning, #d29a3a) 9%, var(--wb-surface-chrome)); color: var(--wb-text-primary); font-size: 12px; }
   .network-progress { display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 9px; border-color: color-mix(in srgb, var(--wb-accent) 45%, var(--wb-border-subtle)); background: var(--wb-accent-soft); }
   .network-progress > div { display: grid; min-width: 0; gap: 2px; }
   .network-progress strong { font-size: 12px; }
   .network-progress small { max-height: 44px; overflow: hidden; color: var(--text-muted); font-size: 12px; white-space: pre-line; }
-  .network-progress button { flex: 0 0 auto; min-height: 28px; padding: 4px 8px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; background: var(--wb-surface-document); color: var(--wb-text-primary); font-size: 12px; }
+  .network-progress button { flex: 0 0 auto; }
   .integration-recovery { border-color: color-mix(in srgb, var(--wb-accent) 45%, var(--wb-border-subtle)); }
   .conflict-list { display: grid; gap: 3px; max-height: 120px; margin: 0; padding: 0 0 0 18px; overflow: auto; color: var(--danger, #d64545); font-size: 12px; }
   .remote-card, .branches-card { padding: 9px; }
@@ -804,17 +775,13 @@
   .remote-main strong { font-size: 12px; }
   .remote-main small { overflow: hidden; color: var(--text-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .remote-form { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 9px; }
-  .remote-form label, .sync-selectors label, .integration-plan label, .destructive-confirmation label { display: grid; gap: 4px; color: var(--text-muted); font-size: 12px; }
   .span-2 { grid-column: 1 / -1; }
-  .remote-form button, .branch-create button, .wide-button, .button-grid button, .destructive-confirmation button, .branch-row > button:not(.mini-button) { min-height: 29px; padding: 4px 8px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; background: var(--wb-surface-chrome); color: var(--wb-text-primary); font-size: 12px; }
   .destructive-confirmation { display: grid; gap: 7px; margin-top: 9px; padding: 8px; border: 1px solid color-mix(in srgb, var(--danger, #d64545) 50%, var(--wb-border-subtle)); border-radius: 6px; background: var(--wb-surface-chrome); }
   .destructive-confirmation p { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
   .destructive-confirmation > div { display: flex; justify-content: flex-end; gap: 6px; }
-  .destructive-confirmation .danger-button { border-color: color-mix(in srgb, var(--danger, #d64545) 60%, var(--border)); }
   .sync-card { display: grid; gap: 8px; padding: 9px; }
   .sync-badge { padding: 3px 6px; border-radius: 999px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); font-size: 11px; font-weight: 650; text-transform: uppercase; }
   .sync-selectors { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-  select { min-height: 31px; padding: 5px 7px; }
   .sync-counters { display: grid; grid-template-columns: auto auto 1fr; gap: 6px; }
   .sync-counters span { min-width: 0; padding: 6px 7px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; background: var(--wb-surface-chrome); color: var(--wb-text-muted); font-size: 11px; }
   .sync-counters b { display: block; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
@@ -856,6 +823,6 @@
     .setup-card button { grid-column: 1 / -1; }
     .sync-selectors, .identity-fields, .remote-form { grid-template-columns: 1fr; }
     .span-2 { grid-column: auto; }
-    .error-message, .empty-text { margin-right: 10px; margin-left: 10px; }
+    .error-message { margin-right: 10px; margin-left: 10px; }
   }
 </style>

@@ -11,6 +11,8 @@
     IconTimeline,
     IconTrash,
   } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
   import {
@@ -592,7 +594,7 @@
       <strong>{t("motion-interactions")}</strong>
       <span>{t("motion-flow-summary")}</span>
     </div>
-    <button class="primary-icon" type="button" title={t("motion-add-interaction")} onclick={() => { creating = !creating; }}>
+    <button class="primary-icon ui-icon-button compact" type="button" title={t("motion-add-interaction")} aria-label={t("motion-add-interaction")} onclick={() => { creating = !creating; }}>
       <IconPlus size={15} stroke={2.2} />
     </button>
   </header>
@@ -603,17 +605,17 @@
 
   {#if creating}
     <div class="create-card">
-      <label>
-        <span>{t("motion-when")}</span>
-        <select bind:value={createTrigger}>
-          <option value="load">{t("motion-trigger-load")}</option>
-          <option value="inView">{t("motion-trigger-in-view")}</option>
-          <option value="click">{t("motion-trigger-click")}</option>
-          <option value="hover">{t("motion-trigger-hover")}</option>
-          <option value="scroll">{t("motion-trigger-scroll-scrub")}</option>
-          <option value="pointer">{t("motion-trigger-pointer")}</option>
-        </select>
-      </label>
+      <div class="ui-form-field">
+        <span class="ui-form-label">{t("motion-when")}</span>
+        <SelectControl value={createTrigger} options={[
+          { value: "load", label: t("motion-trigger-load") },
+          { value: "inView", label: t("motion-trigger-in-view") },
+          { value: "click", label: t("motion-trigger-click") },
+          { value: "hover", label: t("motion-trigger-hover") },
+          { value: "scroll", label: t("motion-trigger-scroll-scrub") },
+          { value: "pointer", label: t("motion-trigger-pointer") },
+        ]} ariaLabel={t("motion-when")} onchange={(value) => { createTrigger = value as MotionTrigger["type"]; }} />
+      </div>
       <div class="preset-grid" aria-label={t("motion-preset-label")}>
         {#each [
           ["fade", t("motion-preset-fade")],
@@ -709,12 +711,12 @@
           title={selected.enabled ? t("motion-disable") : t("motion-enable")}
           onclick={() => { void patchInteraction(selected, { enabled: !selected.enabled }); }}
         ></button>
-        <input
+        <input class="ui-input compact"
           aria-label={t("motion-interaction-name")}
           value={selected.name}
           onchange={(event) => { void patchInteraction(selected, { name: event.currentTarget.value }); }}
         />
-        <button type="button" title={t("motion-delete-interaction")} onclick={() => {
+        <button class="ui-icon-button mini danger" type="button" title={t("motion-delete-interaction")} aria-label={t("motion-delete-interaction")} onclick={() => {
           void workspace.mutate({ command: "deleteInteraction", interactionId: selected.id });
         }}>
           <IconTrash size={14} stroke={1.9} />
@@ -724,151 +726,137 @@
       <div class="flow-card">
         <div class="flow-step">
           <span class="step-index">1</span>
-          <label>
+          <label class="ui-form-field">
             <small>{t("motion-trigger")}</small>
-            <select
+            <SelectControl
               value={selected.trigger.type}
-              onchange={(event) => {
-                void changeTrigger(selected, event.currentTarget.value as MotionTrigger["type"]);
+              options={[
+                { value: "load", label: t("motion-trigger-load") },
+                { value: "inView", label: t("motion-trigger-in-view") },
+                { value: "click", label: t("motion-trigger-click") },
+                { value: "hover", label: t("motion-trigger-hover") },
+                { value: "scroll", label: t("motion-trigger-scroll") },
+                { value: "pointer", label: t("motion-trigger-pointer") },
+                { value: "custom", label: t("motion-trigger-custom") },
+              ]}
+              ariaLabel={t("motion-trigger")}
+              onchange={(value) => {
+                void changeTrigger(selected, value as MotionTrigger["type"]);
               }}
-            >
-              <option value="load">{t("motion-trigger-load")}</option>
-              <option value="inView">{t("motion-trigger-in-view")}</option>
-              <option value="click">{t("motion-trigger-click")}</option>
-              <option value="hover">{t("motion-trigger-hover")}</option>
-              <option value="scroll">{t("motion-trigger-scroll")}</option>
-              <option value="pointer">{t("motion-trigger-pointer")}</option>
-              <option value="custom">{t("motion-trigger-custom")}</option>
-            </select>
+            />
           </label>
         </div>
 
         {#if selected.trigger.type === "load"}
           <div class="sub-grid">
-            <label><span>{t("motion-moment")}</span><select value={selected.trigger.phase} onchange={(event) => {
+            <div class="ui-form-field"><span class="ui-form-label">{t("motion-moment")}</span><SelectControl value={selected.trigger.phase} options={[{ value: "domReady", label: t("motion-dom-ready") }, { value: "windowLoad", label: t("motion-window-loaded") }]} ariaLabel={t("motion-moment")} onchange={(value) => {
               if (selected.trigger.type === "load") void updateTrigger(selected, {
                 ...selected.trigger,
-                phase: event.currentTarget.value as "domReady" | "windowLoad",
+                phase: value as "domReady" | "windowLoad",
               });
-            }}><option value="domReady">{t("motion-dom-ready")}</option><option value="windowLoad">{t("motion-window-loaded")}</option></select></label>
+            }} /></div>
           </div>
         {:else if selected.trigger.type === "inView"}
           <div class="sub-grid">
-            <label><span>{t("motion-threshold")}</span><input type="number" min="0" max="1" step="0.05" value={selected.trigger.threshold} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-threshold")}</span><input class="ui-input compact" type="number" min="0" max="1" step="0.05" value={selected.trigger.threshold} onchange={(event) => {
               if (selected.trigger.type === "inView") void updateTrigger(selected, {
                 ...selected.trigger,
                 threshold: Number(event.currentTarget.value),
               });
             }} /></label>
-            <label class="check"><input type="checkbox" checked={selected.trigger.once} onchange={(event) => {
+            <CheckboxControl compact label={t("motion-once")} checked={selected.trigger.once} onchange={(checked) => {
               if (selected.trigger.type === "inView") void updateTrigger(selected, {
                 ...selected.trigger,
-                once: event.currentTarget.checked,
+                once: checked,
               });
-            }} /> {t("motion-once")}</label>
+            }} />
           </div>
         {:else if selected.trigger.type === "click"}
           <div class="sub-grid">
-            <label><span>{t("motion-first-click")}</span><select value={selected.trigger.firstClick} onchange={(event) => {
+            <div class="ui-form-field"><span class="ui-form-label">{t("motion-first-click")}</span><SelectControl value={selected.trigger.firstClick} options={["restart", "play", "pause", "reverse", "toggle", "reset", "none"]} ariaLabel={t("motion-first-click")} onchange={(value) => {
               if (selected.trigger.type === "click") void updateTrigger(selected, {
                 ...selected.trigger,
-                firstClick: event.currentTarget.value as MotionTriggerCommand,
+                firstClick: value as MotionTriggerCommand,
               });
-            }}>
-              {#each ["restart", "play", "pause", "reverse", "toggle", "reset", "none"] as command}
-                <option value={command}>{command}</option>
-              {/each}
-            </select></label>
-            <label><span>{t("motion-second-click")}</span><select value={selected.trigger.secondClick} onchange={(event) => {
+            }} /></div>
+            <div class="ui-form-field"><span class="ui-form-label">{t("motion-second-click")}</span><SelectControl value={selected.trigger.secondClick} options={["restart", "play", "pause", "reverse", "toggle", "reset", "none"]} ariaLabel={t("motion-second-click")} onchange={(value) => {
               if (selected.trigger.type === "click") void updateTrigger(selected, {
                 ...selected.trigger,
-                secondClick: event.currentTarget.value as MotionTriggerCommand,
+                secondClick: value as MotionTriggerCommand,
               });
-            }}>
-              {#each ["restart", "play", "pause", "reverse", "toggle", "reset", "none"] as command}
-                <option value={command}>{command}</option>
-              {/each}
-            </select></label>
-            <label class="check"><input type="checkbox" checked={selected.trigger.preventDefault} onchange={(event) => {
+            }} /></div>
+            <CheckboxControl compact label={t("motion-prevent-default")} checked={selected.trigger.preventDefault} onchange={(checked) => {
               if (selected.trigger.type === "click") void updateTrigger(selected, {
                 ...selected.trigger,
-                preventDefault: event.currentTarget.checked,
+                preventDefault: checked,
               });
-            }} /> {t("motion-prevent-default")}</label>
+            }} />
           </div>
         {:else if selected.trigger.type === "hover"}
           <div class="sub-grid">
-            <label><span>{t("motion-enter")}</span><select value={selected.trigger.enter} onchange={(event) => {
+            <div class="ui-form-field"><span class="ui-form-label">{t("motion-enter")}</span><SelectControl value={selected.trigger.enter} options={["restart", "play", "pause", "reverse", "toggle", "reset", "none"]} ariaLabel={t("motion-enter")} onchange={(value) => {
               if (selected.trigger.type === "hover") void updateTrigger(selected, {
                 ...selected.trigger,
-                enter: event.currentTarget.value as MotionTriggerCommand,
+                enter: value as MotionTriggerCommand,
               });
-            }}>
-              {#each ["restart", "play", "pause", "reverse", "toggle", "reset", "none"] as command}
-                <option value={command}>{command}</option>
-              {/each}
-            </select></label>
-            <label><span>{t("motion-leave")}</span><select value={selected.trigger.leave} onchange={(event) => {
+            }} /></div>
+            <div class="ui-form-field"><span class="ui-form-label">{t("motion-leave")}</span><SelectControl value={selected.trigger.leave} options={["restart", "play", "pause", "reverse", "toggle", "reset", "none"]} ariaLabel={t("motion-leave")} onchange={(value) => {
               if (selected.trigger.type === "hover") void updateTrigger(selected, {
                 ...selected.trigger,
-                leave: event.currentTarget.value as MotionTriggerCommand,
+                leave: value as MotionTriggerCommand,
               });
-            }}>
-              {#each ["restart", "play", "pause", "reverse", "toggle", "reset", "none"] as command}
-                <option value={command}>{command}</option>
-              {/each}
-            </select></label>
+            }} /></div>
           </div>
         {:else if selected.trigger.type === "scroll"}
           <div class="sub-grid">
-            <label><span>{t("motion-mode")}</span><select value={selected.trigger.mode} onchange={(event) => {
+            <div class="ui-form-field"><span class="ui-form-label">{t("motion-mode")}</span><SelectControl value={selected.trigger.mode} options={[{ value: "scrub", label: t("motion-progress") }, { value: "trigger", label: t("motion-start-scroll") }]} ariaLabel={t("motion-mode")} onchange={(value) => {
               if (selected.trigger.type === "scroll") void updateTrigger(selected, {
                 ...selected.trigger,
-                mode: event.currentTarget.value as "trigger" | "scrub",
+                mode: value as "trigger" | "scrub",
               });
-            }}><option value="scrub">{t("motion-progress")}</option><option value="trigger">{t("motion-start-scroll")}</option></select></label>
-            <label><span>{t("motion-smoothing-ms")}</span><input type="number" min="0" value={selected.trigger.smoothMs} onchange={(event) => {
+            }} /></div>
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-smoothing-ms")}</span><input class="ui-input compact" type="number" min="0" value={selected.trigger.smoothMs} onchange={(event) => {
               if (selected.trigger.type === "scroll") void updateTrigger(selected, {
                 ...selected.trigger,
                 smoothMs: Number(event.currentTarget.value),
               });
             }} /></label>
-            <label><span>{t("motion-anime-start")}</span><input value={selected.trigger.start} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-anime-start")}</span><input class="ui-input compact" value={selected.trigger.start} onchange={(event) => {
               if (selected.trigger.type === "scroll") void updateTrigger(selected, {
                 ...selected.trigger,
                 start: event.currentTarget.value,
               });
             }} /></label>
-            <label><span>{t("motion-anime-end")}</span><input value={selected.trigger.end} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-anime-end")}</span><input class="ui-input compact" value={selected.trigger.end} onchange={(event) => {
               if (selected.trigger.type === "scroll") void updateTrigger(selected, {
                 ...selected.trigger,
                 end: event.currentTarget.value,
               });
             }} /></label>
             {#if selected.trigger.mode === "trigger"}
-              <label class="check"><input type="checkbox" checked={selected.trigger.once} onchange={(event) => {
+              <CheckboxControl compact label={t("motion-once")} checked={selected.trigger.once} onchange={(checked) => {
                 if (selected.trigger.type === "scroll") void updateTrigger(selected, {
                   ...selected.trigger,
-                  once: event.currentTarget.checked,
+                  once: checked,
                 });
-              }} /> {t("motion-once")}</label>
+              }} />
             {/if}
           </div>
         {:else if selected.trigger.type === "pointer"}
           <div class="sub-grid">
-            <label><span>{t("motion-axis")}</span><select value={selected.trigger.axis} onchange={(event) => {
+            <div class="ui-form-field"><span class="ui-form-label">{t("motion-axis")}</span><SelectControl value={selected.trigger.axis} options={["x", "y", { value: "both", label: "X + Y" }]} ariaLabel={t("motion-axis")} onchange={(value) => {
               if (selected.trigger.type === "pointer") void updateTrigger(selected, {
                 ...selected.trigger,
-                axis: event.currentTarget.value as "x" | "y" | "both",
+                axis: value as "x" | "y" | "both",
               });
-            }}><option value="x">X</option><option value="y">Y</option><option value="both">X + Y</option></select></label>
-            <label><span>{t("motion-smoothing-ms")}</span><input type="number" min="0" value={selected.trigger.smoothMs} onchange={(event) => {
+            }} /></div>
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-smoothing-ms")}</span><input class="ui-input compact" type="number" min="0" value={selected.trigger.smoothMs} onchange={(event) => {
               if (selected.trigger.type === "pointer") void updateTrigger(selected, {
                 ...selected.trigger,
                 smoothMs: Number(event.currentTarget.value),
               });
             }} /></label>
-            <label><span>{t("motion-rest")}</span><input type="number" min="0" max="1" step="0.05" value={selected.trigger.rest} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-rest")}</span><input class="ui-input compact" type="number" min="0" max="1" step="0.05" value={selected.trigger.rest} onchange={(event) => {
               if (selected.trigger.type === "pointer") void updateTrigger(selected, {
                 ...selected.trigger,
                 rest: Number(event.currentTarget.value),
@@ -877,18 +865,18 @@
           </div>
         {:else if selected.trigger.type === "custom"}
           <div class="sub-grid">
-            <label><span>{t("motion-dom-event")}</span><input value={selected.trigger.event} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-dom-event")}</span><input class="ui-input compact" value={selected.trigger.event} onchange={(event) => {
               if (selected.trigger.type === "custom") void updateTrigger(selected, {
                 ...selected.trigger,
                 event: event.currentTarget.value,
               });
             }} /></label>
-            <label class="check"><input type="checkbox" checked={selected.trigger.preventDefault} onchange={(event) => {
+            <CheckboxControl compact label={t("motion-prevent-default")} checked={selected.trigger.preventDefault} onchange={(checked) => {
               if (selected.trigger.type === "custom") void updateTrigger(selected, {
                 ...selected.trigger,
-                preventDefault: event.currentTarget.checked,
+                preventDefault: checked,
               });
-            }} /> {t("motion-prevent-default")}</label>
+            }} />
           </div>
         {/if}
 
@@ -897,18 +885,18 @@
           <span class="step-index">2</span>
           <div class="trigger-target-editor">
             <small>{t("motion-trigger-target")}</small>
-            <select value={selected.triggerTarget.kind} onchange={(event) => {
+            <SelectControl value={selected.triggerTarget.kind} options={[
+              { value: "element", label: t("motion-target-selected") },
+              { value: "selector", label: t("motion-target-selector") },
+              { value: "document", label: t("motion-target-document") },
+              { value: "viewport", label: t("motion-target-viewport") },
+            ]} ariaLabel={t("motion-trigger-target")} onchange={(value) => {
               void patchInteraction(selected, {
-                triggerTarget: actionTargetFor(event.currentTarget.value as MotionTargetKind),
+                triggerTarget: actionTargetFor(value as MotionTargetKind),
               });
-            }}>
-              <option value="element">{t("motion-target-selected")}</option>
-              <option value="selector">{t("motion-target-selector")}</option>
-              <option value="document">{t("motion-target-document")}</option>
-              <option value="viewport">{t("motion-target-viewport")}</option>
-            </select>
+            }} />
             {#if selected.triggerTarget.kind === "selector"}
-              <input value={selected.triggerTarget.selector} placeholder=".selector" onchange={(event) => {
+              <input class="ui-input compact" value={selected.triggerTarget.selector} placeholder=".selector" onchange={(event) => {
                 void patchInteraction(selected, {
                   triggerTarget: { ...selected.triggerTarget, selector: event.currentTarget.value },
                 });
@@ -926,13 +914,15 @@
           <span>{selected.domain === "progress" ? t("motion-progress") : t("motion-domain-time")}</span>
         </div>
         <div class="add-action-control">
-          <select bind:value={newActionType} aria-label={t("motion-new-action-type")}>
-            <option value="animate">{t("motion-action-animate")}</option>
-            <option value="set">{t("motion-action-set")}</option>
-            <option value="media" disabled={selected.domain === "progress"}>{t("motion-action-media-advanced")}</option>
-            <option value="call" disabled={selected.domain === "progress"}>{t("motion-action-call-advanced")}</option>
-            <option value="nested">{t("motion-action-nested")}</option>
-          </select>
+          <SelectControl size="toolbar" value={newActionType} options={[
+            { value: "animate", label: t("motion-action-animate") },
+            { value: "set", label: t("motion-action-set") },
+            ...(selected.domain === "progress" ? [] : [
+              { value: "media", label: t("motion-action-media-advanced") },
+              { value: "call", label: t("motion-action-call-advanced") },
+            ]),
+            { value: "nested", label: t("motion-action-nested") },
+          ]} ariaLabel={t("motion-new-action-type")} onchange={(value) => { newActionType = value as MotionAction["type"]; }} />
           <button type="button" onclick={() => { void addAction(selected); }}><IconPlus size={14} /> {t("motion-add")}</button>
         </div>
       </div>
@@ -954,28 +944,30 @@
             </summary>
             <div class="action-editor">
               <div class="field-grid">
-                <label><span>{t("motion-action-name")}</span><input value={action.name} onchange={(event) => {
+                <label class="ui-form-field"><span class="ui-form-label">{t("motion-action-name")}</span><input class="ui-input compact" value={action.name} onchange={(event) => {
                   void updateAction(selected.id, { ...structuredClone(action), name: event.currentTarget.value });
                 }} /></label>
-                <label><span>{t("motion-action-target")}</span><select
+                <div class="ui-form-field"><span class="ui-form-label">{t("motion-action-target")}</span><SelectControl
                   value={"target" in action ? action.target.kind : "trigger"}
                   disabled={!("target" in action)}
-                  onchange={(event) => {
+                  options={[
+                    { value: "trigger", label: t("motion-target-trigger") },
+                    { value: "element", label: t("motion-target-selected") },
+                    { value: "relative", label: t("motion-target-relative") },
+                    { value: "selector", label: t("motion-target-selector") },
+                    { value: "viewport", label: t("motion-target-viewport") },
+                    { value: "document", label: t("motion-target-document") },
+                  ]}
+                  ariaLabel={t("motion-action-target")}
+                  onchange={(value) => {
                     if (!("target" in action)) return;
                     void updateAction(selected.id, {
                       ...structuredClone(action),
-                      target: actionTargetFor(event.currentTarget.value as MotionTargetKind),
+                      target: actionTargetFor(value as MotionTargetKind),
                     });
                   }}
-                >
-                  <option value="trigger">{t("motion-target-trigger")}</option>
-                  <option value="element">{t("motion-target-selected")}</option>
-                  <option value="relative">{t("motion-target-relative")}</option>
-                  <option value="selector">{t("motion-target-selector")}</option>
-                  <option value="viewport">{t("motion-target-viewport")}</option>
-                  <option value="document">{t("motion-target-document")}</option>
-                </select></label>
-                <label><span>{t("motion-start")} {selected.domain === "progress" ? "%" : "ms"}</span><input type="number" min="0" value={action.start} onchange={(event) => {
+                /></div>
+                <label class="ui-form-field"><span class="ui-form-label">{t("motion-start")} {selected.domain === "progress" ? "%" : "ms"}</span><input class="ui-input compact" type="number" min="0" value={action.start} onchange={(event) => {
                   void workspace.mutate({
                     command: "setActionTiming",
                     interactionId: selected.id,
@@ -984,7 +976,7 @@
                   });
                 }} /></label>
                 {#if action.type === "animate" || action.type === "nested"}
-                  <label><span>{t("motion-duration", { unit: selected.domain === "progress" ? "%" : "ms" })}</span><input type="number" min="1" value={action.duration} onchange={(event) => {
+                  <label class="ui-form-field"><span class="ui-form-label">{t("motion-duration", { unit: selected.domain === "progress" ? "%" : "ms" })}</span><input class="ui-input compact" type="number" min="1" value={action.duration} onchange={(event) => {
                     void workspace.mutate({
                       command: "setActionTiming",
                       interactionId: selected.id,
@@ -997,42 +989,42 @@
 
               {#if "target" in action && (action.target.kind === "selector" || action.target.kind === "relative")}
                 <div class="field-grid">
-                  <label><span>{t("motion-target-selector")}</span><input value={action.target.selector} placeholder=".element" onchange={(event) => {
+                  <label class="ui-form-field"><span class="ui-form-label">{t("motion-target-selector")}</span><input class="ui-input compact" value={action.target.selector} placeholder=".element" onchange={(event) => {
                     if ("target" in action) void patchActionTarget(selected, action, {
                       selector: event.currentTarget.value,
                     });
                   }} /></label>
                   {#if action.target.kind === "relative"}
-                    <label><span>{t("motion-target-relation")}</span><select value={action.target.relation} onchange={(event) => {
+                    <div class="ui-form-field"><span class="ui-form-label">{t("motion-target-relation")}</span><SelectControl value={action.target.relation} options={[
+                      { value: "children", label: t("motion-relation-children") },
+                      { value: "descendants", label: t("motion-relation-descendants") },
+                      { value: "parent", label: t("motion-relation-parent") },
+                      { value: "ancestors", label: t("motion-relation-ancestors") },
+                      { value: "siblings", label: t("motion-relation-siblings") },
+                      { value: "nextSibling", label: t("motion-relation-next") },
+                      { value: "previousSibling", label: t("motion-relation-previous") },
+                    ]} ariaLabel={t("motion-target-relation")} onchange={(value) => {
                       if ("target" in action) void patchActionTarget(selected, action, {
-                        relation: event.currentTarget.value as typeof action.target.relation,
+                        relation: value as typeof action.target.relation,
                       });
-                    }}>
-                      <option value="children">{t("motion-relation-children")}</option>
-                      <option value="descendants">{t("motion-relation-descendants")}</option>
-                      <option value="parent">{t("motion-relation-parent")}</option>
-                      <option value="ancestors">{t("motion-relation-ancestors")}</option>
-                      <option value="siblings">{t("motion-relation-siblings")}</option>
-                      <option value="nextSibling">{t("motion-relation-next")}</option>
-                      <option value="previousSibling">{t("motion-relation-previous")}</option>
-                    </select></label>
+                    }} /></div>
                   {/if}
-                  <label><span>{t("motion-application")}</span><select value={action.target.scope} onchange={(event) => {
+                  <div class="ui-form-field"><span class="ui-form-label">{t("motion-application")}</span><SelectControl value={action.target.scope} options={[{ value: "all", label: t("motion-all") }, { value: "first", label: t("motion-first") }, { value: "each", label: t("motion-each") }]} ariaLabel={t("motion-application")} onchange={(value) => {
                     if ("target" in action) void patchActionTarget(selected, action, {
-                      scope: event.currentTarget.value as typeof action.target.scope,
+                      scope: value as typeof action.target.scope,
                     });
-                  }}><option value="all">{t("motion-all")}</option><option value="first">{t("motion-first")}</option><option value="each">{t("motion-each")}</option></select></label>
+                  }} /></div>
                 </div>
               {/if}
 
               {#if action.type === "animate"}
                 <div class="field-grid">
-                  <label><span>{t("motion-animation-model")}</span><select value={action.mode} onchange={(event) => {
+                  <div class="ui-form-field"><span class="ui-form-label">{t("motion-animation-model")}</span><SelectControl value={action.mode} options={[{ value: "fromTo", label: t("motion-model-from-to") }, { value: "to", label: t("motion-model-to") }, { value: "from", label: t("motion-model-from") }]} ariaLabel={t("motion-animation-model")} onchange={(value) => {
                     void patchAnimate(selected, action, {
-                      mode: event.currentTarget.value as MotionAnimateAction["mode"],
+                      mode: value as MotionAnimateAction["mode"],
                     });
-                  }}><option value="fromTo">{t("motion-model-from-to")}</option><option value="to">{t("motion-model-to")}</option><option value="from">{t("motion-model-from")}</option></select></label>
-                  <label><span>{t("motion-easing")} Anime.js</span><input value={action.ease} onchange={(event) => {
+                  }} /></div>
+                  <label class="ui-form-field"><span class="ui-form-label">{t("motion-easing")} Anime.js</span><input class="ui-input compact" value={action.ease} onchange={(event) => {
                     void patchAnimate(selected, action, { ease: event.currentTarget.value });
                   }} /></label>
                 </div>
@@ -1040,37 +1032,26 @@
                 <div class="property-list">
                   {#each action.properties as property (property.id)}
                     <div class="property-row">
-                      <select value={property.name} onchange={(event) => {
-                        const name = event.currentTarget.value;
+                      <SelectControl value={property.name} options={["opacity", "translateX", "translateY", "scale", "rotate", "color", "backgroundColor", "width", "height"]} ariaLabel={t("motion-add-property")} onchange={(name) => {
                         const category = ["opacity", "color", "backgroundColor"].includes(name)
                           ? "style"
                           : "transform";
                         void updateProperty(selected, action, { ...property, name, category });
-                      }}>
-                        <option value="opacity">opacity</option>
-                        <option value="translateX">translateX</option>
-                        <option value="translateY">translateY</option>
-                        <option value="scale">scale</option>
-                        <option value="rotate">rotate</option>
-                        <option value="color">color</option>
-                        <option value="backgroundColor">backgroundColor</option>
-                        <option value="width">width</option>
-                        <option value="height">height</option>
-                      </select>
-                      <input aria-label={t("motion-initial-value")} value={property.from?.value ?? ""} placeholder={t("motion-from-placeholder")} onchange={(event) => {
+                      }} />
+                      <input class="ui-input compact" aria-label={t("motion-initial-value")} value={property.from?.value ?? ""} placeholder={t("motion-from-placeholder")} onchange={(event) => {
                         void updateProperty(selected, action, {
                           ...property,
                           from: { ...(property.from ?? motionValue("")), value: event.currentTarget.value },
                         });
                       }} />
                       <IconArrowRight class="value-arrow" size={13} stroke={1.8} aria-hidden="true" />
-                      <input aria-label={t("motion-final-value")} value={property.to.value} placeholder={t("motion-to-placeholder")} onchange={(event) => {
+                      <input class="ui-input compact" aria-label={t("motion-final-value")} value={property.to.value} placeholder={t("motion-to-placeholder")} onchange={(event) => {
                         void updateProperty(selected, action, {
                           ...property,
                           to: { ...property.to, value: event.currentTarget.value },
                         });
                       }} />
-                      <input class="unit" aria-label={t("motion-unit")} value={property.to.unit} placeholder={t("motion-unit-short")} onchange={(event) => {
+                      <input class="ui-input compact unit" aria-label={t("motion-unit")} value={property.to.unit} placeholder={t("motion-unit-short")} onchange={(event) => {
                         const unit = event.currentTarget.value;
                         void updateProperty(selected, action, {
                           ...property,
@@ -1078,7 +1059,7 @@
                           to: { ...property.to, unit },
                         });
                       }} />
-                      <button type="button" title={t("motion-delete-property")} onclick={() => {
+                      <button class="ui-icon-button mini danger" type="button" title={t("motion-delete-property")} aria-label={t("motion-delete-property")} onclick={() => {
                         void patchAnimate(selected, action, {
                           properties: action.properties.filter((item) => item.id !== property.id),
                         });
@@ -1093,7 +1074,7 @@
                 <details class="advanced-action">
                   <summary>{t("motion-advanced")}</summary>
                   <div class="field-grid">
-                    <label><span>{t("motion-stagger")}</span><input type="number" min="0" value={action.stagger?.amount ?? 0} onchange={(event) => {
+                    <label class="ui-form-field"><span class="ui-form-label">{t("motion-stagger")}</span><input class="ui-input compact" type="number" min="0" value={action.stagger?.amount ?? 0} onchange={(event) => {
                       const amount = Number(event.currentTarget.value);
                       void patchAnimate(selected, action, {
                         stagger: amount > 0 ? {
@@ -1106,49 +1087,54 @@
                       });
                     }} /></label>
                     {#if action.stagger}
-                      <label><span>{t("motion-stagger-calculation")}</span><select value={action.stagger.mode} onchange={(event) => {
+                      <div class="ui-form-field"><span class="ui-form-label">{t("motion-stagger-calculation")}</span><SelectControl value={action.stagger.mode} options={[{ value: "each", label: t("motion-between-elements") }, { value: "total", label: t("motion-total-duration") }]} ariaLabel={t("motion-stagger-calculation")} onchange={(value) => {
                         if (action.stagger) void patchAnimate(selected, action, {
-                          stagger: { ...action.stagger, mode: event.currentTarget.value as "each" | "total" },
+                          stagger: { ...action.stagger, mode: value as "each" | "total" },
                         });
-                      }}><option value="each">{t("motion-between-elements")}</option><option value="total">{t("motion-total-duration")}</option></select></label>
-                      <label><span>{t("motion-from")}</span><input value={action.stagger.from} placeholder={t("motion-stagger-from-placeholder")} onchange={(event) => {
+                      }} /></div>
+                      <label class="ui-form-field"><span class="ui-form-label">{t("motion-from")}</span><input class="ui-input compact" value={action.stagger.from} placeholder={t("motion-stagger-from-placeholder")} onchange={(event) => {
                         if (action.stagger) void patchAnimate(selected, action, {
                           stagger: { ...action.stagger, from: event.currentTarget.value },
                         });
                       }} /></label>
-                      <label><span>{t("motion-stagger-easing")}</span><input value={action.stagger.ease} placeholder="linear" onchange={(event) => {
+                      <label class="ui-form-field"><span class="ui-form-label">{t("motion-stagger-easing")}</span><input class="ui-input compact" value={action.stagger.ease} placeholder="linear" onchange={(event) => {
                         if (action.stagger) void patchAnimate(selected, action, {
                           stagger: { ...action.stagger, ease: event.currentTarget.value },
                         });
                       }} /></label>
-                      <label class="check"><input type="checkbox" checked={action.stagger.reversed} onchange={(event) => {
+                      <CheckboxControl compact label={t("motion-reverse-order")} checked={action.stagger.reversed} onchange={(checked) => {
                         if (action.stagger) void patchAnimate(selected, action, {
-                          stagger: { ...action.stagger, reversed: event.currentTarget.checked },
+                          stagger: { ...action.stagger, reversed: checked },
                         });
-                      }} /> {t("motion-reverse-order")}</label>
+                      }} />
                     {/if}
-                    <label><span>{t("motion-repeats")}</span><input type="number" min="0" value={action.repeat.count} disabled={selected.domain === "progress"} onchange={(event) => {
+                    <label class="ui-form-field"><span class="ui-form-label">{t("motion-repeats")}</span><input class="ui-input compact" type="number" min="0" value={action.repeat.count} disabled={selected.domain === "progress"} onchange={(event) => {
                       void patchAnimate(selected, action, {
                         repeat: { ...action.repeat, count: Number(event.currentTarget.value) },
                       });
                     }} /></label>
-                    <label><span>{t("motion-repeat-pause")}</span><input type="number" min="0" value={action.repeat.delayMs} disabled={selected.domain === "progress"} onchange={(event) => {
+                    <label class="ui-form-field"><span class="ui-form-label">{t("motion-repeat-pause")}</span><input class="ui-input compact" type="number" min="0" value={action.repeat.delayMs} disabled={selected.domain === "progress"} onchange={(event) => {
                       void patchAnimate(selected, action, {
                         repeat: { ...action.repeat, delayMs: Number(event.currentTarget.value) },
                       });
                     }} /></label>
-                    <label class="check"><input type="checkbox" checked={action.repeat.infinite} disabled={selected.domain === "progress"} onchange={(event) => {
+                    <CheckboxControl compact label={t("motion-repeat-infinite")} checked={action.repeat.infinite} disabled={selected.domain === "progress"} onchange={(checked) => {
                       void patchAnimate(selected, action, {
-                        repeat: { ...action.repeat, infinite: event.currentTarget.checked },
+                        repeat: { ...action.repeat, infinite: checked },
                       });
-                    }} /> {t("motion-repeat-infinite")}</label>
-                    <label class="check"><input type="checkbox" checked={action.repeat.alternate} disabled={selected.domain === "progress"} onchange={(event) => {
+                    }} />
+                    <CheckboxControl compact label={t("motion-alternate")} checked={action.repeat.alternate} disabled={selected.domain === "progress"} onchange={(checked) => {
                       void patchAnimate(selected, action, {
-                        repeat: { ...action.repeat, alternate: event.currentTarget.checked },
+                        repeat: { ...action.repeat, alternate: checked },
                       });
-                    }} /> {t("motion-alternate")}</label>
-                    <label><span>{t("motion-specialization")}</span><select value={action.specialization?.type ?? ""} onchange={(event) => {
-                      const type = event.currentTarget.value;
+                    }} />
+                    <div class="ui-form-field"><span class="ui-form-label">{t("motion-specialization")}</span><SelectControl value={action.specialization?.type ?? ""} options={[
+                      { value: "", label: t("motion-none") },
+                      { value: "splitText", label: t("motion-split-text") },
+                      { value: "svgDraw", label: t("motion-svg-draw") },
+                      { value: "svgPath", label: t("motion-svg-path") },
+                      { value: "svgMorph", label: t("motion-svg-morph") },
+                    ]} ariaLabel={t("motion-specialization")} onchange={(type) => {
                       void patchAnimate(selected, action, {
                         specialization: type === "splitText"
                           ? { type, mode: "chars" }
@@ -1160,37 +1146,31 @@
                                 ? { type, source: "path", precision: 0.33 }
                                 : null,
                       });
-                    }}>
-                      <option value="">{t("motion-none")}</option>
-                      <option value="splitText">{t("motion-split-text")}</option>
-                      <option value="svgDraw">{t("motion-svg-draw")}</option>
-                      <option value="svgPath">{t("motion-svg-path")}</option>
-                      <option value="svgMorph">{t("motion-svg-morph")}</option>
-                    </select></label>
+                    }} /></div>
                     {#if action.specialization?.type === "splitText"}
-                      <label><span>{t("motion-segmentation")}</span><select value={action.specialization.mode} onchange={(event) => {
+                      <div class="ui-form-field"><span class="ui-form-label">{t("motion-segmentation")}</span><SelectControl value={action.specialization.mode} options={[{ value: "chars", label: t("motion-characters") }, { value: "words", label: t("motion-words") }, { value: "lines", label: t("motion-lines") }]} ariaLabel={t("motion-segmentation")} onchange={(value) => {
                         if (action.specialization?.type === "splitText") void patchAnimate(selected, action, {
-                          specialization: { ...action.specialization, mode: event.currentTarget.value as "lines" | "words" | "chars" },
+                          specialization: { ...action.specialization, mode: value as "lines" | "words" | "chars" },
                         });
-                      }}><option value="chars">{t("motion-characters")}</option><option value="words">{t("motion-words")}</option><option value="lines">{t("motion-lines")}</option></select></label>
+                      }} /></div>
                     {:else if action.specialization?.type === "svgPath"}
-                      <label><span>{t("motion-path-selector")}</span><input value={action.specialization.path} onchange={(event) => {
+                      <label class="ui-form-field"><span class="ui-form-label">{t("motion-path-selector")}</span><input class="ui-input compact" value={action.specialization.path} onchange={(event) => {
                         if (action.specialization?.type === "svgPath") void patchAnimate(selected, action, {
                           specialization: { ...action.specialization, path: event.currentTarget.value },
                         });
                       }} /></label>
-                      <label class="check"><input type="checkbox" checked={action.specialization.autoRotate} onchange={(event) => {
+                      <CheckboxControl compact label={t("motion-rotate-along-path")} checked={action.specialization.autoRotate} onchange={(checked) => {
                         if (action.specialization?.type === "svgPath") void patchAnimate(selected, action, {
-                          specialization: { ...action.specialization, autoRotate: event.currentTarget.checked },
+                          specialization: { ...action.specialization, autoRotate: checked },
                         });
-                      }} /> {t("motion-rotate-along-path")}</label>
+                      }} />
                     {:else if action.specialization?.type === "svgMorph"}
-                      <label><span>{t("motion-source-shape-selector")}</span><input value={action.specialization.source} onchange={(event) => {
+                      <label class="ui-form-field"><span class="ui-form-label">{t("motion-source-shape-selector")}</span><input class="ui-input compact" value={action.specialization.source} onchange={(event) => {
                         if (action.specialization?.type === "svgMorph") void patchAnimate(selected, action, {
                           specialization: { ...action.specialization, source: event.currentTarget.value },
                         });
                       }} /></label>
-                      <label><span>{t("motion-precision")}</span><input type="number" min="0" step="0.05" value={action.specialization.precision} onchange={(event) => {
+                      <label class="ui-form-field"><span class="ui-form-label">{t("motion-precision")}</span><input class="ui-input compact" type="number" min="0" step="0.05" value={action.specialization.precision} onchange={(event) => {
                         if (action.specialization?.type === "svgMorph") void patchAnimate(selected, action, {
                           specialization: { ...action.specialization, precision: Number(event.currentTarget.value) },
                         });
@@ -1207,13 +1187,13 @@
                     </div>
                     {#each action.keyframes as frame (frame.id)}
                       <div class="keyframe-row">
-                        <label><span>{t("motion-position-percent")}</span><input type="number" min="0" max="100" value={frame.offset} onchange={(event) => {
+                        <label class="ui-form-field"><span class="ui-form-label">{t("motion-position-percent")}</span><input class="ui-input compact" type="number" min="0" max="100" value={frame.offset} onchange={(event) => {
                           void updateKeyframe(selected, action, {
                             ...frame,
                             offset: Number(event.currentTarget.value),
                           });
                         }} /></label>
-                        <label><span>{t("motion-easing")}</span><input value={frame.ease} placeholder={t("motion-inherited")} onchange={(event) => {
+                        <label class="ui-form-field"><span class="ui-form-label">{t("motion-easing")}</span><input class="ui-input compact" value={frame.ease} placeholder={t("motion-inherited")} onchange={(event) => {
                           void updateKeyframe(selected, action, {
                             ...frame,
                             ease: event.currentTarget.value,
@@ -1221,7 +1201,7 @@
                         }} /></label>
                         <div class="keyframe-properties">
                           {#each frame.properties as property (property.id)}
-                            <label><span>{property.name}</span><input value={property.to.value} onchange={(event) => {
+                            <label class="ui-form-field"><span class="ui-form-label">{property.name}</span><input class="ui-input compact" value={property.to.value} onchange={(event) => {
                               void updateKeyframe(selected, action, {
                                 ...frame,
                                 properties: frame.properties.map((candidate) =>
@@ -1233,7 +1213,7 @@
                             }} /></label>
                           {/each}
                         </div>
-                        <button type="button" title={t("motion-delete-keyframe")} onclick={() => {
+                        <button class="ui-icon-button mini danger" type="button" title={t("motion-delete-keyframe")} aria-label={t("motion-delete-keyframe")} onclick={() => {
                           void patchAnimate(selected, action, {
                             keyframes: action.keyframes.filter((candidate) => candidate.id !== frame.id),
                           });
@@ -1246,42 +1226,44 @@
                 <div class="set-values">
                   {#each action.values as value, valueIndex}
                     <div class="set-value-row">
-                      <select value={value.type} onchange={(event) => {
-                        const type = event.currentTarget.value as MotionSetAction["values"][number]["type"];
+                      <SelectControl value={value.type} options={[
+                        { value: "property", label: t("motion-set-property") },
+                        ...(selected.domain === "progress" ? [] : [
+                          { value: "attribute", label: t("motion-set-attribute") },
+                          { value: "addClass", label: t("motion-set-add-class") },
+                          { value: "removeClass", label: t("motion-set-remove-class") },
+                          { value: "toggleClass", label: t("motion-set-toggle-class") },
+                        ]),
+                      ]} ariaLabel={t("motion-set-property")} onchange={(nextType) => {
+                        const type = nextType as MotionSetAction["values"][number]["type"];
                         const replacement: MotionSetAction["values"][number] = type === "property"
                           ? { type, name: "opacity", value: motionValue("1") }
                           : type === "attribute"
                             ? { type, name: "aria-hidden", value: "true" }
                             : { type, name: "class" };
                         void replaceSetValue(selected, action, valueIndex, replacement);
-                      }}>
-                        <option value="property">{t("motion-set-property")}</option>
-                        <option value="attribute" disabled={selected.domain === "progress"}>{t("motion-set-attribute")}</option>
-                        <option value="addClass" disabled={selected.domain === "progress"}>{t("motion-set-add-class")}</option>
-                        <option value="removeClass" disabled={selected.domain === "progress"}>{t("motion-set-remove-class")}</option>
-                        <option value="toggleClass" disabled={selected.domain === "progress"}>{t("motion-set-toggle-class")}</option>
-                      </select>
-                      <input value={value.name} placeholder={t("motion-name-placeholder")} onchange={(event) => {
+                      }} />
+                      <input class="ui-input compact" value={value.name} placeholder={t("motion-name-placeholder")} onchange={(event) => {
                         void replaceSetValue(selected, action, valueIndex, {
                           ...value,
                           name: event.currentTarget.value,
                         });
                       }} />
                       {#if value.type === "property"}
-                        <input value={value.value.value} placeholder={t("motion-value-placeholder")} onchange={(event) => {
+                        <input class="ui-input compact" value={value.value.value} placeholder={t("motion-value-placeholder")} onchange={(event) => {
                           void updateSetValue(selected, action, valueIndex, {
                             value: { ...value.value, value: event.currentTarget.value },
                           });
                         }} />
                       {:else if value.type === "attribute"}
-                        <input value={value.value} placeholder={t("motion-value-placeholder")} onchange={(event) => {
+                        <input class="ui-input compact" value={value.value} placeholder={t("motion-value-placeholder")} onchange={(event) => {
                           void replaceSetValue(selected, action, valueIndex, {
                             ...value,
                             value: event.currentTarget.value,
                           });
                         }} />
                       {/if}
-                      <button type="button" title={t("motion-delete-value")} onclick={() => {
+                      <button class="ui-icon-button mini danger" type="button" title={t("motion-delete-value")} aria-label={t("motion-delete-value")} onclick={() => {
                         void updateAction(selected.id, {
                           ...structuredClone(action),
                           values: action.values.filter((_, index) => index !== valueIndex),
@@ -1305,28 +1287,28 @@
                   </div>
                 </div>
               {:else if action.type === "media"}
-                <label><span>{t("motion-media-command")}</span><select value={action.command} onchange={(event) => {
+                <div class="ui-form-field"><span class="ui-form-label">{t("motion-media-command")}</span><SelectControl value={action.command} options={[
+                  { value: "play", label: t("motion-action-play") },
+                  { value: "pause", label: t("motion-action-pause") },
+                  { value: "toggle", label: t("motion-action-toggle") },
+                  { value: "reset", label: t("motion-action-reset") },
+                ]} ariaLabel={t("motion-media-command")} onchange={(value) => {
                   void updateAction(selected.id, {
                     ...structuredClone(action),
-                    command: event.currentTarget.value as typeof action.command,
+                    command: value as typeof action.command,
                   });
-                }}><option value="play">{t("motion-action-play")}</option><option value="pause">{t("motion-action-pause")}</option><option value="toggle">{t("motion-action-toggle")}</option><option value="reset">{t("motion-action-reset")}</option></select></label>
+                }} /></div>
               {:else if action.type === "nested"}
-                <label><span>{t("motion-included-interaction")}</span><select value={action.interactionId} onchange={(event) => {
-                  const interactionId = event.currentTarget.value;
+                <div class="ui-form-field"><span class="ui-form-label">{t("motion-included-interaction")}</span><SelectControl value={action.interactionId} options={workspace.interactions.filter((candidate) => candidate.id !== selected.id).map((candidate) => ({ value: candidate.id, label: candidate.name }))} ariaLabel={t("motion-included-interaction")} onchange={(interactionId) => {
                   const nested = workspace.interactions.find((candidate) => candidate.id === interactionId);
                   void updateAction(selected.id, {
                     ...structuredClone(action),
                     interactionId,
                     name: nested ? `Include ${nested.name}` : action.name,
                   });
-                }}>
-                  {#each workspace.interactions.filter((candidate) => candidate.id !== selected.id) as candidate}
-                    <option value={candidate.id}>{candidate.name}</option>
-                  {/each}
-                </select></label>
+                }} /></div>
               {:else if action.type === "call"}
-                <label class="code-field"><span>{t("motion-isolated-code")}</span><textarea value={action.code} onchange={(event) => {
+                <label class="ui-form-field code-field"><span class="ui-form-label">{t("motion-isolated-code")}</span><textarea class="ui-textarea code" value={action.code} onchange={(event) => {
                   void updateAction(selected.id, { ...action, code: event.currentTarget.value });
                 }}></textarea></label>
               {/if}
@@ -1350,29 +1332,33 @@
       <details bind:open={expandedAdvanced} class="interaction-advanced">
         <summary>{t("motion-conditions-playback")}</summary>
         <div class="field-grid">
-          <label><span>{t("motion-reduced-motion")}</span><select value={selected.conditions.reducedMotion} onchange={(event) => {
+          <div class="ui-form-field"><span class="ui-form-label">{t("motion-reduced-motion")}</span><SelectControl value={selected.conditions.reducedMotion} options={[
+            { value: "reduce", label: t("motion-reduced-reduce") },
+            { value: "skipToEnd", label: t("motion-reduced-skip") },
+            { value: "disable", label: t("motion-reduced-disable") },
+          ]} ariaLabel={t("motion-reduced-motion")} onchange={(value) => {
             void patchInteraction(selected, {
               conditions: {
                 ...selected.conditions,
-                reducedMotion: event.currentTarget.value as MotionInteraction["conditions"]["reducedMotion"],
+                reducedMotion: value as MotionInteraction["conditions"]["reducedMotion"],
               },
             });
-          }}><option value="reduce">{t("motion-reduced-reduce")}</option><option value="skipToEnd">{t("motion-reduced-skip")}</option><option value="disable">{t("motion-reduced-disable")}</option></select></label>
-          <label><span>{t("motion-speed")}</span><input type="number" min="0.1" max="4" step="0.1" value={selected.playback.playbackRate} onchange={(event) => {
+          }} /></div>
+          <label class="ui-form-field"><span class="ui-form-label">{t("motion-speed")}</span><input class="ui-input compact" type="number" min="0.1" max="4" step="0.1" value={selected.playback.playbackRate} onchange={(event) => {
             void patchInteraction(selected, {
               playback: { ...selected.playback, playbackRate: Number(event.currentTarget.value) },
             });
           }} /></label>
-          <label class="check"><input type="checkbox" checked={selected.playback.infinite} disabled={selected.domain === "progress"} onchange={(event) => {
+          <CheckboxControl compact label={t("motion-loop")} checked={selected.playback.infinite} disabled={selected.domain === "progress"} onchange={(checked) => {
             void patchInteraction(selected, {
-              playback: { ...selected.playback, infinite: event.currentTarget.checked },
+              playback: { ...selected.playback, infinite: checked },
             });
-          }} /> {t("motion-loop")}</label>
-          <label class="check"><input type="checkbox" checked={selected.playback.alternate} disabled={selected.domain === "progress"} onchange={(event) => {
+          }} />
+          <CheckboxControl compact label={t("motion-alternate")} checked={selected.playback.alternate} disabled={selected.domain === "progress"} onchange={(checked) => {
             void patchInteraction(selected, {
-              playback: { ...selected.playback, alternate: event.currentTarget.checked },
+              playback: { ...selected.playback, alternate: checked },
             });
-          }} /> {t("motion-alternate")}</label>
+          }} />
         </div>
         <div class="media-conditions">
           <div class="media-conditions-head">
@@ -1384,22 +1370,23 @@
           </div>
           {#each selected.conditions.mediaQueries as condition (condition.id)}
             <div class="media-condition-row">
-              <input
-                type="checkbox"
+              <CheckboxControl
+                compact
+                labelHidden
+                label={t("motion-enable-media-condition")}
                 checked={condition.enabled}
-                aria-label={t("motion-enable-media-condition")}
-                onchange={(event) => {
+                onchange={(checked) => {
                   void patchMediaCondition(selected, condition.id, {
-                    enabled: event.currentTarget.checked,
+                    enabled: checked,
                   });
                 }}
               />
-              <input value={condition.query} placeholder="(min-width: 768px)" onchange={(event) => {
+              <input class="ui-input compact" value={condition.query} placeholder="(min-width: 768px)" onchange={(event) => {
                 void patchMediaCondition(selected, condition.id, {
                   query: event.currentTarget.value,
                 });
               }} />
-              <button type="button" title={t("motion-delete-media-condition")} onclick={() => {
+              <button class="ui-icon-button mini danger" type="button" title={t("motion-delete-media-condition")} aria-label={t("motion-delete-media-condition")} onclick={() => {
                 void patchInteraction(selected, {
                   conditions: {
                     ...selected.conditions,
@@ -1453,44 +1440,44 @@
               void updateBehavior({ ...behavior, enabled: !behavior.enabled });
             }}
           ></button>
-          <input value={behavior.name} aria-label={t("motion-behavior-name")} onchange={(event) => {
+          <input class="ui-input compact" value={behavior.name} aria-label={t("motion-behavior-name")} onchange={(event) => {
             void updateBehavior({ ...behavior, name: event.currentTarget.value });
           }} />
           <strong>{behavior.type === "draggable" ? t("motion-behavior-draggable") : t("motion-behavior-auto-layout")}</strong>
-          <button type="button" title={t("motion-delete-behavior")} onclick={() => {
+          <button class="ui-icon-button mini danger" type="button" title={t("motion-delete-behavior")} aria-label={t("motion-delete-behavior")} onclick={() => {
             void workspace.mutate({ command: "deleteBehavior", behaviorId: behavior.id });
           }}><IconTrash size={13} /></button>
         </div>
         {#if behavior.type === "draggable"}
           <div class="field-grid behavior-fields">
-            <label><span>{t("motion-axes")}</span><select value={behavior.axis} onchange={(event) => {
-              void updateBehavior({ ...behavior, axis: event.currentTarget.value as "x" | "y" | "both" });
-            }}><option value="both">X + Y</option><option value="x">X</option><option value="y">Y</option></select></label>
-            <label><span>{t("motion-css-container")}</span><input value={behavior.container} placeholder=".container" onchange={(event) => {
+            <div class="ui-form-field"><span class="ui-form-label">{t("motion-axes")}</span><SelectControl value={behavior.axis} options={[{ value: "both", label: "X + Y" }, "x", "y"]} ariaLabel={t("motion-axes")} onchange={(value) => {
+              void updateBehavior({ ...behavior, axis: value as "x" | "y" | "both" });
+            }} /></div>
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-css-container")}</span><input class="ui-input compact" value={behavior.container} placeholder=".container" onchange={(event) => {
               void updateBehavior({ ...behavior, container: event.currentTarget.value });
             }} /></label>
-            <label><span>{t("motion-snap-px")}</span><input type="number" min="0" value={behavior.snap} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-snap-px")}</span><input class="ui-input compact" type="number" min="0" value={behavior.snap} onchange={(event) => {
               void updateBehavior({ ...behavior, snap: Number(event.currentTarget.value) });
             }} /></label>
-            <label><span>{t("motion-friction")}</span><input type="number" min="0" max="1" step="0.05" value={behavior.friction} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-friction")}</span><input class="ui-input compact" type="number" min="0" max="1" step="0.05" value={behavior.friction} onchange={(event) => {
               void updateBehavior({ ...behavior, friction: Number(event.currentTarget.value) });
             }} /></label>
-            <label class="check"><input type="checkbox" checked={behavior.cursor} onchange={(event) => {
-              void updateBehavior({ ...behavior, cursor: event.currentTarget.checked });
-            }} /> {t("motion-grab-cursor")}</label>
+            <CheckboxControl compact label={t("motion-grab-cursor")} checked={behavior.cursor} onchange={(checked) => {
+              void updateBehavior({ ...behavior, cursor: checked });
+            }} />
           </div>
         {:else}
           <div class="field-grid behavior-fields">
-            <label><span>{t("motion-tracked-children")}</span><input value={behavior.childrenSelector} placeholder="> *" onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-tracked-children")}</span><input class="ui-input compact" value={behavior.childrenSelector} placeholder="> *" onchange={(event) => {
               void updateBehavior({ ...behavior, childrenSelector: event.currentTarget.value });
             }} /></label>
-            <label><span>{t("motion-duration-ms")}</span><input type="number" min="1" value={behavior.durationMs} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-duration-ms")}</span><input class="ui-input compact" type="number" min="1" value={behavior.durationMs} onchange={(event) => {
               void updateBehavior({ ...behavior, durationMs: Number(event.currentTarget.value) });
             }} /></label>
-            <label><span>{t("motion-easing")}</span><input value={behavior.ease} onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-easing")}</span><input class="ui-input compact" value={behavior.ease} onchange={(event) => {
               void updateBehavior({ ...behavior, ease: event.currentTarget.value });
             }} /></label>
-            <label><span>{t("motion-extra-properties")}</span><input value={behavior.properties.join(", ")} placeholder="opacity, borderRadius" onchange={(event) => {
+            <label class="ui-form-field"><span class="ui-form-label">{t("motion-extra-properties")}</span><input class="ui-input compact" value={behavior.properties.join(", ")} placeholder="opacity, borderRadius" onchange={(event) => {
               void updateBehavior({
                 ...behavior,
                 properties: event.currentTarget.value.split(",").map((value) => value.trim()).filter(Boolean),
@@ -1510,13 +1497,13 @@
     <summary><span><IconCode size={15} />{t("motion-custom-code")}</span><small>{customCode.length}</small></summary>
     {#each customCode as custom (custom.id)}
       <div class="custom-card">
-        <input value={custom.name} aria-label={t("motion-custom-code-name")} onchange={(event) => {
+        <input class="ui-input compact" value={custom.name} aria-label={t("motion-custom-code-name")} onchange={(event) => {
           void workspace.mutate({
             command: "upsertCustomCode",
             customCode: { ...custom, name: event.currentTarget.value },
           });
         }} />
-        <textarea value={custom.code} placeholder={t("motion-custom-code-placeholder")} onchange={(event) => {
+        <textarea class="ui-textarea code" value={custom.code} placeholder={t("motion-custom-code-placeholder")} onchange={(event) => {
           void workspace.mutate({
             command: "upsertCustomCode",
             customCode: { ...custom, code: event.currentTarget.value },
@@ -1536,7 +1523,6 @@
 
 <style>
   .motion-inspector { display:flex; flex-direction:column; gap:0; padding:0; color:var(--text); }
-  button, input, select, textarea { font:inherit; color:inherit; }
   button { cursor:pointer; }
   .section-head, .actions-head, .secondary-section header, .interaction-title, .action-buttons, .create-actions {
     display:flex; align-items:center; justify-content:space-between; gap:8px;
@@ -1545,15 +1531,13 @@
   .section-head > div, .actions-head > div { display:flex; flex-direction:column; gap:2px; }
   .section-head strong, .actions-head strong { font-size:12px; }
   .section-head span, .actions-head span { font-size:11px; color:var(--text-muted); }
-  .primary-icon { width:28px; height:28px; display:grid; place-items:center; border:1px solid color-mix(in srgb,var(--brand) 36%,var(--border-subtle)); border-radius:var(--radius-control); background:var(--material-control); box-shadow:var(--shadow-control); color:var(--brand-strong); }
+  .primary-icon { border-color:color-mix(in srgb,var(--brand) 36%,var(--border-subtle)); color:var(--brand-strong); }
   .motion-error { margin:8px 10px; padding:8px; border:1px solid var(--danger); border-radius:var(--radius-control); color:var(--danger); font-size:11px; overflow-wrap:anywhere; }
   .create-card, .interaction-card, .secondary-section { border:0; border-bottom:1px solid var(--border-subtle); border-radius:0; background:transparent; }
   .create-card { display:flex; flex-direction:column; gap:9px; padding:10px; }
-  label { display:flex; flex-direction:column; gap:4px; min-width:0; font-size:11px; color:var(--text-muted); }
-  input, select, textarea { min-width:0; min-height:29px; padding:5px 7px; border:1px solid var(--border-2); border-radius:var(--radius-control); background:var(--material-inset); box-shadow:var(--shadow-inset); font-size:11px; }
-  textarea { min-height:92px; resize:vertical; font-family:"JetBrains Mono",monospace; line-height:1.45; }
+  .motion-inspector :global(.ui-textarea) { min-height:92px; }
   .preset-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
-  .preset-grid button, .create-actions button, .actions-head button, .action-buttons button, .secondary-section button, .add-row {
+  .preset-grid button, .create-actions button, .actions-head button, .action-buttons button, .secondary-section button:not(.ui-icon-button), .add-row {
     min-height:28px; border:1px solid var(--border-2); border-radius:var(--radius-control); background:var(--material-control); box-shadow:var(--shadow-control); font-size:11px;
   }
   .preset-grid button.active, button.primary { border-color:var(--brand); background:var(--brand-soft); color:var(--brand-strong); font-weight:800; }
@@ -1561,7 +1545,7 @@
   .context-group { overflow:hidden; border:1px solid var(--border-2); border-radius:7px; background:var(--surface-2); }
   .context-group header { display:flex; align-items:center; justify-content:space-between; min-height:28px; padding:0 8px; border-bottom:1px solid var(--border-3); }
   .context-group header strong { font-size:11px; }
-  .context-group header span { color:var(--text-muted); font:11px "JetBrains Mono",monospace; }
+  .context-group header span { color:var(--text-muted); font:11px var(--font-mono); }
   .context-group > button { --ui-entity-background:var(--surface); --ui-entity-border-color:var(--border-3); display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:7px; width:100%; min-height:40px; padding:5px 8px; border:0; border-bottom:1px solid var(--border-3); border-radius:0; background:var(--surface); text-align:left; }
   .context-group > button:last-child { border-bottom:0; }
   .context-group > button > span { display:flex; flex-direction:column; min-width:0; gap:2px; }
@@ -1572,45 +1556,40 @@
   .active-timeline-context span { color:var(--text-muted); font-size:11px; line-height:1.4; }
   .interaction-card { overflow:hidden; }
   .interaction-title { padding:7px; border-bottom:1px solid var(--border-3); }
-  .interaction-title input { flex:1; border-color:transparent; background:transparent; font-weight:800; }
-  .interaction-title button { border:0; background:transparent; color:var(--text-muted); }
+  .interaction-title :global(.ui-input) { flex:1; border-color:transparent; background:transparent; font-weight:800; }
   .interaction-title button.enabled-dot { flex:0 0 auto; width:10px; height:10px; min-height:10px; padding:0; border:2px solid var(--surface); border-radius:50%; background:var(--brand); box-shadow:0 0 0 1px var(--brand); }
   .interaction-title button.enabled-dot.off { background:var(--text-muted); box-shadow:0 0 0 1px var(--text-muted); }
   .flow-card { padding:9px; border-bottom:1px solid var(--border-3); }
   .flow-step { display:flex; align-items:center; gap:8px; }
   .flow-step label, .flow-step > div { flex:1; }
   .flow-step small { display:block; color:var(--brand-strong); font-size:11px; font-weight:900; letter-spacing:.06em; }
-  .flow-step strong { display:block; margin-top:3px; font:11px "JetBrains Mono",monospace; overflow-wrap:anywhere; }
+  .flow-step strong { display:block; margin-top:3px; font:11px var(--font-mono); overflow-wrap:anywhere; }
   .step-index, .action-index { display:grid; place-items:center; width:20px; height:20px; border-radius:50%; background:var(--brand-soft); color:var(--brand-strong); font-size:11px; font-weight:900; }
   .flow-connector { height:13px; margin-left:10px; padding-left:8px; border-left:1px solid var(--border-2); color:var(--text-muted); }
   .sub-grid, .field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; margin:8px 0 0 28px; }
-  .check { flex-direction:row; align-items:center; align-self:end; min-height:29px; }
-  .check input { min-height:auto; }
   .actions-head { padding:8px; border-bottom:1px solid var(--border-3); }
   .add-action-control { display:flex; align-items:center; gap:5px; }
-  .add-action-control select { max-width:128px; }
+  .add-action-control :global(.select-control-root) { width:128px; }
   .actions-head button, .action-buttons button { display:flex; align-items:center; gap:4px; padding:0 7px; }
   .action-list { display:flex; flex-direction:column; }
   .action-card { border-bottom:1px solid var(--border-3); }
   .action-card summary { display:grid; grid-template-columns:auto auto minmax(0,1fr) auto; align-items:center; gap:6px; min-height:34px; padding:0 8px; cursor:pointer; list-style:none; }
   .action-card summary::-webkit-details-marker { display:none; }
   .action-card summary strong { font-size:11px; overflow:hidden; text-overflow:ellipsis; }
-  .action-card summary small { color:var(--text-muted); font:11px "JetBrains Mono",monospace; }
+  .action-card summary small { color:var(--text-muted); font:11px var(--font-mono); }
   .action-editor { display:flex; flex-direction:column; gap:9px; padding:8px; border-top:1px solid var(--border-3); background:color-mix(in srgb,var(--surface) 55%,transparent); }
   .action-editor .field-grid { margin:0; }
   .property-list { display:flex; flex-direction:column; gap:5px; }
   .property-row { display:grid; grid-template-columns:1.25fr .7fr auto .7fr .45fr auto; align-items:center; gap:4px; }
-  .property-row input, .property-row select { min-width:0; width:100%; }
+  .property-row :global(.ui-input), .property-row :global(.select-control-root) { min-width:0; width:100%; }
   :global(.value-arrow) { color:var(--text-muted); }
-  .property-row button { border:0; background:transparent; color:var(--text-muted); }
   .unit { text-align:center; }
   .add-row { width:100%; display:flex; align-items:center; justify-content:center; gap:4px; color:var(--brand-strong); }
   .trigger-target-editor { display:flex; flex-direction:column; gap:4px; }
-  .trigger-target-editor select, .trigger-target-editor input { width:100%; }
+  .trigger-target-editor :global(.select-control-root), .trigger-target-editor :global(.ui-input) { width:100%; }
   .set-values { display:flex; flex-direction:column; gap:5px; }
   .set-value-row { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:4px; align-items:center; }
-  .set-value-row input, .set-value-row select { width:100%; }
-  .set-value-row button { border:0; background:transparent; color:var(--text-muted); }
+  .set-value-row :global(.ui-input), .set-value-row :global(.select-control-root) { width:100%; }
   .set-add-buttons { display:flex; gap:5px; }
   .set-add-buttons button { display:inline-flex; align-items:center; justify-content:center; gap:4px; min-height:27px; padding:0 6px; border:1px solid var(--border-2); border-radius:5px; background:var(--surface); font-size:11px; }
   .advanced-action summary, .interaction-advanced summary { cursor:pointer; color:var(--text-muted); font-size:11px; font-weight:800; }
@@ -1618,7 +1597,6 @@
   .keyframes-editor { display:flex; flex-direction:column; gap:6px; margin-top:9px; padding-top:8px; border-top:1px solid var(--border-3); }
   .keyframe-row { display:grid; grid-template-columns:72px 1fr auto; gap:5px; padding:6px; border:1px solid var(--border-3); border-radius:6px; background:var(--surface); }
   .keyframe-properties { grid-column:1 / -1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px; }
-  .keyframe-row > button { border:0; background:transparent; color:var(--text-muted); }
   .action-buttons { justify-content:flex-end; }
   .action-buttons .danger { color:var(--danger); }
   .timeline-button { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:7px; width:calc(100% - 16px); margin:8px; min-height:32px; padding:0 9px; border:1px solid var(--brand); border-radius:7px; background:var(--brand-soft); color:var(--brand-strong); text-align:left; font-weight:800; }
@@ -1630,8 +1608,6 @@
   .media-conditions-head strong { font-size:11px; }
   .media-conditions-head button { display:inline-flex; align-items:center; justify-content:center; gap:4px; min-height:26px; border:1px solid var(--border-2); border-radius:5px; background:var(--surface); font-size:11px; }
   .media-condition-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:5px; }
-  .media-condition-row input[type="checkbox"] { min-height:auto; }
-  .media-condition-row button { border:0; background:transparent; color:var(--text-muted); }
   .media-conditions > small { color:var(--text-muted); font-size:11px; line-height:1.4; }
   .empty-state { display:flex; flex-direction:column; align-items:center; gap:6px; padding:20px 12px; border:0; border-bottom:1px solid var(--border-subtle); border-radius:0; text-align:center; color:var(--text-muted); }
   .empty-state strong { color:var(--text); font-size:11px; }
@@ -1643,12 +1619,12 @@
   .secondary-section header button { display:inline-flex; align-items:center; justify-content:center; gap:4px; padding:0 6px; }
   .behavior-card { margin-top:7px; padding-top:7px; border-top:1px solid var(--border-3); }
   .behavior-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:6px; }
-  .behavior-row > input { border-color:transparent; background:transparent; font-weight:800; }
+  .behavior-row > :global(.ui-input) { border-color:transparent; background:transparent; font-weight:800; }
   .behavior-row strong { font-size:11px; overflow:hidden; text-overflow:ellipsis; }
-  .behavior-row input { width:100%; }
+  .behavior-row :global(.ui-input) { width:100%; }
   .behavior-fields { margin:7px 0 0 16px; }
   .behavior-note { margin:7px 0 0 16px; color:var(--text-muted); font-size:11px; line-height:1.45; }
-  .behavior-note code { color:var(--brand-strong); font-family:"JetBrains Mono",monospace; overflow-wrap:anywhere; }
+  .behavior-note code { color:var(--brand-strong); font-family:var(--font-mono); overflow-wrap:anywhere; }
   .custom-section summary { display:flex; justify-content:space-between; cursor:pointer; list-style:none; }
   .custom-section summary span { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:800; }
   .custom-card { display:flex; flex-direction:column; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid var(--border-3); }

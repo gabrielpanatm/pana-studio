@@ -134,6 +134,7 @@ function sameWorkbenchDocument(
   return current.documentId === next.documentId
     && current.relativePath === next.relativePath
     && current.title === next.title
+    && current.presentation === next.presentation
     && current.surface === next.surface
     && current.pinned === next.pinned;
 }

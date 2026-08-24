@@ -28,7 +28,10 @@ use crate::{
             WorkspaceSourceTreeHistoryAction,
         },
         recovery_coordinator::RecoveryCoordinatorScan,
-        workbench::{persist_workbench, WorkbenchIntent, WorkbenchProjectEntryRemap},
+        workbench::{
+            persist_workbench, WorkbenchDocumentPresentation, WorkbenchDocumentPresentationEntry,
+            WorkbenchIntent, WorkbenchProjectEntryRemap,
+        },
     },
     preview::{schedule_source_browser_refresh, BrowserPreviewRequestIdentity},
     project::{read_project_disk_manifest, scan_project_root, AcceptedProjectDiskManifest},
@@ -227,6 +230,15 @@ fn apply_project_workspace_history(
         .ok()
     });
     let workspace_snapshot = workspace.snapshot();
+    let document_presentations = workspace_snapshot
+        .documents
+        .files
+        .iter()
+        .map(|entry| WorkbenchDocumentPresentationEntry {
+            relative_path: entry.relative_path.clone(),
+            presentation: WorkbenchDocumentPresentation::from_text_language(entry.language),
+        })
+        .collect();
     let session = workspace.session.clone();
     let runtime_session_id = workspace.runtime_session_id();
     let project_root = workspace.session.project_root.clone();
@@ -260,6 +272,7 @@ fn apply_project_workspace_history(
                 remaps,
                 deleted_prefixes,
                 selection_override: reconciliation.selection_override,
+                document_presentations,
             },
             |snapshot| persist_workbench(&app, &session, snapshot),
         )?;

@@ -11,8 +11,8 @@ use crate::{
     },
     project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
     project_model::{
-        model::ProjectModel, rebuild_project_model_after_workspace_change,
-        ProjectModelIncrementalIntent,
+        files::is_project_model_text_path, model::ProjectModel,
+        rebuild_project_model_after_workspace_change, ProjectModelIncrementalIntent,
     },
     state::AppState,
 };
@@ -30,9 +30,33 @@ impl ProjectModelBuildContext {
     }
 
     pub(crate) fn model_cache_hit(&self) -> bool {
-        self.previous_model.is_some()
-            && self.previous_model_source_revision == Some(self.projection.revision)
+        self.previous_model.as_ref().is_some_and(|model| {
+            self.previous_model_source_revision == Some(self.projection.revision)
+                && project_model_sources_match_projection(model, &self.projection)
+        })
     }
+}
+
+/// A workspace revision is only an index into the cache, never proof that the
+/// cached model still owns the exact source bytes. This invariant is cheap: it
+/// borrows each COW document in place and does not clone the projection map.
+pub(crate) fn project_model_sources_match_projection(
+    model: &ProjectModel,
+    projection: &WorkspaceProjectionSnapshot,
+) -> bool {
+    let projected_file_count = projection
+        .source_texts
+        .keys()
+        .filter(|path| {
+            !projection.deleted_sources.contains(*path) && is_project_model_text_path(path)
+        })
+        .count();
+    projected_file_count == model.files.len()
+        && model.files.iter().all(|file| {
+            !projection.deleted_sources.contains(&file.relative_path)
+                && projection.source_texts.hash(&file.relative_path).as_deref()
+                    == Some(file.source_hash.as_str())
+        })
 }
 
 pub(crate) fn capture_project_model_build_context(
@@ -95,10 +119,12 @@ pub(crate) fn build_project_model_from_context(
     root: &Path,
     context: &ProjectModelBuildContext,
 ) -> Result<Arc<ProjectModel>, String> {
-    if context.previous_model_source_revision == Some(context.projection.revision) {
-        if let Some(model) = context.previous_model.as_ref() {
-            return Ok(model.clone());
-        }
+    if context.model_cache_hit() {
+        return Ok(context
+            .previous_model
+            .as_ref()
+            .expect("cache hit-ul a validat existența ProjectModel")
+            .clone());
     }
     rebuild_project_model_from_previous_projection(
         root,
@@ -118,7 +144,9 @@ pub(crate) fn rebuild_project_model_from_previous_projection(
         return super::build_project_model_from_workspace_projection(root, projection)
             .map(Arc::new);
     };
-    if previous_model_source_revision == Some(projection.revision) {
+    if previous_model_source_revision == Some(projection.revision)
+        && project_model_sources_match_projection(previous, projection)
+    {
         return Ok((*previous).clone());
     }
     let changed_paths = changed_paths_since_model(previous.as_ref(), projection);
@@ -126,7 +154,9 @@ pub(crate) fn rebuild_project_model_from_previous_projection(
     rebuild_project_model_after_workspace_change(
         root,
         Some(previous.as_ref()),
-        previous_model_source_revision,
+        project_model_sources_match_projection(previous, projection)
+            .then_some(previous_model_source_revision)
+            .flatten(),
         projection,
         &changed_paths,
         intent,
@@ -381,6 +411,7 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
+        sync::Arc,
         time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
@@ -478,6 +509,49 @@ mod tests {
             &cached
         ));
         drop(workspace);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn equal_workspace_revision_does_not_hide_a_divergent_cached_source() {
+        let (root, state) = benchmark_state("cache-source-authority", 0, 0);
+        let (captured_root, _, initial_context) =
+            capture_project_model_build_context(&state).unwrap();
+        let model = build_project_model_from_context(&captured_root, &initial_context).unwrap();
+        publish_project_model_if_current(&state, &initial_context, model.clone()).unwrap();
+
+        {
+            let mut workspace = state.project_workspace.lock().unwrap();
+            let workspace = workspace.as_mut().unwrap();
+            let mut divergent = (*model).clone();
+            let template = divergent
+                .files
+                .iter_mut()
+                .find(|file| file.relative_path == "templates/index.html")
+                .unwrap();
+            template.contents.push_str("<!-- sursă divergentă -->");
+            template.source_hash = hash_text(&template.contents);
+            workspace.project_model = Some(Arc::new(divergent));
+            assert_eq!(
+                workspace.project_model_source_revision,
+                Some(workspace.revision)
+            );
+        }
+
+        let (captured_root, _, context) = capture_project_model_build_context(&state).unwrap();
+        assert!(!context.model_cache_hit());
+        let rebuilt = build_project_model_from_context(&captured_root, &context).unwrap();
+        assert!(project_model_sources_match_projection(
+            &rebuilt,
+            context.projection()
+        ));
+        assert!(!rebuilt
+            .files
+            .iter()
+            .find(|file| file.relative_path == "templates/index.html")
+            .unwrap()
+            .contents
+            .contains("sursă divergentă"));
         fs::remove_dir_all(root).unwrap();
     }
 

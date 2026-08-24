@@ -7,12 +7,15 @@
     IconLanguage,
     IconPlus,
     IconRefresh,
-    IconRoute,
     IconSearch,
     IconTags,
     IconTrash,
     IconX,
   } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import TextFieldControl from "$lib/components/ui/TextFieldControl.svelte";
   import {
   applyTaxonomyMutation,
   planTaxonomyMutation,
@@ -386,6 +389,7 @@
     <label class="root-field">
       <span>{t("taxonomies-root-url")}</span>
       <input
+        class="ui-field toolbar"
         value={taxonomyRootDraft}
         oninput={(event) => { taxonomyRootDraft = event.currentTarget.value; }}
         placeholder={t("taxonomies-root-placeholder")}
@@ -411,21 +415,21 @@
   <div class="workspace-body">
     <div class="taxonomy-list" role="listbox" aria-label={t("taxonomies-catalog-label")}>
       {#if loadError}
-        <div class="workspace-state error" role="alert">
+        <div class="ui-empty-state error" role="alert">
           <IconAlertTriangle size={22} />
           <strong>{t("taxonomies-load-error-title")}</strong>
           <span>{loadError}</span>
-          <button type="button" onclick={() => { loadedKey = currentCatalogKey(); void loadCatalog(); }}>
+          <button class="ui-button compact" type="button" onclick={() => { loadedKey = currentCatalogKey(); void loadCatalog(); }}>
             <IconRefresh size={14} /> {t("taxonomies-retry")}
           </button>
         </div>
       {:else if loading && !catalog}
-        <div class="workspace-state">
+        <div class="ui-empty-state">
           <span class="spin"><IconRefresh size={20} /></span>
           <strong>{t("taxonomies-loading")}</strong>
         </div>
       {:else if visibleEntries.length === 0 && (catalog?.entries.length ?? 0) === 0}
-        <div class="workspace-state empty-catalog">
+        <div class="ui-empty-state empty-catalog">
           <span class="state-icon"><IconTags size={28} stroke={1.5} /></span>
           <strong>{t("taxonomies-empty-title")}</strong>
           <span>{t("taxonomies-empty-description")}</span>
@@ -474,7 +478,7 @@
             {/if}
           </article>
         {:else}
-          <div class="workspace-state"><strong>{t("taxonomies-no-results")}</strong><span>{t("taxonomies-change-search")}</span></div>
+          <EmptyState title={t("taxonomies-no-results")} description={t("taxonomies-change-search")} />
         {/each}
       {/if}
     </div>
@@ -491,39 +495,20 @@
             <button class="ui-icon-button ui-close-button" type="button" aria-label={t("taxonomies-cancel")} disabled={busy} onclick={resetDetail}><IconX size={14} /></button>
           </div>
           <div class="form-fields">
-            <label>
-              <span>{t("taxonomies-name")}</span>
-              <input bind:value={nameDraft} placeholder="tags" autocomplete="off" disabled={busy} />
-            </label>
-            <label>
-              <span>{t("taxonomies-language")}</span>
-              <input bind:value={languageDraft} placeholder={catalog?.defaultLanguage ?? "en"} autocomplete="off" disabled={busy} />
-            </label>
+            <TextFieldControl label={t("taxonomies-name")} bind:value={nameDraft} placeholder="tags" autocomplete="off" disabled={busy} />
+            <TextFieldControl label={t("taxonomies-language")} bind:value={languageDraft} placeholder={catalog?.defaultLanguage ?? "en"} autocomplete="off" disabled={busy} />
             <div class="toggle-grid">
-              <label><input type="checkbox" bind:checked={renderDraft} disabled={busy} /> {t("taxonomies-render-pages")}</label>
-              <label><input type="checkbox" bind:checked={feedDraft} disabled={busy} /> {t("taxonomies-render-feed")}</label>
+              <CheckboxControl compact label={t("taxonomies-render-pages")} bind:checked={renderDraft} disabled={busy} />
+              <CheckboxControl compact label={t("taxonomies-render-feed")} bind:checked={feedDraft} disabled={busy} />
             </div>
             <div class="field-grid">
-              <label>
-                <span>{t("taxonomies-items-per-page")}</span>
-                <input
-                  type="number"
-                  min="1"
-                  value={paginateByDraft}
-                  oninput={(event) => { paginateByDraft = event.currentTarget.value; }}
-                  placeholder={t("taxonomies-no-pagination")}
-                  disabled={busy}
-                />
-              </label>
-              <label>
-                <span>{t("taxonomies-pagination-path")}</span>
-                <input bind:value={paginatePathDraft} placeholder="page" autocomplete="off" disabled={busy} />
-              </label>
+              <TextFieldControl type="number" min="1" label={t("taxonomies-items-per-page")} bind:value={paginateByDraft} placeholder={t("taxonomies-no-pagination")} disabled={busy} />
+              <TextFieldControl label={t("taxonomies-pagination-path")} bind:value={paginatePathDraft} placeholder="page" autocomplete="off" disabled={busy} />
             </div>
           </div>
-          {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+          {#if formError}<InlineMessage message={formError} tone="error" />{/if}
           <div class="form-actions">
-            <button type="button" disabled={busy} onclick={resetDetail}>{t("taxonomies-cancel")}</button>
+            <button class="ui-button compact" type="button" disabled={busy} onclick={resetDetail}>{t("taxonomies-cancel")}</button>
             <button class="ui-button primary" type="submit" disabled={busy || !nameDraft.trim() || !languageDraft.trim()}>
               <IconCheck size={14} /> {busy
                 ? t("taxonomies-applying")
@@ -550,11 +535,9 @@
           </button>
         </div>
         <section class="rename-card">
-          <label>
-            <span>{t("taxonomies-rename-label")}</span>
-            <input bind:value={termDraft} disabled={busy} />
-          </label>
+          <TextFieldControl label={t("taxonomies-rename-label")} bind:value={termDraft} disabled={busy} compact />
           <button
+            class="ui-button compact"
             type="button"
             disabled={busy || !termDraft.trim() || termDraft.trim() === selectedTerm.name}
             onclick={() => { void renameSelectedTerm(selected, selectedTerm); }}
@@ -571,13 +554,13 @@
         <section class="relation-section">
           <h3>{t("taxonomies-associated-pages")}</h3>
           {#each selectedTerm.pages as page (page.file)}
-            <button type="button" onclick={() => { void openWorkspaceSource(page.file); }}>
+            <button class="ui-button quiet compact relation-action" type="button" onclick={() => { void openWorkspaceSource(page.file); }}>
               <span><strong>{page.title}</strong><small>{page.file}</small></span>
               <em>{page.url}</em>
             </button>
           {:else}<p>{t("taxonomies-no-associated-pages")}</p>{/each}
         </section>
-        {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+        {#if formError}<InlineMessage message={formError} tone="error" />{/if}
       {:else if selected}
         <div class="detail-heading">
           <div>
@@ -589,7 +572,7 @@
               {selected.path} <IconExternalLink size={13} />
             </a>
           </div>
-          <button type="button" disabled={busy} onclick={() => beginEdit(selected)}>
+          <button class="ui-button compact" type="button" disabled={busy} onclick={() => beginEdit(selected)}>
             {selected.declared ? t("taxonomies-edit") : t("taxonomies-declare")}
           </button>
         </div>
@@ -616,6 +599,7 @@
               <span><strong>{item.label}</strong><small>{item.template.file ?? item.template.logicalName}</small></span>
               <em>{templateOrigin(item.template)}{item.template.fallback ? ` · ${t("taxonomies-template-fallback")}` : ""}</em>
               <button
+                class="ui-button compact"
                 type="button"
                 disabled={!item.template.file}
                 onclick={() => { void openTemplate(item.template); }}
@@ -627,7 +611,7 @@
         <section class="relation-section">
           <h3>{t("taxonomies-affected-pages")}</h3>
           {#each selected.pages as page (page.file)}
-            <button type="button" onclick={() => { void openWorkspaceSource(page.file); }}>
+            <button class="ui-button quiet compact relation-action" type="button" onclick={() => { void openWorkspaceSource(page.file); }}>
               <span><strong>{page.title}</strong><small>{page.file}</small></span>
               <em>{page.url}</em>
             </button>
@@ -666,39 +650,31 @@
               pageCount: selected.pages.length,
               termCount: selected.terms.length,
             })}</span>
-            <label>
-              <input type="checkbox" bind:checked={removeAssignments} disabled={busy} />
-              {t("taxonomies-remove-assignments")}
-            </label>
+            <CheckboxControl compact label={t("taxonomies-remove-assignments")} bind:checked={removeAssignments} disabled={busy} />
             <div>
-              <button type="button" disabled={busy} onclick={() => { deleteConfirmationOpen = false; }}>{t("taxonomies-cancel")}</button>
+              <button class="ui-button compact" type="button" disabled={busy} onclick={() => { deleteConfirmationOpen = false; }}>{t("taxonomies-cancel")}</button>
               <button class="ui-button danger" type="button" disabled={busy} onclick={() => { void removeSelected(selected); }}>
                 <IconTrash size={14} /> {t("taxonomies-confirm-impact")}
               </button>
             </div>
           </section>
         {/if}
-        {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+        {#if formError}<InlineMessage message={formError} tone="error" />{/if}
       {:else}
-        <div class="workspace-state">
-          <IconRoute size={25} />
-          <strong>{t("taxonomies-select-title")}</strong>
-          <span>{t("taxonomies-select-description")}</span>
-        </div>
+        <EmptyState title={t("taxonomies-select-title")} description={t("taxonomies-select-description")} />
       {/if}
     </aside>
   </div>
 </section>
 
 <style>
-  .compact-action, .taxonomy-row, .detail-heading, .detail-heading button, .relation-section button, .detail-actions, .detail-actions button, .form-error, .form-actions, .form-actions button, .rename-card, .rename-card button, .template-section > div, .diagnostics-section > div, .delete-confirmation > div, .delete-confirmation button, .workspace-state button { display: flex; align-items: center; }
+  .compact-action, .taxonomy-row, .detail-heading, .relation-section button, .detail-actions, .form-actions, .rename-card, .template-section > div, .diagnostics-section > div, .delete-confirmation > div { display: flex; align-items: center; }
   .workspace-header > dl div.warning { border-color: color-mix(in srgb, var(--danger) 38%, var(--wb-border-subtle)); }
   dt { color: var(--wb-text-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; }
   dd { margin: 3px 0 0; color: var(--text-strong); font-size: 15px; font-weight: 650; }
   .root-field { display: flex; align-items: center; gap: 7px; }
   .root-field span { color: var(--wb-text-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; white-space: nowrap; }
-  .root-field input { width: 160px; height: var(--control-height-toolbar); padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--material-inset); box-shadow: var(--shadow-inset); font-size: 12px; }
-  .compact-action { justify-content: center; gap: 5px; min-height: 28px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
+  .root-field input { width: 160px; }
   .workspace-body { display: grid; grid-template-columns: minmax(390px, 1fr) minmax(340px, .72fr); min-width: 0; min-height: 0; }
   .taxonomy-list, .taxonomy-detail { min-width: 0; min-height: 0; overflow: auto; }
   .taxonomy-list { padding: 9px; border-right: 1px solid var(--wb-border-subtle); }
@@ -723,7 +699,6 @@
   h2 { margin: 6px 0 2px; color: var(--text-strong); font-size: 19px; }
   .detail-heading p { max-width: 520px; margin: 5px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.45; }
   .detail-heading a { display: inline-flex; align-items: center; gap: 4px; color: var(--wb-accent-strong); font-size: 11px; text-decoration: none; }
-  .detail-heading button, .detail-actions button, .form-actions button, .rename-card button, .template-section button, .delete-confirmation button, .workspace-state button { justify-content: center; gap: 5px; min-height: 29px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
   .contract-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 14px 0; }
   .contract-grid div { min-width: 0; padding: 8px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; background: var(--wb-surface-document); }
   .contract-grid div.wide { grid-column: 1 / -1; }
@@ -737,40 +712,24 @@
   .template-section strong, .relation-section strong, .diagnostics-section strong { font-size: 11px; }
   .template-section small, .relation-section small, .diagnostics-section small { overflow: hidden; color: var(--wb-text-muted); font-size: 11px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
   .template-section em, .relation-section em { color: var(--wb-text-muted); font-size: 11px; font-style: normal; white-space: nowrap; }
-  .template-section button { min-height: 25px; font-size: 11px; }
   .relation-section button { width: 100%; justify-content: space-between; gap: 8px; padding: 6px 7px; border: 0; border-top: 1px solid var(--wb-border-subtle); color: var(--wb-text-primary); background: transparent; text-align: left; }
   .relation-section p { margin: 5px 0 0; color: var(--wb-text-muted); font-size: 11px; }
   .diagnostics-section > div { align-items: flex-start; gap: 7px; padding: 7px; border-top: 1px solid var(--wb-border-subtle); color: var(--wb-warning); }
   .diagnostics-section > div.error { color: var(--danger); }
   .diagnostics-section small { white-space: normal; }
   .detail-actions { gap: 6px; margin-top: 16px; }
-  .detail-actions .primary, .form-actions .primary, .workspace-state .primary { color: #fff; border-color: var(--wb-accent); background: var(--wb-accent); }
-  .detail-actions .danger { margin-left: auto; color: var(--danger); }
+  .detail-actions .danger { margin-left: auto; }
   .taxonomy-form { display: grid; align-content: start; gap: 16px; }
   .form-fields { display: grid; gap: 12px; }
-  .form-fields label, .rename-card label { display: grid; gap: 5px; }
-  .form-fields label > span, .rename-card label > span { color: var(--wb-text-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; }
-  .form-fields input:not([type="checkbox"]), .rename-card input { width: 100%; min-height: 32px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
   .field-grid, .toggle-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .toggle-grid label { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 8px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 11px; }
-  .form-error { align-items: flex-start; gap: 6px; margin: 0; padding: 8px 9px; border-left: 3px solid var(--danger); border-radius: var(--radius-control); color: var(--danger); background: var(--wb-surface-document); font-size: 12px; }
   .form-actions { justify-content: flex-end; gap: 6px; }
   .rename-card { align-items: end; gap: 8px; margin-top: 14px; padding: 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); background: var(--wb-surface-document); }
-  .rename-card label { flex: 1; }
+  .rename-card :global(.ui-form-field) { flex: 1; }
   .delete-confirmation { display: grid; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--wb-border-subtle)); border-radius: var(--radius-control); background: var(--wb-surface-document); }
   .delete-confirmation > strong { color: var(--text-strong); font-size: 12px; }
-  .delete-confirmation > span, .delete-confirmation label { color: var(--wb-text-muted); font-size: 11px; line-height: 1.45; }
-  .delete-confirmation label { display: flex; align-items: center; gap: 6px; }
+  .delete-confirmation > span { color: var(--wb-text-muted); font-size: 11px; line-height: 1.45; }
   .delete-confirmation > div { justify-content: flex-end; gap: 6px; }
-  .delete-confirmation .danger { color: var(--danger); }
-  .workspace-state { display: grid; min-height: 200px; place-items: center; align-content: center; gap: 8px; padding: 24px; color: var(--wb-text-muted); font-size: 12px; text-align: center; }
-  .workspace-state strong { color: var(--text-strong); font-size: 13px; }
-  .workspace-state > span:not(.spin):not(.state-icon) { max-width: 430px; line-height: 1.5; }
-  .workspace-state.error { color: var(--danger); }
   .spin { animation: spin 1s linear infinite; }
-  button:not(:disabled) { cursor: pointer; }
-  button:disabled { opacity: .45; }
-  button:focus-visible, input:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 920px) { .workspace-body { grid-template-columns: 1fr; } .taxonomy-detail { display: none; } .taxonomy-list { border-right: 0; } .workspace-header > dl { display: none; } .root-field { display: none; } }

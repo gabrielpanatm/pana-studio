@@ -255,13 +255,14 @@
       property="background-color"
       value={background.color ?? ""}
       suggestions={variablesForProperty("background-color", scssVariables)}
+      resolutionVariables={scssVariables}
       oninput={(value) => emitSelected({ ...background, color: value || null }, ["background-color"])}
       oncommit={(value) => emitSelected({ ...background, color: value || null }, ["background-color"], true)}
       oncancel={() => edit.cancel("background-color")}
     />
 
     {#if structuralChangesBlocked}
-      <div class="compatibility-note compact">
+      <div class="compatibility-note compact ui-message warning">
         <strong>{t("inspector-background-dynamic-lists-title")}</strong>
         <span>{t("inspector-background-dynamic-lists-description")}</span>
       </div>
@@ -277,8 +278,8 @@
         <span>{t("inspector-background-layer-order")}</span>
       </div>
       <div class="add-actions">
-        <button type="button" disabled={structuralChangesBlocked} title={t("inspector-background-add-image")} onclick={() => addLayer("image")}><IconPhoto size={13} /><span>{t("inspector-background-image")}</span></button>
-        <button type="button" disabled={structuralChangesBlocked} title={t("inspector-background-add-gradient")} onclick={() => addLayer("gradient")}><IconPlus size={13} /><span>{t("inspector-background-gradient")}</span></button>
+        <button type="button" class="ui-button compact quiet" disabled={structuralChangesBlocked} title={t("inspector-background-add-image")} onclick={() => addLayer("image")}><IconPhoto size={13} /><span>{t("inspector-background-image")}</span></button>
+        <button type="button" class="ui-button compact quiet" disabled={structuralChangesBlocked} title={t("inspector-background-add-gradient")} onclick={() => addLayer("gradient")}><IconPlus size={13} /><span>{t("inspector-background-gradient")}</span></button>
       </div>
     </div>
 
@@ -291,19 +292,19 @@
 
     <div class="layer-list">
       {#each background.layers as layer, index (layer.id)}
-        <article class="layer-card" class:active={activeLayerId === layer.id}>
+        <article class="layer-card ui-card" class:active={activeLayerId === layer.id}>
           <button type="button" class="layer-summary" aria-expanded={activeLayerId === layer.id} onclick={() => activeLayerId = activeLayerId === layer.id ? null : layer.id}>
             <span class="layer-index">{index + 1}</span>
-            <span class="layer-swatch" style:background={layer.kind === "gradient" ? layer.source : layer.kind === "image" ? "var(--surface-4)" : "var(--surface-inset)"}>
+            <span class="layer-swatch" style:background={layer.kind === "gradient" ? layer.source : layer.kind === "image" ? "var(--material-control)" : "var(--surface-inset)"}>
               {#if layer.kind === "image"}<IconPhoto size={12} />{/if}
             </span>
             <span class="layer-title"><strong>{sourceLabel(layer)}</strong><small>{layer.kind}</small></span>
           </button>
           <div class="layer-actions">
-            <button type="button" disabled={structuralChangesBlocked || index === 0} title={t("inspector-background-move-up")} aria-label={t("inspector-background-move-up")} onclick={() => moveLayer(layer.id, -1)}><IconArrowUp size={12} /></button>
-            <button type="button" disabled={structuralChangesBlocked || index === background.layers.length - 1} title={t("inspector-background-move-down")} aria-label={t("inspector-background-move-down")} onclick={() => moveLayer(layer.id, 1)}><IconArrowDown size={12} /></button>
-            <button type="button" disabled={structuralChangesBlocked} title={t("inspector-duplicate")} aria-label={t("inspector-duplicate")} onclick={() => duplicateLayer(layer)}><IconCopy size={12} /></button>
-            <button type="button" disabled={structuralChangesBlocked} class="danger" title={t("inspector-delete")} aria-label={t("inspector-delete")} onclick={() => removeLayer(layer.id)}><IconTrash size={12} /></button>
+            <button type="button" class="ui-icon-button mini" disabled={structuralChangesBlocked || index === 0} title={t("inspector-background-move-up")} aria-label={t("inspector-background-move-up")} onclick={() => moveLayer(layer.id, -1)}><IconArrowUp size={12} /></button>
+            <button type="button" class="ui-icon-button mini" disabled={structuralChangesBlocked || index === background.layers.length - 1} title={t("inspector-background-move-down")} aria-label={t("inspector-background-move-down")} onclick={() => moveLayer(layer.id, 1)}><IconArrowDown size={12} /></button>
+            <button type="button" class="ui-icon-button mini" disabled={structuralChangesBlocked} title={t("inspector-duplicate")} aria-label={t("inspector-duplicate")} onclick={() => duplicateLayer(layer)}><IconCopy size={12} /></button>
+            <button type="button" disabled={structuralChangesBlocked} class="ui-icon-button mini danger" title={t("inspector-delete")} aria-label={t("inspector-delete")} onclick={() => removeLayer(layer.id)}><IconTrash size={12} /></button>
           </div>
 
           {#if activeLayerId === layer.id}
@@ -330,7 +331,7 @@
                   oncancel={() => edit.cancelMany(BACKGROUND_LONGHAND_PROPERTIES)}
                 />
               {:else}
-                <div class="compatibility-note compact">
+                <div class="compatibility-note compact ui-message warning">
                   <strong>{t("inspector-background-opaque-layer")}</strong>
                   <span>{t("inspector-background-opaque-description")}</span>
                 </div>
@@ -407,37 +408,26 @@
 
 <style>
   .field-label { margin-top: 1px; color: var(--text-muted); font-size: 11px; }
-  .compatibility-note { display: flex; flex-direction: column; gap: 3px; padding: 8px; border: 1px solid color-mix(in srgb, var(--warning, #b7791f) 35%, var(--border-subtle)); border-radius: 8px; background: color-mix(in srgb, var(--warning, #b7791f) 7%, transparent); font-size: 11px; line-height: 1.35; }
+  .compatibility-note { display: flex; flex-direction: column; gap: 3px; font-size: 11px; line-height: 1.35; }
   .compatibility-note span, .preservation-note { color: var(--text-muted); }
-  .compatibility-note.compact { padding: 6px; }
   .layers-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 6px; }
   .layers-heading > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .layers-heading strong { font-size: 12px; }
   .layers-heading span { color: var(--text-muted); font-size: 11px; }
   .add-actions { display: flex; gap: 4px; }
-  .add-actions button, .layer-actions button {
-    display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-height: 24px;
-    border: 1px solid var(--border-4); border-radius: 6px; background: var(--surface-8); color: var(--text-muted); cursor: pointer;
-  }
-  .add-actions button { padding: 0 6px; font-size: 11px; }
-  .add-actions button:hover, .layer-actions button:hover { color: var(--text); border-color: var(--brand); }
-  .add-actions button:disabled { opacity: .38; cursor: not-allowed; }
-  .empty-layers { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 52px; border: 1px dashed var(--border-4); border-radius: 8px; background: var(--surface-4); color: var(--text-muted); cursor: pointer; font-size: 11px; }
+  .empty-layers { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 52px; border: 1px dashed var(--border-strong); border-radius: var(--radius-card); background: var(--material-inset); color: var(--text-muted); cursor: pointer; font-size: 11px; }
   .empty-layers:hover { color: var(--brand); border-color: var(--brand); }
   .layer-list { display: flex; flex-direction: column; gap: 6px; }
-  .layer-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; border: 1px solid var(--border-subtle); border-radius: 9px; background: var(--surface-4); overflow: hidden; }
+  .layer-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; overflow: hidden; }
   .layer-card.active { border-color: color-mix(in srgb, var(--brand) 55%, var(--border-subtle)); }
   .layer-summary { display: grid; grid-template-columns: 17px 24px minmax(0, 1fr); align-items: center; gap: 5px; min-width: 0; padding: 6px; border: none; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-  .layer-index { color: var(--text-muted); font: 11px "JetBrains Mono", monospace; text-align: center; }
-  .layer-swatch { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid var(--border-4); border-radius: 5px; color: var(--text-muted); }
+  .layer-index { color: var(--text-muted); font: 11px var(--font-mono); text-align: center; }
+  .layer-swatch { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: calc(var(--radius-control) - 1px); color: var(--text-muted); }
   .layer-title { display: flex; flex-direction: column; min-width: 0; }
   .layer-title strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .layer-title small { color: var(--text-muted); font-size: 11px; text-transform: uppercase; }
   .layer-actions { display: flex; align-items: center; gap: 2px; padding: 4px 5px 4px 0; }
-  .layer-actions button { width: 22px; min-height: 22px; padding: 0; }
-  .layer-actions button:disabled { opacity: .3; cursor: not-allowed; }
-  .layer-actions .danger:hover { color: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
-  .layer-editor { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 7px; padding: 8px; border-top: 1px solid var(--border-subtle); background: var(--surface-8); }
+  .layer-editor { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 7px; padding: 8px; border-top: 1px solid var(--border-subtle); background: var(--material-inset); }
   .two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .two-fields > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .preservation-note { margin: 0; font-size: 11px; line-height: 1.4; }

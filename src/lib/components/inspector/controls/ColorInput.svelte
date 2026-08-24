@@ -14,6 +14,7 @@
     property,
     value = "",
     suggestions = [],
+    resolutionVariables,
     oninput,
     oncommit,
     oncancel,
@@ -21,6 +22,7 @@
     property: string;
     value?: string;
     suggestions?: ScssVariable[];
+    resolutionVariables?: ScssVariable[];
     oninput?: (value: string) => void;
     oncommit?: (value: string) => void;
     oncancel?: () => void;
@@ -39,7 +41,10 @@
   let skipNextCommit = false;
 
   // Variabilele sunt rezolvate numai pentru swatch; sursa rămâne `$token`.
-  const resolvedColor = $derived(resolvePickerColor(draftValue, suggestions));
+  const resolvedColor = $derived(resolvePickerColor(
+    draftValue,
+    resolutionVariables ?? suggestions,
+  ));
 
   // ── Sync effects ─────────────────────────────────────────────────────────
 
@@ -101,7 +106,7 @@
   }
 </script>
 
-<div class="color-input" class:has-value={!!draftValue} bind:this={root} onfocusout={handleFocusOut}>
+<div class="color-input ui-control-group compact" class:has-value={!!draftValue} bind:this={root} onfocusout={handleFocusOut}>
   <PanaColorPicker
     value={resolvedColor ?? "#000000"}
     empty={!resolvedColor}
@@ -118,7 +123,7 @@
   {#if suggestions.length}
     <button
       type="button"
-      class="var-btn"
+      class="var-btn ui-icon-button compact quiet ui-control-action"
       title={t("inspector-insert-scss-variable")}
       onclick={() => {
         showSuggestions = !showSuggestions;
@@ -130,7 +135,7 @@
   <input
     id={inputId}
     type="text"
-    class="color-field"
+    class="color-field ui-control-input code"
     value={draftValue}
     placeholder="—"
     autocomplete="off"
@@ -159,55 +164,5 @@
 <style>
   .color-input {
     position: relative;
-    display: flex;
-    align-items: center;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    background: var(--surface-8);
-    overflow: visible;
-    min-width: 0;
-  }
-
-  .color-input:focus-within {
-    border-color: var(--brand);
-  }
-
-  /* ── Variable button ────────────────────────────────────────────────── */
-
-  .var-btn {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 24px;
-    padding: 0;
-    border: none;
-    border-right: 1px solid var(--border-4);
-    font-size: 12px;
-    line-height: 1;
-    background: var(--surface-4);
-    cursor: pointer;
-    color: var(--text-muted);
-  }
-
-  .var-btn:hover {
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-  }
-
-  /* ── Text field ─────────────────────────────────────────────────────── */
-
-  .color-field {
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    padding: 0 6px;
-    border: none;
-    color: var(--text);
-    font-size: 12px;
-    background: transparent;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-    outline: none;
   }
 </style>

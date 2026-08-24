@@ -101,7 +101,8 @@ test("catalogul vizual ocupă panoul și separă categoria HTML de suprafața un
   }
   assert.match(panel, /buildPresentedSections\(activeCategory/);
   assert.match(panel, /class="html-category-filter"/);
-  assert.match(panel, /bind:value=\{activeHtmlSection\}/);
+  assert.match(panel, /value=\{activeHtmlSection\}/);
+  assert.match(panel, /onchange=\{\(value\) => \{ activeHtmlSection = value; \}\}/);
   assert.match(panel, /class="catalog-item ui-entity-selectable"/);
   assert.match(panel, /IconGripVertical/);
   assert.match(panel, /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
@@ -245,28 +246,8 @@ test("payloadul HTML component legacy este refuzat, nu convertit sau reinterpret
   assert.equal(statusKind, "error");
 });
 
-test("bridge-ul Tera păstrează macroCall și bindingul dinamic tipizat", () => {
+test("bridge-ul Tera păstrează macroCall și DynamicWidget tipizat", () => {
   const normalize = teraBridgeNormalizer();
-  const binding = {
-    modelId: "serviciu",
-    fieldId: "pret",
-    path: "pret",
-    scope: "page",
-    itemPath: null,
-    presentation: "text",
-    prefix: "",
-    suffix: " lei",
-    fallback: "0",
-    text: "Preț",
-  };
-  const dynamic = normalize({
-    id: "dynamic:serviciu:pret",
-    kind: "teraVariable",
-    family: "data",
-    label: "Preț",
-    expression: "page.extra.pret",
-    dynamicBinding: binding,
-  });
   const macro = normalize({
     id: "component:card",
     kind: "macroCall",
@@ -299,8 +280,6 @@ test("bridge-ul Tera păstrează macroCall și bindingul dinamic tipizat", () =>
     dynamicWidget: widgetProperties,
   });
 
-  assert.equal(dynamic.dynamicBinding.modelId, "serviciu");
-  assert.equal(dynamic.dynamicBinding.fieldId, "pret");
   assert.equal(macro.kind, "macroCall");
   assert.equal(widget.kind, "dynamicWidget");
   assert.deepEqual(widget.dynamicWidget, widgetProperties);

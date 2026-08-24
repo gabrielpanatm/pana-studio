@@ -157,6 +157,21 @@ export class CssInspectorState {
     );
   }
 
+  get hasEditableTarget() {
+    const resolution = this.resolution;
+    const selector = this.effectiveSelector;
+    return Boolean(
+      !this.loading
+      && resolution
+      && resolution.state !== "ambiguous"
+      && resolution.target
+      && selector
+      && resolution.selector === selector
+      && resolution.viewport === this.currentViewport
+      && resolution.target.file === this.currentTargetFile
+    );
+  }
+
   resetProjection(clearPending = true) {
     this.loading = false;
     this.classRules = [];
@@ -172,9 +187,11 @@ export class CssInspectorState {
   }
 
   beginRead(retainProjection: boolean) {
-    if (!retainProjection) this.resetProjection(false);
+    if (!retainProjection) {
+      this.resetProjection(false);
+      this.pendingValues = {};
+    }
     this.loading = !retainProjection;
-    this.pendingValues = {};
   }
 
   finishRead() {
@@ -213,10 +230,12 @@ export class CssInspectorState {
       this.ruleContext = null;
       this.classRules = [];
       this.loading = false;
+      this.settlePendingValues();
       return;
     }
     if (!openContext) {
       this.applyLiveContext(resolvedContext);
+      this.settlePendingValues();
       return;
     }
     const resolvedRules = resolvedContext.hasViewportRule
@@ -231,6 +250,7 @@ export class CssInspectorState {
       background: sameRules ? resolvedContext.background : openContext.background,
       grid: sameRules ? resolvedContext.grid : openContext.grid,
     });
+    this.settlePendingValues();
   }
 
   applyLiveContext(context: CssRuleContext) {
@@ -245,5 +265,22 @@ export class CssInspectorState {
 
   clearPendingValues() {
     this.pendingValues = {};
+  }
+
+  settlePendingValues() {
+    const entries = Object.entries(this.pendingValues);
+    if (!entries.length) return;
+    const canonical = new Map(
+      this.classRules.map((rule) => [rule.property, rule.value] as const),
+    );
+    const next = { ...this.pendingValues };
+    let changed = false;
+    for (const [property, pendingValue] of entries) {
+      const canonicalValue = canonical.get(property) ?? "";
+      if (canonicalValue.trim() !== pendingValue.trim()) continue;
+      delete next[property];
+      changed = true;
+    }
+    if (changed) this.pendingValues = next;
   }
 }

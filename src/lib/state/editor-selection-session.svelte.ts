@@ -65,7 +65,6 @@ export type EditorSelectionSessionHost = {
   coordinatedElementSelection: CoordinatedElementSelection | null;
   previewSrc: string;
   projectWorkspaceSnapshot: ProjectWorkspaceSnapshot | null;
-  targetCssFile: string;
   applySelectionState: (observation: CanvasElementObservation) => void;
   projectSelectionSnapshotOnCanvas: (selection: SelectionSnapshot) => void;
 };
@@ -497,10 +496,6 @@ export class EditorSelectionSessionController {
           canvasIdentity: selection.canvasIdentity,
         };
       }
-    }
-
-    if (selection.focus.kind === "cssRule" || selection.focus.kind === "cssProperty") {
-      this.host().targetCssFile = selection.focus.file;
     }
   }
 }

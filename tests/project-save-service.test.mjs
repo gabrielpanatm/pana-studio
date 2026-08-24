@@ -23,6 +23,7 @@ function workspace() {
 
 function fixture(overrides = {}) {
   const statuses = [];
+  const resolvedStatuses = [];
   let suspendCalls = 0;
   let resumeCalls = 0;
   let releaseSuspend = () => {};
@@ -76,7 +77,10 @@ function fixture(overrides = {}) {
         applyText: async () => noopAction(),
       },
     },
-    status: { set(text, kind) { statuses.push({ text, kind }); } },
+    status: {
+      set(text, kind) { statuses.push({ text, kind }); },
+      resolve(key) { resolvedStatuses.push(key); },
+    },
     commands: {
       applyTagChange: async () => noopAction(),
       applyClasses: async () => noopAction(),
@@ -92,6 +96,7 @@ function fixture(overrides = {}) {
     service: new ProjectSaveService(dependencies),
     dependencies,
     statuses,
+    resolvedStatuses,
     releaseSuspend,
     suspendCalls: () => suspendCalls,
     resumeCalls: () => resumeCalls,
@@ -118,6 +123,7 @@ test("Save suprapus este serializat, iar drain așteaptă aceeași operație", a
   await drained;
   assert.equal(reads, 1);
   assert.equal(state.resumeCalls(), 1);
+  assert.equal(state.resolvedStatuses.length, 1);
 });
 
 test("lease-ul de tranziție blochează Save înainte de disk-watch", async () => {

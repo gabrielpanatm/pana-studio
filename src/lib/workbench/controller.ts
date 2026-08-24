@@ -16,18 +16,26 @@ import {
   patchExactWorkbenchDocumentActivation,
 } from "$lib/workbench/activation-projection";
 import { t } from "$lib/i18n/runtime.svelte";
+import {
+  activeWorkbenchDocument,
+  workbenchPresentationForProjectFile,
+} from "$lib/workbench/document-presentation";
 
 export type WorkbenchProjectionHost = {
   sessionProjectRoot: string;
   kernelProjectSessionId: string;
   workbenchSnapshot: WorkbenchSnapshot | null;
+  projectActiveDocument: (previous: ReturnType<typeof activeWorkbenchDocument>) => void;
 };
 
 export class WorkbenchProjectionController {
   private commandTail: Promise<void> = Promise.resolve();
   private refreshSerial = 0;
+  private readonly host: () => WorkbenchProjectionHost;
 
-  constructor(private readonly host: () => WorkbenchProjectionHost) {}
+  constructor(host: () => WorkbenchProjectionHost) {
+    this.host = host;
+  }
 
   reset() {
     this.refreshSerial += 1;
@@ -84,6 +92,7 @@ export class WorkbenchProjectionController {
       ) {
         throw new Error(t("workbench-closed-session-receipt"));
       }
+      const previousActiveDocument = activeWorkbenchDocument(current.workbenchSnapshot);
       const patched = intent.kind === "activate_document"
         ? patchExactWorkbenchDocumentActivation(
           current.workbenchSnapshot,
@@ -99,6 +108,8 @@ export class WorkbenchProjectionController {
           : false;
       if (!patched) {
         current.workbenchSnapshot = receipt.snapshot;
+      } else {
+        current.projectActiveDocument(previousActiveDocument);
       }
       return receipt;
     });
@@ -108,19 +119,22 @@ export class WorkbenchProjectionController {
 
   async openDocument(file: ProjectFile, centerView: CenterView): Promise<WorkbenchCommandReceipt> {
     const snapshot = this.host().workbenchSnapshot ?? await this.refresh();
-    if (snapshot && snapshot.split !== "none") {
+    const presentation = workbenchPresentationForProjectFile(file);
+    if (presentation === "html" && snapshot && snapshot.split !== "none") {
       return this.apply({
         kind: "configure_synchronized_split",
         split: snapshot.split,
         relativePath: file.relativePath,
         secondarySurface: "code",
+        presentation,
       });
     }
     return this.apply({
       kind: "open_document",
       relativePath: file.relativePath,
       groupId: this.host().workbenchSnapshot?.activeGroupId ?? "primary",
-      surface: workbenchSurface(centerView),
+      surface: presentation === "html" ? workbenchSurface(centerView) : "code",
+      presentation,
     });
   }
 
@@ -135,7 +149,7 @@ export class WorkbenchProjectionController {
     if (!group) return null;
     const document = group?.documents.find((candidate) => candidate.relativePath === relativePath);
     if (!document) return null;
-    const surface = workbenchSurface(centerView);
+    const surface = document.presentation === "html" ? workbenchSurface(centerView) : "code";
     if (document.surface === surface) return null;
     return this.apply({
       kind: "set_document_surface",

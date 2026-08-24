@@ -103,7 +103,9 @@
       </div>
       <code>{localStatus?.contextPath ?? "..."}</code>
       <button
+        class="ui-icon-button mini"
         type="button"
+        aria-label={t("settings-directory-copy-title", { label: t("settings-ai-context-json-path") })}
         title={t("settings-directory-copy-title", { label: t("settings-ai-context-json-path") })}
         onclick={() => copyValue(localStatus?.contextPath ?? "", t("settings-ai-context-json-path"))}
       >
@@ -118,7 +120,9 @@
       </div>
       <code>{localStatus?.discoveryPath ?? "..."}</code>
       <button
+        class="ui-icon-button mini"
         type="button"
+        aria-label={t("settings-directory-copy-title", { label: t("settings-ai-discovery-path") })}
         title={t("settings-directory-copy-title", { label: t("settings-ai-discovery-path") })}
         onclick={() => copyValue(localStatus?.discoveryPath ?? "", t("settings-ai-discovery-path"))}
       >
@@ -133,7 +137,9 @@
       </div>
       <code>{localStatus?.endpoint ?? "http://127.0.0.1:48731/mcp"}</code>
       <button
+        class="ui-icon-button mini"
         type="button"
+        aria-label={t("settings-directory-copy-title", { label: t("settings-ai-endpoint") })}
         title={t("settings-directory-copy-title", { label: t("settings-ai-endpoint") })}
         onclick={() => copyValue(localStatus?.endpoint ?? "", t("settings-ai-endpoint"))}
       >
@@ -160,7 +166,7 @@
     </div>
     <button
       type="button"
-      class="text-button"
+      class="text-button ui-button compact"
       disabled={codexLoading || codexRecoveryBlocked || codexStatus?.configured || (codexStatus?.configExists && !codexStatus.securePermissions)}
       onclick={configureCodex}
     >
@@ -286,25 +292,9 @@
     white-space: nowrap;
   }
 
-  button {
+  .field-card > :global(.ui-icon-button) {
     grid-column: 2 / 3;
     grid-row: 1 / 3;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    border: 1px solid var(--border-3);
-    border-radius: 7px;
-    background: var(--surface-4);
-    color: var(--text-muted);
-    cursor: pointer;
-  }
-
-  button:hover {
-    border-color: var(--border-4);
-    color: var(--text);
   }
 
   .host-card {
@@ -328,9 +318,6 @@
     grid-row: auto;
     width: auto;
     min-width: 96px;
-    padding: 0 10px;
-    font-size: 12px;
-    font-weight: 800;
   }
 
   .text-button:disabled {

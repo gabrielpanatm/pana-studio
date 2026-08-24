@@ -153,7 +153,6 @@ async function insertTeraPaletteItemAtTargetInLane(
           target: request.item.target ?? null,
           name: request.item.name ?? null,
           expression: request.item.expression ?? null,
-          dynamicBinding: request.item.dynamicBinding ?? null,
           dynamicWidget: request.item.dynamicWidget ?? null,
         },
       },

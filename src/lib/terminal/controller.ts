@@ -291,7 +291,7 @@ export class TerminalController {
       convertEol: false,
       cursorBlink: true,
       cursorStyle: "block",
-      fontFamily: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
+      fontFamily: "var(--font-mono)",
       fontSize: 13,
       lineHeight: 1.3,
       scrollback: 4000,

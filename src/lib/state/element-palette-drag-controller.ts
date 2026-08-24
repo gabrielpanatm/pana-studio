@@ -72,13 +72,13 @@ function createDragOverlay(element: HtmlPaletteElement) {
   ghost.style.color = "#eef5f0";
   ghost.style.background = "rgba(18, 24, 22, 0.94)";
   ghost.style.boxShadow = "0 12px 30px rgba(0, 0, 0, 0.28)";
-  ghost.style.font = "700 12px/1.2 Inter, ui-sans-serif, system-ui, sans-serif";
+  ghost.style.font = "700 12px/1.2 var(--font-ui)";
   ghost.style.pointerEvents = "none";
 
   const tag = document.createElement("span");
   tag.textContent = `<${element.tag}>`;
   tag.style.color = "color-mix(in srgb, var(--brand) 62%, white)";
-  tag.style.fontFamily = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+  tag.style.fontFamily = "var(--font-mono)";
 
   const label = document.createElement("span");
   label.textContent = element.label;

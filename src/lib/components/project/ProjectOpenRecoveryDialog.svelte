@@ -80,7 +80,7 @@
           <h2 id="project-open-recovery-title">{t("project-recovery-title")}</h2>
         </div>
       </div>
-      <button type="button" class="ui-icon-button ui-close-button icon-button" title={t("project-recovery-close")} disabled={submitting} onclick={close}>
+      <button type="button" class="ui-icon-button ui-close-button" title={t("project-recovery-close")} disabled={submitting} onclick={close}>
         <IconX size={16} stroke={1.9} />
       </button>
     </header>
@@ -231,15 +231,6 @@
     font-weight: 850;
   }
 
-  .icon-button {
-    width: 30px;
-    height: 30px;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    color: var(--text-muted);
-    background: var(--surface);
-  }
-
   .recovery-summary {
     display: grid;
     gap: 9px;
@@ -260,7 +251,7 @@
   .diagnostic {
     overflow-wrap: anywhere;
     color: var(--text-muted);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
   }
 

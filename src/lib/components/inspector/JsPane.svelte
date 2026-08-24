@@ -92,7 +92,7 @@
     color: var(--brand-strong);
     background: var(--code-bg);
     text-overflow: ellipsis;
-    font: 11px "JetBrains Mono",monospace;
+    font: 11px var(--font-mono);
   }
   .jp-target small { flex:0 0 auto; color:var(--text-muted); font-size:11px; }
 </style>

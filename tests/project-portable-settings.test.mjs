@@ -63,13 +63,16 @@ test(".env este exclus din workspace, preview și scanarea publică", () => {
 
 test("configurația de publicare este salvată printr-o singură mutație workspace", () => {
   const config = source("../src-tauri/src/commands/config.rs");
-  const pane = source("../src/lib/components/DeployPane.svelte");
+  const pane = source("../src/lib/components/project-settings/ProjectSettingsWorkspace.svelte");
   const projectIo = source("../src/lib/project/io/configuration.ts");
   const deployIo = source("../src/lib/deploy/io.ts");
 
   assert.match(config, /save_project_configuration[\s\S]*execute_config_workspace_mutation_at_revision/);
   assert.match(config, /settings\.toml\+zola\.toml\+templates/);
   assert.match(pane, /saveProjectConfiguration\(/);
+  assert.match(pane, /registerEditFlushHandler\(/);
+  assert.match(pane, /if \(savePromise\) return savePromise/);
+  assert.match(pane, /fieldset class="configuration-grid" disabled=\{saving\}/);
   assert.doesNotMatch(pane, /Promise\.all/);
   assert.match(projectIo, /PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION/);
   assert.match(deployIo, /validateDeployConfigurationSnapshot/);

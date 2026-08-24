@@ -10,6 +10,7 @@
     IconTerminal2,
   } from "@tabler/icons-svelte";
   import KernelWorkspace from "$lib/components/kernel/KernelWorkspace.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
   import type { GlobalStatusState } from "$lib/status/state.svelte";
@@ -411,73 +412,30 @@
             <IconSearch size={14} stroke={1.9} />
             <input class="ui-field toolbar" bind:value={query} type="search" placeholder={t("audit-search-placeholder")} />
           </label>
-          <label>
+          <div class="audit-filter">
             <span>{t("audit-outcome")}</span>
-            <select class="ui-field toolbar" bind:value={outcomeFilter}>
-              <option value="all">{t("audit-all")}</option>
-              {#each Object.entries(outcomeLabels) as [value, label]}
-                <option {value}>{label}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
+            <SelectControl size="toolbar" value={outcomeFilter} options={[{ value: "all", label: t("audit-all") }, ...Object.entries(outcomeLabels).map(([value, label]) => ({ value, label }))]} ariaLabel={t("audit-outcome")} onchange={(value) => { outcomeFilter = value as OutcomeFilter; }} />
+          </div>
+          <div class="audit-filter">
             <span>{t("audit-impact")}</span>
-            <select class="ui-field toolbar" bind:value={impactFilter}>
-              <option value="all">{t("audit-all")}</option>
-              <option value="critical">critical</option>
-              <option value="serious">serious</option>
-              <option value="moderate">moderate</option>
-              <option value="minor">minor</option>
-              <option value="info">info</option>
-            </select>
-          </label>
-          <label>
+            <SelectControl size="toolbar" value={impactFilter} options={["all", "critical", "serious", "moderate", "minor", "info"].map((value) => ({ value, label: value === "all" ? t("audit-all") : value }))} ariaLabel={t("audit-impact")} onchange={(value) => { impactFilter = value as ImpactFilter; }} />
+          </div>
+          <div class="audit-filter">
             <span>{t("audit-policy")}</span>
-            <select class="ui-field toolbar" bind:value={policyFilter}>
-              <option value="all">{t("audit-all")}</option>
-              <option value="blocking">blocking</option>
-              <option value="budget">budget</option>
-              <option value="advisory">advisory</option>
-              <option value="off">off</option>
-            </select>
-          </label>
-          <label>
+            <SelectControl size="toolbar" value={policyFilter} options={["all", "blocking", "budget", "advisory", "off"].map((value) => ({ value, label: value === "all" ? t("audit-all") : value }))} ariaLabel={t("audit-policy")} onchange={(value) => { policyFilter = value as PolicyFilter; }} />
+          </div>
+          <div class="audit-filter">
             <span>{t("audit-category")}</span>
-            <select class="ui-field toolbar" bind:value={categoryFilter}>
-              <option value="all">{t("audit-all")}</option>
-              <option value="build">{categoryLabels.build}</option>
-              <option value="references">{categoryLabels.references}</option>
-              <option value="accessibility">{categoryLabels.accessibility}</option>
-              <option value="seo">{categoryLabels.seo}</option>
-              <option value="assets">{categoryLabels.assets}</option>
-              <option value="workspace">{categoryLabels.workspace}</option>
-              <option value="components">{categoryLabels.components}</option>
-              <option value="content">{categoryLabels.content}</option>
-              <option value="data">{categoryLabels.data}</option>
-              <option value="deploy">{categoryLabels.deploy}</option>
-              <option value="performance">{categoryLabels.performance}</option>
-              <option value="crawl">{categoryLabels.crawl}</option>
-            </select>
-          </label>
-          <label>
+            <SelectControl size="toolbar" value={categoryFilter} options={[{ value: "all", label: t("audit-all") }, ...Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))]} ariaLabel={t("audit-category")} onchange={(value) => { categoryFilter = value as CategoryFilter; }} />
+          </div>
+          <div class="audit-filter">
             <span>{t("audit-provider")}</span>
-            <select class="ui-field toolbar" bind:value={providerFilter}>
-              <option value="all">{t("audit-all")}</option>
-              {#each snapshot?.providers ?? [] as provider (provider.id)}
-                <option value={provider.id}>{provider.id.replaceAll("_", " ")}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
+            <SelectControl size="toolbar" value={providerFilter} options={[{ value: "all", label: t("audit-all") }, ...(snapshot?.providers ?? []).map((provider) => ({ value: provider.id, label: provider.id.replaceAll("_", " ") }))]} ariaLabel={t("audit-provider")} onchange={(value) => { providerFilter = value; }} />
+          </div>
+          <div class="audit-filter">
             <span>{t("audit-scope")}</span>
-            <select class="ui-field toolbar" bind:value={originFilter}>
-              <option value="all">{t("audit-all")}</option>
-              <option value="project">project</option>
-              <option value="theme">theme</option>
-              <option value="workspace">workspace</option>
-              <option value="generated">generated</option>
-            </select>
-          </label>
+            <SelectControl size="toolbar" value={originFilter} options={["all", "project", "theme", "workspace", "generated"].map((value) => ({ value, label: value === "all" ? t("audit-all") : value }))} ariaLabel={t("audit-scope")} onchange={(value) => { originFilter = value as OriginFilter; }} />
+          </div>
         </header>
 
         <div class="diagnostics-list" aria-live="polite">
@@ -606,7 +564,7 @@
   h2 { margin: 0; color: var(--text-strong); font-size: 12px; }
   .diagnostics-toolbar > div span { color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; }
   .diagnostics-toolbar label { display: grid; gap: 2px; color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; font-weight: 800; text-transform: uppercase; }
-  .diagnostics-toolbar select { min-width: 105px; }
+  .audit-filter :global(.select-control-root) { min-width: 105px; }
   .diagnostics-toolbar .search-field { position: relative; display: flex; flex-direction: row; gap: 0; min-width: min(260px, 30vw); }
 
   .diagnostics-list { display: grid; }
@@ -622,7 +580,7 @@
   .diagnostic-copy strong { color: var(--text-strong); font-size: 12px; }
   .diagnostic-copy code { padding: 1px 4px; border-radius: 4px; color: var(--wb-text-muted, var(--text-muted)); background: var(--surface-4); font-size: 12px; }
   .diagnostic-copy p { margin: 4px 0; color: var(--wb-text-primary, var(--text)); font-size: 12px; line-height: 1.35; }
-  .diagnostic-copy > span { color: var(--wb-text-muted, var(--text-muted)); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
+  .diagnostic-copy > span { color: var(--wb-text-muted, var(--text-muted)); font-family: var(--font-mono); font-size: 12px; }
   .diagnostic-actions { align-self: center; justify-content: flex-end; gap: 5px; }
   .diagnostic-actions button { min-height: 26px; }
   .diagnostic-copy > .fix-preview { display: grid; align-items: initial; gap: 4px; margin-top: 7px; padding: 7px; border: 1px solid var(--wb-border-subtle, var(--border)); border-radius: var(--radius-control); background: var(--surface-2); }

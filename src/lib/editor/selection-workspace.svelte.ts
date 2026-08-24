@@ -26,7 +26,6 @@ export type SelectionWorkspaceContext = Readonly<{
   browserPreviewRoute: string;
   previewSrc: string;
   workspace: ProjectWorkspaceSnapshot | null;
-  targetCssFile: string;
   sourceGraph: SourceGraph | null;
 }>;
 
@@ -59,7 +58,6 @@ export class SelectionWorkspaceState {
         },
         previewSrc: context.previewSrc,
         projectWorkspaceSnapshot: context.workspace,
-        targetCssFile: context.targetCssFile,
         applySelectionState: (observation) => state.commands.applySelectionState(observation),
         projectSelectionSnapshotOnCanvas: (selection) => (
           state.commands.projectSelectionOnCanvas(selection)

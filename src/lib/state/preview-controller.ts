@@ -467,7 +467,11 @@ async function completePendingCanvasProjection(
   host.navigation.recoveryUrl = null;
   const readiness = host.context.lifecycle?.activeSession?.readiness.state ?? null;
   if (!readiness || readiness === "ready" || readiness === "degraded") {
-    void host.selection.refreshNavigationSnapshot(plan.identity, host.navigation.src);
+    // Canvas-ul canonic nu este utilizabil de Inspector până când selecția
+    // semantică nu a fost rebazată pe aceeași identitate. Dacă rezolvăm
+    // confirmarea înaintea acestei bariere, un focus CSS poate concura cu
+    // rebazarea Rust și poate captura o revizie de selecție deja expirată.
+    await host.selection.refreshNavigationSnapshot(plan.identity, host.navigation.src);
   }
   if (canvasIdentityMatches(host.projection.pending?.identity, plan.identity)) {
     host.projection.pending = null;

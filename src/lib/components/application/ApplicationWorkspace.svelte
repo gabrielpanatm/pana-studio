@@ -143,7 +143,6 @@
     previewRuntime,
     projectDocuments,
     projectDerived,
-    templateWorkbench,
     projectTransitions,
     saveWorkspace,
     pageSettings,
@@ -234,6 +233,7 @@
     workspaceRevision: () => projectSession.workspace?.revision ?? 0,
     allProjectFiles: () => projectSession.project?.files ?? [],
     activeScannedPath: () => documents.activeScannedPath,
+    layersAvailable: () => workbench.activeDocumentPresentation === "html",
     fileExplorerSnapshot: () => fileExplorer.snapshot,
     fileExplorerLoading: () => fileExplorer.loading,
     fileExplorerError: () => fileExplorer.error,
@@ -277,6 +277,7 @@
   };
   const centerAreaSession = stableProjection({
     applicationSurface: () => shell.surface,
+    applicationSettingsSection: () => shell.settingsSection,
     workbenchSnapshot: () => workbench.snapshot,
     centerView: () => shell.centerView,
     sessionId: () => projectSession.runtimeSessionId,
@@ -343,11 +344,6 @@
     returnToLivePreview: () => versionPreviewService.returnToLive(),
   };
   const centerAreaCreationCommands: WorkspaceCenterAreaProps["creationCommands"] = {
-    updateTemplateWorkbenchContext: (project, template, pageFile, options) => (
-      templateWorkbench.update(project, template, pageFile, options)
-    ),
-    insertTeraPaletteItemAtTarget: (request) => teraEditing.insert(request),
-    insertPaletteElementAtTarget: (request) => htmlEditing.insertPalette(request),
     refreshClassInventory: () => designClassInventory.refresh(),
     createVariable: (path, name, value) => cssWorkspace.createVariable(path, name, value),
     createClass: (name, path) => cssWorkspace.createClass(name, path),
@@ -399,7 +395,6 @@
     }),
     new CodeEditorLifecycle({
       documents,
-      readModel,
       shell,
       workbench,
       source: sourceWorkspace,
@@ -567,7 +562,7 @@
     onInspectorLivePropertiesRejected: (liveEpoch) => cssWorkspace.clearLiveProperties(liveEpoch),
     gridOverlayEnabled: previewWorkspace.gridOverlayEnabled,
     onGridOverlayChange: (enabled) => previewWorkspace.setGridOverlay(enabled),
-    onStatusUpdate: (text, kind) => globalStatus.set(text, kind as GlobalStatusKind),
+    onStatusUpdate: (text, kind, options) => globalStatus.set(text, kind as GlobalStatusKind, options),
     onPendingChange: (area, pending) => htmlAuthoring.setInspectorPending(area, pending, "inspector-pane"),
     beforeInspectorTabChange: async (from, to) => {
       if (from === "js" && to !== "js") {
@@ -670,6 +665,10 @@
   });
   function breakpointValue(name: string, fallback: string) {
     return analysis.scssVariables.find((variable) => variable.name === name)?.value || fallback;
+  }
+  async function openApplicationSettings(section: import("$lib/application/shell-state.svelte").ApplicationSettingsSection = "general") {
+    if (projectSession.project) await flushWorkspaceMutationInputs("template-switch");
+    shell.openSettings(section);
   }
   function handleAppShortcuts(event: KeyboardEvent) {
     commandCenter.handleShortcut(event, editorSidebarsAvailable);
@@ -829,7 +828,6 @@
   {#if (projectSession.lifecycle.activeSession && projectSession.project) || shell.surface === "settings"}
     <AppChrome
       project={{
-        currentPath: documents.currentProjectPath,
         root: projectSession.root,
         sessionId: projectSession.runtimeSessionId,
         present: Boolean(projectSession.project),
@@ -873,17 +871,8 @@
         <ActivityRail
           activeActivity={workbench.snapshot?.activeActivity ?? "editor"}
           disabled={!projectSession.project}
-          terminalOpen={shell.surface === "workbench" && terminalWorkspace.terminalPaneOpen}
-          settingsActive={shell.surface === "settings"}
+          applicationSettingsActive={shell.surface === "settings"}
           selectActivity={selectWorkbenchActivity}
-          toggleTerminal={() => { void terminalWorkspace.togglePane(); }}
-          selectSettings={() => {
-            if (!projectSession.project && shell.surface === "settings") {
-              shell.openWorkbench();
-            } else {
-              shell.openSettings();
-            }
-          }}
         />
         <section
           class:left-pane-collapsed={workspaceLayout.leftPaneCollapsed}
@@ -958,7 +947,7 @@
       startupCreationCatalog={startup.creationCatalog}
       startupSelectedOptionId={startup.selectedOptionId}
       {globalStatus}
-      openApplicationSettings={() => shell.openSettings()}
+      openApplicationSettings={() => openApplicationSettings()}
       cancelStartupCreationPlan={() => startup.cancelCreationPlan()}
       applyStartupProject={() => startup.applyProject()}
       selectStartupCreationOption={(optionId) => startup.selectCreationOption(optionId)}

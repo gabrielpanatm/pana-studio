@@ -21,6 +21,7 @@ type ProjectWorkspacePreviewIdentityHost = {
   sessionProjectRoot: string;
   kernelProjectSessionId: string;
   scannedProject: object | null;
+  structuralWriteBoundaryActive?: boolean;
   previewWorkspaceRevision: string | null;
   pendingCanvasProjection: CanvasProjectionPlan | null;
   canvasSurfaceGeneration?: number;
@@ -80,13 +81,51 @@ let projectedEvidence: {
 } | null = null;
 let projectionTail: Promise<void> = Promise.resolve();
 let templateWorkbenchProjectionTail: Promise<void> = Promise.resolve();
+type InFlightWorkspaceProjection = {
+  projectRoot: string;
+  sessionId: string;
+  workspaceRevision: number;
+  workspaceTransactionId: string | null;
+  canvasTransactionId: string | null;
+  promise: Promise<ProjectWorkspacePreviewProjectionOutcome>;
+};
+const inFlightWorkspaceProjections = new Map<string, InFlightWorkspaceProjection>();
 let scheduledTimer: ReturnType<typeof setTimeout> | null = null;
 let scheduledHost: ProjectWorkspacePreviewHost | null = null;
 let scheduledReason: PreviewRefreshReason = "workspace-mutation";
 let scheduledMinimumWorkspaceRevision: number | undefined;
 
+function clearScheduledProjection() {
+  if (scheduledTimer !== null) clearTimeout(scheduledTimer);
+  scheduledTimer = null;
+  scheduledHost = null;
+  scheduledMinimumWorkspaceRevision = undefined;
+}
+
 function identityKey(projectRoot: string, sessionId: string) {
   return `${projectRoot}\u0000${sessionId}`;
+}
+
+export function projectWorkspacePreviewStatusKey(
+  projectRoot: string,
+  sessionId: string,
+  workspaceRevision: number,
+) {
+  return `preview:${projectRoot}:${sessionId}:${workspaceRevision}`;
+}
+
+function projectionOperationKey(
+  projectRoot: string,
+  sessionId: string,
+  workspaceRevision: number,
+  workspaceTransactionId: string | null | undefined,
+) {
+  return [
+    projectRoot,
+    sessionId,
+    workspaceRevision,
+    workspaceTransactionId?.trim() ?? "",
+  ].join("\u0000");
 }
 
 function captureIdentity(host: ProjectWorkspacePreviewIdentityHost): ProjectionIdentity | null {
@@ -390,22 +429,133 @@ export function projectLatestProjectWorkspacePreview<TReason extends PreviewRefr
     return Promise.resolve({ status: "superseded", workspaceRevision: null });
   }
   if (
-    scheduledHost === host
+    scheduledHost !== null
+    && identityIsCurrent(scheduledHost, identity)
     && (
       scheduledMinimumWorkspaceRevision === undefined
       || (options.minimumWorkspaceRevision ?? -1) >= scheduledMinimumWorkspaceRevision
     )
   ) {
-    if (scheduledTimer !== null) clearTimeout(scheduledTimer);
-    scheduledTimer = null;
-    scheduledHost = null;
-    scheduledMinimumWorkspaceRevision = undefined;
+    clearScheduledProjection();
   }
+
+  const exactRevision = options.expectedWorkspaceRevision;
+  const exactTransactionId = options.expectedWorkspaceTransactionId?.trim() || null;
+  const operationKey = exactRevision === undefined
+    ? null
+    : projectionOperationKey(
+        identity.projectRoot,
+        identity.sessionId,
+        exactRevision,
+        exactTransactionId,
+      );
+  if (operationKey) {
+    const existing = inFlightWorkspaceProjections.get(operationKey);
+    if (existing) return existing.promise;
+  }
+
+  let record: InFlightWorkspaceProjection | null = null;
+  const coordinatedOptions = operationKey
+    ? {
+        ...options,
+        onCanvasPlanPrepared: (plan: CanvasProjectionPlan) => {
+          if (record) record.canvasTransactionId = plan.identity.transactionId;
+          options.onCanvasPlanPrepared?.(plan);
+        },
+      }
+    : options;
   const canonicalTask = projectionTail
     .catch(() => undefined)
-    .then(() => projectLatestWorkspaceRevision(host, identity, options));
+    .then(() => projectLatestWorkspaceRevision(host, identity, coordinatedOptions));
   projectionTail = canonicalTask.then(() => undefined).catch(() => undefined);
-  return canonicalTask;
+  if (!operationKey || exactRevision === undefined) return canonicalTask;
+
+  let operation!: Promise<ProjectWorkspacePreviewProjectionOutcome>;
+  operation = canonicalTask.finally(() => {
+    if (inFlightWorkspaceProjections.get(operationKey)?.promise === operation) {
+      inFlightWorkspaceProjections.delete(operationKey);
+    }
+  });
+  record = {
+    projectRoot: identity.projectRoot,
+    sessionId: identity.sessionId,
+    workspaceRevision: exactRevision,
+    workspaceTransactionId: exactTransactionId,
+    canvasTransactionId: null,
+    promise: operation,
+  };
+  inFlightWorkspaceProjections.set(operationKey, record);
+  return operation;
+}
+
+/**
+ * Joins the exact ProjectWorkspace projection already owned by the coordinator.
+ * Document activation uses this barrier instead of consuming the same Canvas
+ * candidate through a second Template Workbench publication.
+ */
+export function joinProjectWorkspacePreviewProjection(
+  projectRoot: string,
+  sessionId: string,
+  workspaceRevision: number,
+  workspaceTransactionId?: string | null,
+): Promise<ProjectWorkspacePreviewProjectionOutcome> | null {
+  const normalizedTransaction = workspaceTransactionId?.trim() || null;
+  const exact = inFlightWorkspaceProjections.get(projectionOperationKey(
+    projectRoot,
+    sessionId,
+    workspaceRevision,
+    normalizedTransaction,
+  ));
+  if (exact) return exact.promise;
+  if (normalizedTransaction) return null;
+  const matches = [...inFlightWorkspaceProjections.values()].filter((candidate) => (
+    candidate.projectRoot === projectRoot
+    && candidate.sessionId === sessionId
+    && candidate.workspaceRevision === workspaceRevision
+  ));
+  return matches.length === 1 ? matches[0].promise : null;
+}
+
+/** Serializes every Template Workbench consumer behind one Canvas owner. */
+export function coordinateTemplateWorkbenchProjection<T>(operation: () => Promise<T>): Promise<T> {
+  const task = templateWorkbenchProjectionTail
+    .catch(() => undefined)
+    .then(operation);
+  templateWorkbenchProjectionTail = task.then(() => undefined).catch(() => undefined);
+  return task;
+}
+
+function armScheduledProjection(identity: ProjectionIdentity) {
+  scheduledTimer = setTimeout(() => {
+    scheduledTimer = null;
+    const target = scheduledHost;
+    const reason = scheduledReason;
+    const minimumRevision = scheduledMinimumWorkspaceRevision;
+    if (!target || !identityIsCurrent(target, identity)) {
+      clearScheduledProjection();
+      return;
+    }
+    // The event is emitted as soon as Rust has durably published the mutation,
+    // before the originating IPC promise necessarily returns to JavaScript.
+    // Keep this generic projection as a fallback, but do not let it overtake
+    // the structural flow that owns the fast CanvasPatch for the same receipt.
+    if (target.structuralWriteBoundaryActive) return;
+
+    clearScheduledProjection();
+    void projectLatestProjectWorkspacePreview(target, {
+      reason,
+      minimumWorkspaceRevision: minimumRevision,
+    })
+      .catch((error) => {
+        if (!identityIsCurrent(target, identity)) return;
+        target.setGlobalStatus?.(
+          t("workspace-preview-projection-failed", {
+            message: errorMessage(error),
+          }),
+          "error",
+        );
+      });
+  }, MUTATION_DEBOUNCE_MS);
 }
 
 function projectLatestActiveTemplateWorkbench(
@@ -416,14 +566,10 @@ function projectLatestActiveTemplateWorkbench(
   if (!host.templateWorkbenchActive || !host.reprojectActiveTemplateWorkbench) {
     return Promise.resolve(false);
   }
-  const task = templateWorkbenchProjectionTail
-    .catch(() => undefined)
-    .then(async () => {
-      if (!identityIsCurrent(host, identity) || !host.templateWorkbenchActive) return false;
-      return await host.reprojectActiveTemplateWorkbench?.(minimumWorkspaceRevision) === true;
-    });
-  templateWorkbenchProjectionTail = task.then(() => undefined).catch(() => undefined);
-  return task;
+  return coordinateTemplateWorkbenchProjection(async () => {
+    if (!identityIsCurrent(host, identity) || !host.templateWorkbenchActive) return false;
+    return await host.reprojectActiveTemplateWorkbench?.(minimumWorkspaceRevision) === true;
+  });
 }
 
 export function scheduleProjectWorkspaceDerivedPreviewProjection(
@@ -448,27 +594,24 @@ export function scheduleProjectWorkspaceDerivedPreviewProjection(
     );
   }
   if (scheduledTimer !== null) clearTimeout(scheduledTimer);
-  scheduledTimer = setTimeout(() => {
-    scheduledTimer = null;
-    const target = scheduledHost;
-    const minimumRevision = scheduledMinimumWorkspaceRevision;
-    scheduledHost = null;
-    scheduledMinimumWorkspaceRevision = undefined;
-    if (!target || !identityIsCurrent(target, identity)) return;
-    void projectLatestProjectWorkspacePreview(target, {
-      reason: scheduledReason,
-      minimumWorkspaceRevision: minimumRevision,
-    })
-      .catch((error) => {
-        if (!identityIsCurrent(target, identity)) return;
-        target.setGlobalStatus?.(
-          t("workspace-preview-projection-failed", {
-            message: errorMessage(error),
-          }),
-          "error",
-        );
-      });
-  }, MUTATION_DEBOUNCE_MS);
+  armScheduledProjection(identity);
+}
+
+/**
+ * Restarts a derived-preview fallback that was parked behind an active
+ * structural write. The exact receipt flow normally consumes that fallback;
+ * this path preserves recovery if the originating frontend flow failed.
+ */
+export function resumeScheduledProjectWorkspaceDerivedPreviewProjection() {
+  if (scheduledTimer !== null) return;
+  const target = scheduledHost;
+  if (!target || target.structuralWriteBoundaryActive) return;
+  const identity = captureIdentity(target);
+  if (!identity) {
+    clearScheduledProjection();
+    return;
+  }
+  armScheduledProjection(identity);
 }
 
 export function markProjectWorkspacePreviewPublished(
@@ -499,8 +642,6 @@ export function resetProjectWorkspacePreviewCoordinator() {
   activeKey = "";
   activeGeneration += 1;
   projectedEvidence = null;
-  scheduledHost = null;
-  scheduledMinimumWorkspaceRevision = undefined;
-  if (scheduledTimer !== null) clearTimeout(scheduledTimer);
-  scheduledTimer = null;
+  inFlightWorkspaceProjections.clear();
+  clearScheduledProjection();
 }

@@ -6,6 +6,7 @@ import type {
 import {
   createCssRequestIdentity,
   cssRequestIdentityMatches,
+  isCssInspectorTransientReadError,
   resolveCssInspectorContext,
   type CssRequestIdentity,
 } from "$lib/css/io";
@@ -13,6 +14,7 @@ import type { InspectorSelectionSummarySnapshot, SelectionSnapshot } from "$lib/
 import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
 import type { SelectionMutationIdentity } from "$lib/preview/contracts";
 import type { CssInspectorState } from "$lib/inspector/css-inspector-state.svelte";
+import { CssEditSessionCoordinator } from "$lib/inspector/css-edit-session-coordinator";
 import {
   cssInspectorReadIsCurrent,
   cssInspectorSubjectKey,
@@ -24,6 +26,7 @@ export type CssInspectorCodeTarget = Readonly<{
   file: string;
   property?: string | null;
   expectedSelectionRevision?: number | null;
+  expectedSelection?: SelectionMutationIdentity | null;
 }>;
 
 export type CssInspectorReaderStatus =
@@ -58,6 +61,7 @@ export type CssInspectorReaderDependencies = Readonly<{
     viewport: CssViewport,
   ) => CssRuleContext | null;
   changeCodeTarget?: (target: CssInspectorCodeTarget) => boolean | Promise<boolean>;
+  editSession?: CssEditSessionCoordinator;
   reportStatus?: (status: CssInspectorReaderStatus) => void;
   resetPendingAreas?: () => void;
 }>;
@@ -114,13 +118,16 @@ export class CssInspectorReader {
     CssInspectorReaderDependencies,
     "resolve" | "createIdentity" | "identityMatches"
   >> & CssInspectorReaderDependencies;
+  private readonly editSession: CssEditSessionCoordinator;
   private serial = 0;
+  private classSelectionSerial = 0;
   private runtimeKey = "";
   private selectionKey = "";
   private projectionKey = "";
   private openSourceKey = "";
   private lastRefreshToken: number | null = null;
   private current: CssInspectorReaderInput | null = null;
+  private pendingClassSelection: { className: string; subjectKey: string } | null = null;
   private disposed = false;
 
   constructor(state: CssInspectorState, dependencies: CssInspectorReaderDependencies = {}) {
@@ -131,6 +138,7 @@ export class CssInspectorReader {
       createIdentity: dependencies.createIdentity ?? createCssRequestIdentity,
       identityMatches: dependencies.identityMatches ?? cssRequestIdentityMatches,
     };
+    this.editSession = dependencies.editSession ?? new CssEditSessionCoordinator();
   }
 
   reconcile(input: CssInspectorReaderInput): Promise<void> | null {
@@ -145,13 +153,16 @@ export class CssInspectorReader {
     const runtimeKey = `${input.projectRoot}\u0000${input.runtimeSessionId}`;
     if (runtimeKey !== this.runtimeKey) {
       this.runtimeKey = runtimeKey;
+      this.classSelectionSerial += 1;
       this.invalidate();
       this.selectionKey = "";
       this.projectionKey = "";
       this.openSourceKey = "";
+      this.pendingClassSelection = null;
       this.lastRefreshToken = input.refreshToken;
       this.state.resetSession();
     }
+    this.editSession.syncRuntime(input.projectRoot, input.runtimeSessionId);
 
     const expectedSelection = this.captureSelection(input);
     if (input.htmlProjectionPending && !expectedSelection) return null;
@@ -160,8 +171,10 @@ export class CssInspectorReader {
       : "";
     if (selectionKey !== this.selectionKey) {
       this.selectionKey = selectionKey;
+      this.classSelectionSerial += 1;
       this.invalidate();
       this.projectionKey = "";
+      this.pendingClassSelection = null;
       this.state.resetProjection(true);
     } else if (
       expectedSelection
@@ -181,7 +194,6 @@ export class CssInspectorReader {
       && !input.historyProjectionQuiesced
     ) {
       this.lastRefreshToken = input.refreshToken;
-      this.state.clearPendingValues();
       this.dependencies.resetPendingAreas?.();
       this.projectionKey = "";
       const selectedClass = this.state.selectedClass;
@@ -198,7 +210,6 @@ export class CssInspectorReader {
       }
     }
 
-    this.reconcileOpenSource(input);
     if (input.historyProjectionQuiesced) {
       this.projectionKey = "";
       return null;
@@ -216,6 +227,32 @@ export class CssInspectorReader {
       return null;
     }
 
+    const pendingClassSelection = this.pendingClassSelection;
+    if (
+      pendingClassSelection
+      && pendingClassSelection.subjectKey === cssInspectorSubjectKey(expectedSelection)
+    ) {
+      this.pendingClassSelection = null;
+      return this.selectClass(pendingClassSelection.className).then(() => undefined);
+    }
+
+    const readDecision = this.editSession.readDecision({
+      projectRoot: input.projectRoot,
+      runtimeSessionId: input.runtimeSessionId,
+      selector: this.state.effectiveSelector,
+      file: input.targetCssFile,
+      viewport: input.previewDevice,
+      expectedSelection,
+      workspaceRevision: input.workspaceRevision,
+      selectionWorkspaceRevision: expectedSelection.workspaceRevision,
+    });
+    if (readDecision.kind === "retain") {
+      this.invalidate();
+      this.projectionKey = "";
+      return null;
+    }
+    this.reconcileOpenSource(input);
+
     const projectionKey = [
       input.projectRoot,
       input.runtimeSessionId,
@@ -224,6 +261,7 @@ export class CssInspectorReader {
       input.targetCssFile,
       input.previewDevice,
       input.refreshToken,
+      input.workspaceRevision,
     ].join("\u0000");
     if (projectionKey === this.projectionKey) return null;
     this.projectionKey = projectionKey;
@@ -241,8 +279,27 @@ export class CssInspectorReader {
     if (!input || input.historyProjectionQuiesced || this.disposed) return "blocked";
     const expectedSelection = this.captureSelection(input);
     if (!expectedSelection) return "blocked";
-    this.state.clearPendingValues();
     const selector = `.${className}`;
+    const classSelectionId = ++this.classSelectionSerial;
+    const subjectKey = cssInspectorSubjectKey(expectedSelection);
+    const readDecision = this.editSession.readDecision({
+      projectRoot: input.projectRoot,
+      runtimeSessionId: input.runtimeSessionId,
+      selector,
+      file: input.targetCssFile,
+      viewport: input.previewDevice,
+      expectedSelection,
+      workspaceRevision: input.workspaceRevision,
+      selectionWorkspaceRevision: expectedSelection.workspaceRevision,
+    });
+    if (readDecision.kind === "retain") {
+      this.pendingClassSelection = { className, subjectKey };
+      this.invalidate();
+      this.projectionKey = "";
+      return "blocked";
+    }
+    this.pendingClassSelection = null;
+    this.state.clearPendingValues();
     const identity = this.dependencies.createIdentity(input.projectRoot, input.runtimeSessionId);
     const callId = ++this.serial;
     this.projectionKey = "";
@@ -257,7 +314,7 @@ export class CssInspectorReader {
         input.previewDevice,
       );
       if (
-        callId !== this.serial
+        classSelectionId !== this.classSelectionSerial
         || !this.identityIsCurrent(identity)
         || !this.subjectIsCurrent(expectedSelection)
       ) return "blocked";
@@ -269,10 +326,33 @@ export class CssInspectorReader {
         selector,
         file: resolution.target.file,
         expectedSelectionRevision: expectedSelection.selectionRevision,
+        expectedSelection,
       });
-      if (callId !== this.serial || !this.subjectIsCurrent(expectedSelection)) return "blocked";
-      return allowed ? "allowed" : "blocked";
+      const currentSelection = this.captureCurrentSelection();
+      if (
+        !allowed
+        || !currentSelection
+        || classSelectionId !== this.classSelectionSerial
+        || !this.identityIsCurrent(identity)
+        || this.current?.historyProjectionQuiesced
+        || this.current?.previewDevice !== input.previewDevice
+        || !sameCssSemanticSelection(expectedSelection, currentSelection)
+      ) return "blocked";
+
+      // changeCodeTarget confirms the canonical CSS focus, but an already exact
+      // focus does not emit another selection snapshot. Publish the Rust result
+      // here so the Inspector never depends on a later reactive reconciliation.
+      this.state.syncPresentation(selector, input.previewDevice, resolution.target.file);
+      this.applyResolution(resolution, currentSelection);
+      return "allowed";
     } catch (cause) {
+      if (isCssInspectorTransientReadError(cause)) {
+        if (
+          classSelectionId === this.classSelectionSerial
+          && subjectKey === cssInspectorSubjectKey(this.captureCurrentSelection())
+        ) this.pendingClassSelection = { className, subjectKey };
+        return "blocked";
+      }
       if (this.identityIsCurrent(identity)) {
         this.dependencies.reportStatus?.({
           kind: "targetFailed",
@@ -293,7 +373,9 @@ export class CssInspectorReader {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.classSelectionSerial += 1;
     this.current = null;
+    this.pendingClassSelection = null;
     this.invalidate();
     this.state.resetSession();
   }
@@ -330,6 +412,7 @@ export class CssInspectorReader {
           selector,
           file: resolution.target?.file ?? file,
           expectedSelectionRevision: expectedSelection.selectionRevision,
+          expectedSelection,
         });
         if (
           !allowed
@@ -341,6 +424,11 @@ export class CssInspectorReader {
       this.applyResolution(resolution, expectedSelection);
     } catch (cause) {
       if (!this.readIsCurrent(callId, identity, expectedRefreshToken, expectedSelection)) return;
+      // O eroare tranzitorie (de exemplu o revizie de selecție rebazată între
+      // captură și IPC) nu trebuie să otrăvească permanent această proiecție.
+      // Următoarea reconciliere reîncearcă exact selectorul canonic curent.
+      this.projectionKey = "";
+      if (isCssInspectorTransientReadError(cause)) return;
       if (!retainProjection) this.state.resetProjection(true);
       this.dependencies.reportStatus?.({
         kind: "readFailed",
@@ -369,6 +457,7 @@ export class CssInspectorReader {
       fallbackFile: input.targetCssFile || null,
       expectedWorkspaceRevision: input.workspaceRevision,
       expectedSelection,
+      interactionId: this.editSession.snapshot?.latestInteractionId ?? null,
     }, identity);
   }
 
@@ -411,8 +500,10 @@ export class CssInspectorReader {
       selector,
       input.previewDevice,
     );
-    if (context) this.state.applyLiveContext(context);
-    this.state.clearPendingValues();
+    if (context) {
+      this.state.applyLiveContext(context);
+      this.state.settlePendingValues();
+    }
   }
 
   private captureSelection(input: CssInspectorReaderInput) {

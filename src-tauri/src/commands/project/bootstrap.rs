@@ -6,8 +6,9 @@ use crate::{
         project_workspace::{ProjectWorkspace, ProjectWorkspaceSnapshot},
         workbench::{
             read_persisted_workbench, WorkbenchActivity, WorkbenchBottomPanelView,
-            WorkbenchGroupId, WorkbenchIdentity, WorkbenchIntent, WorkbenchRuntime,
-            WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface,
+            WorkbenchDocumentPresentation, WorkbenchDocumentPresentationEntry, WorkbenchGroupId,
+            WorkbenchIdentity, WorkbenchIntent, WorkbenchRuntime, WorkbenchSnapshot,
+            WorkbenchSplit, WorkbenchSurface,
         },
     },
     project::{
@@ -161,11 +162,15 @@ fn project_index_file(scan: &ProjectScan) -> Option<&ProjectFile> {
 }
 
 fn workbench_surface_for_file(file: &ProjectFile) -> WorkbenchSurface {
-    match file.kind {
-        ProjectFileKind::Md => WorkbenchSurface::Code,
-        ProjectFileKind::Html if file.role == ProjectFileRole::Page => WorkbenchSurface::Visual,
-        _ => WorkbenchSurface::Code,
+    if file.kind == ProjectFileKind::Html {
+        WorkbenchSurface::Visual
+    } else {
+        WorkbenchSurface::Code
     }
+}
+
+fn workbench_presentation_for_file(file: &ProjectFile) -> WorkbenchDocumentPresentation {
+    WorkbenchDocumentPresentation::from_project_file_kind(file.kind)
 }
 
 pub(super) fn prepare_bootstrap_workbench(
@@ -173,16 +178,53 @@ pub(super) fn prepare_bootstrap_workbench(
     scan: &ProjectScan,
 ) -> Result<WorkbenchSnapshot, String> {
     let file = project_index_file(scan);
-    prepare_bootstrap_workbench_for_file(session, file, None)
+    prepare_bootstrap_workbench_for_file(session, scan, file, None)
 }
 
 pub(super) fn prepare_bootstrap_workbench_for_file(
     session: &ProjectSessionSnapshot,
+    scan: &ProjectScan,
     file: Option<&ProjectFile>,
     surface_override: Option<WorkbenchSurface>,
 ) -> Result<WorkbenchSnapshot, String> {
     let runtime = WorkbenchRuntime::default();
     let mut snapshot = runtime.read_or_restore(session, || read_persisted_workbench(session))?;
+    let identity = WorkbenchIdentity {
+        expected_project_root: snapshot.project_root.clone(),
+        expected_runtime_session_id: snapshot.runtime_session_id.clone(),
+        expected_revision: snapshot.revision,
+    };
+    snapshot = runtime
+        .apply(
+            session,
+            &identity,
+            WorkbenchIntent::ReconcileDocumentPresentations {
+                documents: scan
+                    .files
+                    .iter()
+                    .map(|file| WorkbenchDocumentPresentationEntry {
+                        relative_path: file.relative_path.clone(),
+                        presentation: workbench_presentation_for_file(file),
+                    })
+                    .collect(),
+            },
+        )?
+        .snapshot;
+    let identity = WorkbenchIdentity {
+        expected_project_root: snapshot.project_root.clone(),
+        expected_runtime_session_id: snapshot.runtime_session_id.clone(),
+        expected_revision: snapshot.revision,
+    };
+    snapshot = runtime
+        .apply(
+            session,
+            &identity,
+            WorkbenchIntent::SetBottomPanel {
+                open: false,
+                active_view: WorkbenchBottomPanelView::Terminal,
+            },
+        )?
+        .snapshot;
     let Some(file) = file else {
         return Ok(snapshot);
     };
@@ -193,20 +235,16 @@ pub(super) fn prepare_bootstrap_workbench_for_file(
         WorkbenchIntent::SetActivity {
             activity: WorkbenchActivity::Editor,
         },
-        WorkbenchIntent::SetBottomPanel {
-            open: false,
-            active_view: WorkbenchBottomPanelView::Problems,
-        },
         WorkbenchIntent::OpenDocument {
             relative_path: file.relative_path.clone(),
             group_id: WorkbenchGroupId::Primary,
-            surface: surface_override.unwrap_or_else(|| {
-                if file.role == ProjectFileRole::Template {
-                    WorkbenchSurface::Visual
-                } else {
-                    workbench_surface_for_file(file)
-                }
-            }),
+            surface: surface_override
+                .filter(|surface| {
+                    *surface != WorkbenchSurface::Visual
+                        || workbench_presentation_for_file(file).supports_visual()
+                })
+                .unwrap_or_else(|| workbench_surface_for_file(file)),
+            presentation: workbench_presentation_for_file(file),
             pinned: false,
         },
     ] {

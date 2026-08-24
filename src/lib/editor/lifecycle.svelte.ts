@@ -3,7 +3,6 @@ import { ReactiveEffectsLifecycle } from "$lib/lifecycle/reactive-effects.svelte
 import type { ApplicationPreferencesState } from "$lib/application/preferences.svelte";
 import type { ApplicationShellState } from "$lib/application/shell-state.svelte";
 import type { CssAuthoringState } from "$lib/css/authoring-state.svelte";
-import type { EditorReadModelState } from "$lib/editor/read-model.svelte";
 import type { SelectionWorkspaceState } from "$lib/editor/selection-workspace.svelte";
 import type { SourceWorkspaceState } from "$lib/editor/source-workspace.svelte";
 import type { ProjectDocumentWorkspaceState } from "$lib/project/document-workspace.svelte";
@@ -11,7 +10,6 @@ import type { WorkbenchWorkspaceState } from "$lib/workbench/workspace-state.sve
 
 export type CodeEditorLifecycleDependencies = {
   documents: Pick<ProjectDocumentWorkspaceState, "activeScannedPath">;
-  readModel: Pick<EditorReadModelState, "canPreviewCurrentSource">;
   shell: Pick<ApplicationShellState, "centerView">;
   workbench: Pick<WorkbenchWorkspaceState, "snapshot">;
   source: SourceWorkspaceState;
@@ -28,17 +26,8 @@ export class CodeEditorLifecycle {
     dependencies: CodeEditorLifecycleDependencies,
     appearance: Pick<ApplicationPreferencesState, "accent" | "theme">,
   ) {
-    const { documents, readModel, shell, workbench, source, selection, css } = dependencies;
+    const { documents, shell, workbench, source, selection, css } = dependencies;
     this.effects = new ReactiveEffectsLifecycle([
-      () => {
-        if (
-          documents.activeScannedPath
-          && !readModel.canPreviewCurrentSource
-          && shell.centerView === "preview"
-        ) {
-          shell.centerView = "code";
-        }
-      },
       () => {
         const activeActivity = workbench.snapshot?.activeActivity ?? "editor";
         const secondaryGroup = workbench.snapshot?.groups.find(

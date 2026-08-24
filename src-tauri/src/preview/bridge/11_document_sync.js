@@ -716,6 +716,38 @@
     ).slice(0, 4000);
   }
 
+  function loadRequiredTypographyFonts(probe) {
+    if (!document.fonts || typeof document.fonts.load !== "function" || !probe) {
+      return [];
+    }
+    var seen = {};
+    return probe.descriptors.flatMap(function (entry) {
+      var key = entry.font + "\u0000" + entry.text;
+      if (seen[key]) return [];
+      seen[key] = true;
+      return [Promise.resolve().then(function () {
+        // FontFaceSet.ready may resolve even when individual faces are in the
+        // error state. Loading the exact computed typography used by the
+        // document turns a missing required face into a failed Canvas phase
+        // instead of publishing a stable-looking fallback as canonical.
+        return document.fonts.load(entry.font, entry.text);
+      })];
+    });
+  }
+
+  function requiredFontLoadingError(error, probe) {
+    probe.fontActivationErrors = typographyFontErrors(probe);
+    var diagnostic = fontActivationDiagnostic(probe.fontActivationErrors);
+    var browserMessage = error instanceof Error
+      ? String(error.message || error)
+      : String(error || "Eroare necunoscută la încărcarea fontului.");
+    return new Error((
+      (diagnostic || "Fonturile necesare Canvas nu au putut fi încărcate.")
+      + " Detaliu browser: "
+      + browserMessage
+    ).slice(0, 4000));
+  }
+
   function waitForStyledFrame(timingOrigin, typographyProbe, includeInitiallyErrored) {
     var origin = typeof timingOrigin === "number" ? timingOrigin : performance.now();
     typographyProbe = typographyProbe || createTypographyProbe(includeInitiallyErrored);
@@ -732,7 +764,9 @@
           var timer = window.setTimeout(function () {
             reject(new Error("Fonturile Canvas nu au devenit ready în buget."));
           }, 4000);
-          document.fonts.ready.then(function () {
+          Promise.all(
+            loadRequiredTypographyFonts(typographyProbe).concat([document.fonts.ready])
+          ).then(function () {
             window.clearTimeout(timer);
             if (document.fonts.status !== "loaded") {
               reject(new Error("FontFaceSet Canvas nu este în starea loaded."));
@@ -742,7 +776,7 @@
             resolve();
           }, function (error) {
             window.clearTimeout(timer);
-            reject(error);
+            reject(requiredFontLoadingError(error, typographyProbe));
           });
         })
       : Promise.resolve();

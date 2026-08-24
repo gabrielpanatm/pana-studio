@@ -173,7 +173,6 @@ macro_rules! pana_tauri_commands {
             configure_codex_mcp,
             apply_page_asset_contract,
             import_project_asset,
-            read_native_block_registry,
             zola_check,
             zola_check_workspace,
             zola_build,

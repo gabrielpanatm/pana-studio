@@ -65,7 +65,7 @@ fn integration_fixture(
         ),
         (
             "templates/services/single.html",
-            "{# pana:dynamic model=service field=field_price path=price scope=page presentation=text #}<strong>{{ page.extra.price }}</strong>",
+            "<strong>{{ page.extra.price }}</strong>",
         ),
         (
             "templates/services/list.html",
@@ -73,7 +73,7 @@ fn integration_fixture(
         ),
         (
             "templates/articles/single.html",
-            "{# pana:dynamic model=service field=field_price path=price scope=page presentation=text #}<em>{{ page.extra.price }}</em>",
+            "<em>{{ page.extra.price }}</em>",
         ),
         (
             "templates/articles/list.html",
@@ -211,14 +211,6 @@ fn attach_model_and_renames_are_scoped_to_owned_files() {
         .unwrap()
         .contents
         .contains("modelId = \"service_entry\""));
-    assert!(model_rename
-        .changes
-        .iter()
-        .find(|change| change.relative_path == "templates/services/single.html")
-        .unwrap()
-        .contents
-        .contains("pana:dynamic model=service_entry"));
-
     let field_rename = plan_content_model_mutation(
         &root,
         &graph,
@@ -343,7 +335,7 @@ fn replace_detach_and_shared_template_conflicts_remain_explicit() {
     .unwrap();
     fs::write(
         root.join("templates/shared/value.html"),
-        "{# pana:dynamic model=service field=field_price path=price scope=page presentation=text #}{{ page.extra.price }}",
+        "{{ page.extra.price }}",
     )
     .unwrap();
     let shared_fixture =

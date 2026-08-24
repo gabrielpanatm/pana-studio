@@ -12,6 +12,7 @@ import type {
   ProjectWorkspacePreviewProjectionOutcome,
 } from "$lib/kernel/project-workspace-preview-coordinator";
 import type { PreviewWorkspaceState } from "$lib/preview/workspace-state.svelte";
+import type { SelectionMutationIdentity } from "$lib/preview/contracts";
 import type { ProjectDocumentWorkspaceState } from "$lib/project/document-workspace.svelte";
 import { zolaRelativePath } from "$lib/project/files";
 import type { ProjectSessionState } from "$lib/project/session-state.svelte";
@@ -23,6 +24,24 @@ import type { WorkbenchNavigationService } from "$lib/workbench/navigation-servi
 import type { WorkbenchWorkspaceState } from "$lib/workbench/workspace-state.svelte";
 import { errorMessage } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
+import { sameCssSemanticSelection } from "$lib/inspector/css-selection-stability";
+
+function selectionMutationIdentity(
+  snapshot: import("$lib/editor/contracts").SelectionSnapshot | null,
+): SelectionMutationIdentity | null {
+  if (!snapshot?.primaryMemberId || snapshot.members.length === 0) return null;
+  return {
+    selectionRevision: snapshot.selectionRevision,
+    workspaceRevision: snapshot.canvasIdentity.workspaceRevision,
+    primaryMemberId: snapshot.primaryMemberId,
+    members: snapshot.members.map((member) => ({
+      memberId: member.memberId,
+      editorNodeId: member.anchor.editorNodeId ?? null,
+      sourceNodeId: member.anchor.sourceNodeId ?? null,
+      renderInstanceId: member.anchor.renderInstanceId ?? null,
+    })),
+  };
+}
 
 export type SourceNavigationServiceDependencies = Readonly<{
   project: ProjectSessionState;
@@ -45,6 +64,7 @@ export type SourceNavigationServiceDependencies = Readonly<{
 /** Owns navigation between Inspector focus, semantic selection and source code. */
 export class SourceNavigationService {
   private readonly dependencies: SourceNavigationServiceDependencies;
+  private cssFocusIntentSequence = 0;
 
   constructor(dependencies: SourceNavigationServiceDependencies) {
     this.dependencies = dependencies;
@@ -61,11 +81,19 @@ export class SourceNavigationService {
     file: string;
     property?: string | null;
     expectedSelectionRevision?: number | null;
+    expectedSelection?: SelectionMutationIdentity | null;
   }): Promise<boolean> {
     if (!target.selector || !target.file || this.historyLocked()) return false;
+    const intentSequence = ++this.cssFocusIntentSequence;
     let expectedSelectionRevision = target.expectedSelectionRevision ?? null;
+    let expectedSelection = target.expectedSelection ?? null;
     const selectionSession = this.dependencies.selection.session;
-    if (
+    if (expectedSelection) {
+      if (!sameCssSemanticSelection(
+        expectedSelection,
+        selectionMutationIdentity(selectionSession.selectionSnapshot),
+      )) return false;
+    } else if (
       expectedSelectionRevision
       && selectionSession.selectionSnapshot?.selectionRevision !== expectedSelectionRevision
     ) return false;
@@ -106,16 +134,9 @@ export class SourceNavigationService {
         );
         if (!stableAnchorMatches) return false;
         expectedSelectionRevision = currentSelection.selectionRevision;
+        expectedSelection = selectionMutationIdentity(currentSelection);
       }
 
-      const focus = selectionSession.selectionSnapshot?.focus;
-      if (
-        (focus?.kind === "cssRule" || focus?.kind === "cssProperty")
-        && focus.file === target.file
-        && focus.selector === target.selector
-        && ((!property && focus.kind === "cssRule")
-          || (property && focus.kind === "cssProperty" && focus.property === property))
-      ) return true;
       const selection = await selectionSession.applySelectionIntent({
         kind: "setFocus",
         focus: property
@@ -133,6 +154,8 @@ export class SourceNavigationService {
               viewport: this.dependencies.workbenchState.previewDevice,
             },
         expectedSelectionRevision,
+        expectedSelection,
+        intentSequence,
       });
       if (
         !selection
@@ -146,6 +169,7 @@ export class SourceNavigationService {
     } catch (error) {
       if (
         this.historyLocked()
+        || intentSequence !== this.cssFocusIntentSequence
         || (expectedSelectionRevision
           && selectionSession.selectionSnapshot?.selectionRevision !== expectedSelectionRevision)
       ) return false;

@@ -51,13 +51,29 @@ test("variabilele SCSS sunt rezolvate doar pentru preview și ciclurile sunt res
   const variables = [
     { name: "brand", value: "$brand-raw" },
     { name: "brand-raw", value: "#336699" },
+    { name: "text-heading", value: "$color-gray-900" },
+    { name: "color-gray-900", value: "#111827" },
     { name: "a", value: "$b" },
     { name: "b", value: "$a" },
   ];
 
   assert.equal(resolvePickerColor("$brand", variables), "#336699");
+  assert.equal(resolvePickerColor("$text-heading", variables), "#111827");
   assert.equal(resolvePickerColor("$a", variables), null);
   assert.equal(resolvePickerColor("$missing", variables), null);
+});
+
+test("swatch-ul folosește graful complet de variabile, separat de sugestiile filtrate", () => {
+  const colorInput = source("../src/lib/components/inspector/controls/ColorInput.svelte");
+  const typography = source("../src/lib/components/inspector/sections/TypographySection.svelte");
+  const background = source("../src/lib/components/inspector/sections/BackgroundSection.svelte");
+  const border = source("../src/lib/components/inspector/sections/BorderSection.svelte");
+  const shadow = source("../src/lib/components/inspector/sections/ShadowSection.svelte");
+
+  assert.match(colorInput, /resolutionVariables \?\? suggestions/);
+  for (const component of [typography, background, border, shadow]) {
+    assert.match(component, /resolutionVariables=\{scssVariables\}/);
+  }
 });
 
 test("sesiunea separă preview, commit și cancel pentru autoritatea Rust", () => {
@@ -84,4 +100,14 @@ test("componenta nu comite interacțiunile interne ale pickerului", () => {
   );
   assert.doesNotMatch(component, /onchange=\{commitLatest\}/);
   assert.match(component, /registerEditFlushHandler\([\s\S]*closePicker\(true\)/);
+  assert.match(
+    component,
+    /pendingPreviewValue = session\.preview\(serializedValue\);[\s\S]*requestAnimationFrame/,
+    "valorile pointerului sunt agregate la un singur preview pe cadru",
+  );
+  assert.match(
+    component,
+    /function commitLatest\(\) \{\s*flushPendingPreview\(\);\s*const committed = session\?\.commit\(\)/,
+    "ultima valoare live este livrată înaintea commitului",
+  );
 });

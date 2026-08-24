@@ -428,7 +428,7 @@
     padding: 82px clamp(28px, 6vw, 72px) 64px;
     outline: none;
     color: var(--text);
-    font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+    font-family: var(--font-ui);
     font-size: 18px;
     line-height: 1.65;
   }
@@ -529,7 +529,7 @@
     border: 1px solid var(--border-2);
     border-radius: 5px;
     background: var(--surface-2);
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.86em;
   }
 

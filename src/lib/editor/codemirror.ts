@@ -211,7 +211,7 @@ export function createCodeEditorTheme(theme: "dark" | "light") {
       },
       ".cm-scroller": {
         overflow: "auto",
-        fontFamily: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
+        fontFamily: "var(--font-mono)",
         lineHeight: "1.55",
       },
       ".cm-content": {

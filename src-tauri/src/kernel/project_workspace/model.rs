@@ -343,6 +343,31 @@ impl WorkspaceProjectionSourceTexts {
         }
     }
 
+    /// Borrows one projected source without materializing the complete COW
+    /// namespace. Cache validation and mutation preflights only need the
+    /// affected document and must stay proportional to that document.
+    pub(crate) fn text(&self, path: &str) -> Option<&str> {
+        match self.state.as_ref() {
+            WorkspaceProjectionSourceState::Materialized { documents, .. } => {
+                documents.files.get(path).map(|entry| entry.current_text())
+            }
+            WorkspaceProjectionSourceState::Owned(source_texts) => {
+                source_texts.get(path).map(String::as_str)
+            }
+        }
+    }
+
+    pub(crate) fn hash(&self, path: &str) -> Option<String> {
+        match self.state.as_ref() {
+            WorkspaceProjectionSourceState::Materialized { documents, .. } => {
+                documents.files.get(path).map(|entry| entry.current_hash())
+            }
+            WorkspaceProjectionSourceState::Owned(source_texts) => source_texts
+                .get(path)
+                .map(|source| crate::kernel::file_buffer_store::hash_text(source)),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         match self.state.as_ref() {

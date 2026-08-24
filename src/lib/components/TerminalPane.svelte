@@ -71,7 +71,7 @@
     <div class="terminal-actions" aria-label={t("workbench-terminal-actions")}>
       {#each quickTasks as task}
         <button
-          class="terminal-task-button"
+          class="ui-icon-button compact quiet terminal-task-button"
           type="button"
           title={`${t(task.labelId)} · ${t(task.titleId)}`}
           aria-label={t(task.labelId)}
@@ -86,14 +86,14 @@
           {/if}
         </button>
       {/each}
-      <button class="terminal-icon-button" type="button" title={t("workbench-terminal-clear")} onclick={clearActiveTerminal}>
+      <button class="ui-icon-button compact quiet" type="button" title={t("workbench-terminal-clear")} onclick={clearActiveTerminal}>
         <IconEraser size={14} stroke={2} />
       </button>
-      <button class="terminal-add-button" type="button" title={t("workbench-terminal-new-tab")} onclick={openTab}>
+      <button class="ui-icon-button compact quiet" type="button" title={t("workbench-terminal-new-tab")} onclick={openTab}>
         <IconPlus size={14} stroke={2} />
       </button>
       <button
-        class="terminal-icon-button"
+        class="ui-icon-button compact quiet"
         type="button"
         title={`${t("workbench-terminal-hide")} (Ctrl+\`)`}
         aria-label={t("workbench-terminal-hide")}
@@ -143,38 +143,8 @@
     justify-content: flex-end;
   }
 
-  .terminal-add-button,
-  .terminal-task-button,
-  .terminal-icon-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 27px;
-    min-width: 27px;
-    height: 27px;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 5px;
-    color: var(--wb-text-muted, var(--text-muted));
-    background: transparent;
-    box-shadow: none;
-  }
-
   .terminal-task-button {
     color: var(--brand-strong);
-  }
-
-  .terminal-add-button:hover,
-  .terminal-task-button:hover,
-  .terminal-icon-button:hover,
-  .terminal-add-button:focus-visible,
-  .terminal-task-button:focus-visible,
-  .terminal-icon-button:focus-visible {
-    border-color: var(--wb-border-subtle, var(--border-3));
-    color: var(--wb-text-primary, var(--text-strong));
-    background: var(--material-control-hover);
-    box-shadow: var(--shadow-control);
-    outline: none;
   }
 
   .terminal-tab-strip {

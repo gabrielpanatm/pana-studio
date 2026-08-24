@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import type { EditFlushReason } from "$lib/session/edit-flush-registry";
 import type { GlobalStatusEscalationRequest } from "$lib/status/global-status";
 import type { CenterView } from "$lib/application/contracts";
@@ -14,6 +15,7 @@ import type {
   WorkbenchDocumentActivationCacheOutcome,
   WorkbenchDocumentActivationPhase,
   WorkbenchDocumentActivationSnapshot,
+  WorkbenchDocumentPresentation,
   WorkbenchDocumentSnapshot,
   WorkbenchIntent,
   WorkbenchSnapshot,
@@ -23,6 +25,7 @@ import type {
 import { t } from "$lib/i18n/runtime.svelte";
 import { errorMessage } from "$lib/util";
 import { WorkbenchProjectionController } from "$lib/workbench/controller";
+import { activeWorkbenchDocument } from "$lib/workbench/document-presentation";
 
 const MIN_PREVIEW_ZOOM = 25;
 const MAX_PREVIEW_ZOOM = 200;
@@ -33,8 +36,6 @@ export type WorkbenchAuthority = Readonly<{
   project: ProjectScan | null;
   activeRelativePath: string | null;
   centerView: CenterView;
-  canvasSurfaceResumeRequired: boolean;
-  canvasSurfaceMounted: boolean;
 }>;
 
 export type WorkbenchWorkspaceCommands = {
@@ -50,6 +51,10 @@ export type WorkbenchWorkspaceCommands = {
     },
   ) => Promise<unknown>;
   setCenterView: (view: CenterView) => void;
+  projectActiveDocument: (
+    document: WorkbenchDocumentSnapshot | null,
+    previous: WorkbenchDocumentSnapshot | null,
+  ) => void;
   synchronizeTerminalPane: (open: boolean) => void;
   clearStatus: (id: string) => void;
   escalateStatus: (request: GlobalStatusEscalationRequest) => void;
@@ -57,7 +62,7 @@ export type WorkbenchWorkspaceCommands = {
 
 /** Owns the durable Workbench projection and its canvas/pane presentation. */
 export class WorkbenchWorkspaceState {
-  snapshot = $state<WorkbenchSnapshot | null>(null);
+  private snapshotState = $state<WorkbenchSnapshot | null>(null);
   documentActivation = $state<WorkbenchDocumentActivationSnapshot>(
     emptyDocumentActivation(),
   );
@@ -70,8 +75,14 @@ export class WorkbenchWorkspaceState {
 
   private hydratedRuntimeSessionId = "";
   private readonly projection: WorkbenchProjectionController;
+  private readonly commands: WorkbenchWorkspaceCommands;
 
-  constructor(private readonly commands: WorkbenchWorkspaceCommands) {
+  get snapshot(): WorkbenchSnapshot | null {
+    return this.snapshotState;
+  }
+
+  constructor(commands: WorkbenchWorkspaceCommands) {
+    this.commands = commands;
     const state = this;
     this.projection = new WorkbenchProjectionController(() => {
       const authority = this.commands.authority();
@@ -82,19 +93,50 @@ export class WorkbenchWorkspaceState {
           return state.snapshot;
         },
         set workbenchSnapshot(snapshot) {
-          state.snapshot = snapshot;
+          state.publishSnapshot(snapshot);
+        },
+        projectActiveDocument(previous) {
+          state.projectActiveDocument(previous);
         },
       };
     });
   }
 
   reset() {
-    this.projection.reset();
-    this.hydratedRuntimeSessionId = "";
-    this.documentActivation = {
-      ...emptyDocumentActivation(),
-      serial: this.documentActivation.serial + 1,
-    };
+    // Reset can be called from project lifecycle effects. Keep every nested
+    // state read out of the caller's dependency graph so the writes below do
+    // not make that effect subscribe to and reactivate itself.
+    untrack(() => {
+      this.projection.reset();
+      this.hydratedRuntimeSessionId = "";
+      this.documentActivation = {
+        ...emptyDocumentActivation(),
+        serial: this.documentActivation.serial + 1,
+      };
+    });
+  }
+
+  get activeDocument() {
+    return activeWorkbenchDocument(this.snapshot);
+  }
+
+  get activeDocumentPresentation(): WorkbenchDocumentPresentation | null {
+    return this.activeDocument?.presentation ?? null;
+  }
+
+  private publishSnapshot(snapshot: WorkbenchSnapshot | null) {
+    const previous = activeWorkbenchDocument(this.snapshot);
+    this.snapshotState = snapshot;
+    this.projectActiveDocument(previous);
+  }
+
+  /** Accepts a Rust-confirmed snapshot through the single presentation boundary. */
+  acceptSnapshot(snapshot: WorkbenchSnapshot | null) {
+    this.publishSnapshot(snapshot);
+  }
+
+  private projectActiveDocument(previous: WorkbenchDocumentSnapshot | null) {
+    this.commands.projectActiveDocument(activeWorkbenchDocument(this.snapshot), previous);
   }
 
   beginDocumentActivation(serial: number, document: WorkbenchDocumentSnapshot) {
@@ -151,105 +193,13 @@ export class WorkbenchWorkspaceState {
     return await this.projection.setActiveDocumentSurface(relativePath, centerView);
   }
 
-  async restore() {
-    const authority = this.commands.authority();
-    const { projectRoot, runtimeSessionId } = authority;
-    let snapshot = await this.projection.refresh();
-    if (
-      !snapshot
-      || !projectRoot
-      || !runtimeSessionId
-      || snapshot.projectRoot !== projectRoot
-      || snapshot.runtimeSessionId !== runtimeSessionId
-      || authority.project?.root !== projectRoot
-    ) return snapshot;
-
-    if (snapshot.bottomPanel.activeView !== "terminal") {
-      const receipt = await this.projection.apply({
-        kind: "set_bottom_panel",
-        open: false,
-        activeView: "terminal",
-      });
-      const latest = this.commands.authority();
-      if (
-        latest.projectRoot !== projectRoot
-        || latest.runtimeSessionId !== runtimeSessionId
-      ) return this.snapshot;
-      snapshot = receipt.snapshot;
-    }
-
-    this.projectCanvas(snapshot.canvasViewport);
-    const group = snapshot.groups.find(
-      (candidate) => candidate.groupId === snapshot.activeGroupId,
-    );
-    const document = group?.documents.find(
-      (candidate) => candidate.documentId === group.activeDocumentId,
-    );
-    const project = this.commands.authority().project;
-    const file = document
-      ? project?.files.find((candidate) => candidate.relativePath === document.relativePath) ?? null
-      : null;
-
-    if (document && !file) {
-      this.commands.escalateStatus({
-        id: "workbench.restore.missing-document",
-        level: "warning",
-        title: t("workbench-restored-document-missing"),
-        message: document.relativePath,
-      });
-    } else if (file) {
-      const latest = this.commands.authority();
-      await this.commands.loadProjectFile(file, {
-        strict: true,
-        skipDraftFlush: true,
-        activateTemplateWorkbench: snapshot.activeActivity === "editor"
-          && !latest.canvasSurfaceResumeRequired
-          && latest.canvasSurfaceMounted,
-        syncWorkbench: false,
-      });
-      const afterLoad = this.commands.authority();
-      if (
-        afterLoad.projectRoot !== projectRoot
-        || afterLoad.runtimeSessionId !== runtimeSessionId
-      ) return this.snapshot;
-      this.commands.setCenterView(document?.surface === "code" ? "code" : "preview");
-      this.commands.clearStatus("workbench.restore.missing-document");
-    }
-
-    this.hydratedRuntimeSessionId = runtimeSessionId;
-    this.commands.synchronizeTerminalPane(
-      snapshot.bottomPanel.open && snapshot.bottomPanel.activeView === "terminal",
-    );
-    this.projectActivity(snapshot.activeActivity, document?.surface ?? "visual");
-    this.commands.clearStatus("workbench.restore");
-    const latest = this.commands.authority();
-    if (!file && latest.activeRelativePath && latest.project) {
-      const fallbackFile = latest.project.files.find(
-        (candidate) => candidate.relativePath === latest.activeRelativePath,
-      );
-      if (fallbackFile) {
-        try {
-          const receipt = await this.projection.openDocument(
-            fallbackFile,
-            latest.centerView,
-          );
-          return receipt.snapshot;
-        } catch (error) {
-          this.hydratedRuntimeSessionId = "";
-          throw error;
-        }
-      }
-    }
-    return snapshot;
-  }
-
   hydrateBootstrap(snapshot: WorkbenchSnapshot) {
     const authority = this.commands.authority();
     if (
       snapshot.projectRoot !== authority.projectRoot
       || snapshot.runtimeSessionId !== authority.runtimeSessionId
     ) throw new Error("Snapshot-ul Workbench din bootstrap aparține altei sesiuni.");
-    this.snapshot = snapshot;
+    this.publishSnapshot(snapshot);
     this.projectCanvas(snapshot.canvasViewport);
     const group = snapshot.groups.find(
       (candidate) => candidate.groupId === snapshot.activeGroupId,
@@ -337,12 +287,17 @@ export class WorkbenchWorkspaceState {
         return receipt;
       }
       if (!authority.activeRelativePath) throw new Error(t("workbench-split-document-required"));
+      const document = this.activeDocument;
+      if (!document || document.presentation !== "html") {
+        throw new Error("Modul split Vizual | Cod este disponibil numai pentru HTML.");
+      }
       const secondarySurface: WorkbenchSurface = "code";
       const receipt = await this.projection.apply({
         kind: "configure_synchronized_split",
         split,
         relativePath: authority.activeRelativePath,
         secondarySurface,
+        presentation: document.presentation,
       });
       this.commands.clearStatus("workbench.split");
       return receipt;

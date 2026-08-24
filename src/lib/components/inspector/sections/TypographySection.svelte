@@ -3,6 +3,7 @@
   import type { InstalledFontVariationAxis } from "$lib/fonts/contracts";
   import { t } from "$lib/i18n/runtime.svelte";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
+  import { resolveFontWeightPreset } from "$lib/inspector/font-weight-model";
   import { variablesForProperty } from "$lib/editor/controls";
   import {
     IconTypography,
@@ -23,7 +24,7 @@
   import InspectorSection from "../InspectorSection.svelte";
   import PropInput from "../controls/PropInput.svelte";
   import ColorInput from "../controls/ColorInput.svelte";
-  import SegmentedControl from "../controls/SegmentedControl.svelte";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
 
   let {
     pendingValues,
@@ -105,6 +106,14 @@
     { value: "800", label: "Eb", title: t("inspector-typography-weight-extrabold") },
     { value: "900", label: "X", title: t("inspector-typography-weight-black") },
   ]);
+  const fontWeightValue = $derived(getValue("font-weight"));
+  const resolvedFontWeight = $derived(
+    resolveFontWeightPreset(fontWeightValue, scssVariables) ?? "",
+  );
+
+  function selectFontWeightPreset(value: string) {
+    edit.commit("font-weight", value);
+  }
 
   const textDecorationOpts = $derived([
     { value: "none", label: "—", title: t("inspector-none") },
@@ -133,6 +142,7 @@
     property="color"
     value={getValue("color")}
     suggestions={variablesForProperty("color", scssVariables)}
+    resolutionVariables={scssVariables}
     {...edit.continuous("color")}
   />
 
@@ -166,12 +176,25 @@
     </div>
   </div>
 
-  <div class="row-label">{t("inspector-typography-font-weight")}</div>
-  <SegmentedControl
-    options={fontWeightOpts}
-    value={getValue("font-weight")}
-    onchange={(v) => edit.commit("font-weight", v)}
-  />
+  <div class="row-label font-weight-label">
+    <span>{t("inspector-typography-font-weight")}</span>
+    {#if fontWeightValue && resolvedFontWeight && fontWeightValue !== resolvedFontWeight}
+      <code>→ {resolvedFontWeight}</code>
+    {/if}
+  </div>
+  <div class="font-weight-control">
+    <PropInput
+      value={fontWeightValue}
+      placeholder="400 / $font-normal"
+      suggestions={variablesForProperty("font-weight", scssVariables)}
+      {...edit.continuous("font-weight")}
+    />
+    <SegmentedControl
+      options={fontWeightOpts}
+      value={resolvedFontWeight}
+      onchange={selectFontWeightPreset}
+    />
+  </div>
 
   {#if installedFontAxes.length}
     <div class="row-label">{t("inspector-typography-variable-axes")}</div>
@@ -242,6 +265,23 @@
     font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
+  }
+
+  .font-weight-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .font-weight-label code {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .font-weight-control {
+    display: grid;
+    gap: 5px;
   }
 
   .row-2 {

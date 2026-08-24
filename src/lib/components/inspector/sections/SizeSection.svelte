@@ -68,7 +68,7 @@
   </div>
 
   <!-- Advanced toggle -->
-  <button type="button" class="advanced-toggle" onclick={() => (showAdvanced = !showAdvanced)}>
+  <button type="button" class="advanced-toggle ui-button compact quiet" aria-expanded={showAdvanced} onclick={() => (showAdvanced = !showAdvanced)}>
     <span class="adv-chevron" class:open={showAdvanced}>›</span>
     {t("inspector-size-advanced-options")}
   </button>
@@ -175,21 +175,8 @@
   /* ── Advanced toggle ─────────────────────────────────────────────────── */
 
   .advanced-toggle {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 2px 0;
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
-    cursor: pointer;
-    transition: color 80ms;
+    align-self: flex-start;
     margin-top: 2px;
-  }
-
-  .advanced-toggle:hover {
-    color: var(--text);
   }
 
   .adv-chevron {

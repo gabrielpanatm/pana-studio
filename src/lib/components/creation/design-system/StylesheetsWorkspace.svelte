@@ -174,22 +174,22 @@
       <code>{style.scope}</code>
       <small>{t("design-usages-count", { count: styleUsageCounts.get(style.nodeId) ?? 0 })}</small>
     </button>
-  {:else}<div class="workspace-state">{t("design-empty-stylesheets")}</div>{/each}
+  {:else}<div class="ui-empty-state">{t("design-empty-stylesheets")}</div>{/each}
 {/snippet}
 
 {#snippet detail()}
   {#if detailMode === "create" || detailMode === "edit"}
     <form class="resource-form" onsubmit={(event) => { event.preventDefault(); void (detailMode === "create" ? createStylesheet() : renameStylesheet()); }}>
       <header class="detail-heading"><div><span class="detail-kicker">{detailMode === "create" ? t("design-new-resource") : t("design-controlled-change")}</span><h2>{detailMode === "create" ? t("design-add-resource", { resource: t("design-view-stylesheets").toLocaleLowerCase(l10n.locale) }) : selectedStyle?.file.split("/").at(-1)}</h2><p>{detailMode === "create" ? t("design-create-description") : t("design-change-description")}</p></div><button class="ui-icon-button ui-close-button" type="button" aria-label={t("design-cancel-edit")} disabled={mutating} onclick={resetPanel}><IconX size={14} /></button></header>
-      {#if detailMode === "create"}<label><span>{t("design-project-path")}</span><input bind:value={formPath} disabled={mutating} placeholder="sass/pagini/stil-nou.scss" /></label>{:else}<label><span>{t("design-file-name")}</span><input bind:value={formName} disabled={mutating} /></label><div class="source-card"><span>{t("design-current-path")}</span><code>{formPath}</code></div>{/if}
-      {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
-      <div class="form-actions"><button type="button" disabled={mutating} onclick={resetPanel}>{t("design-cancel")}</button><button class="primary" type="submit" disabled={mutating || (detailMode === "create" ? !formPath.trim() : !formName.trim())}><IconDeviceFloppy size={14} /> {detailMode === "create" ? t("design-create-session") : t("design-save-changes")}</button></div>
+      {#if detailMode === "create"}<label class="ui-form-field"><span class="ui-form-label">{t("design-project-path")}</span><input class="ui-input" bind:value={formPath} disabled={mutating} placeholder="sass/pagini/stil-nou.scss" /></label>{:else}<label class="ui-form-field"><span class="ui-form-label">{t("design-file-name")}</span><input class="ui-input" bind:value={formName} disabled={mutating} /></label><div class="source-card"><span>{t("design-current-path")}</span><code>{formPath}</code></div>{/if}
+      {#if formError}<p class="ui-message error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+      <div class="form-actions"><button class="ui-button" type="button" disabled={mutating} onclick={resetPanel}>{t("design-cancel")}</button><button class="ui-button primary" type="submit" disabled={mutating || (detailMode === "create" ? !formPath.trim() : !formName.trim())}><IconDeviceFloppy size={14} /> {detailMode === "create" ? t("design-create-session") : t("design-save-changes")}</button></div>
     </form>
   {:else if selectedStyle}
     <span class="detail-kicker">{t("design-stylesheet-kicker", { scope: selectedStyle.scope })}</span><h2>{selectedStyle.file.split("/").at(-1)}</h2><p>{t("design-stylesheet-summary", { count: styleUsageCounts.get(selectedStyle.nodeId) ?? 0 })}</p>
     <div class="source-card"><span>{t("design-path")}</span><code>{selectedStyle.file}</code></div>
     <div class="detail-actions"><button class="ui-button primary primary-action" type="button" onclick={beginEdit}><IconEdit size={14} /> {t("design-edit")}</button><button class="ui-button secondary-action" type="button" onclick={() => openWorkspaceSource(selectedStyle.file)}>{t("design-open-editor")} <IconExternalLink size={13} /></button></div>
-  {:else}<div class="workspace-state">{t("design-empty-stylesheets")}</div>{/if}
+  {:else}<div class="ui-empty-state">{t("design-empty-stylesheets")}</div>{/if}
 {/snippet}
 
 <ResourceWorkspaceShell panelId="design-panel-styles" tabId="design-tab-styles" detailLabel={t("design-detail-label")} {list} {detail} />

@@ -40,6 +40,7 @@
     scannedAssets = [],
     loadingClassRules = false,
     projectionTransitioning = false,
+    editingReady = false,
     selectorSuffix = "",
     customSuffix = "",
     usingCustom = false,
@@ -64,6 +65,7 @@
     scannedAssets?: ProjectFile[];
     loadingClassRules?: boolean;
     projectionTransitioning?: boolean;
+    editingReady?: boolean;
     selectorSuffix?: string;
     customSuffix?: string;
     usingCustom?: boolean;
@@ -88,21 +90,20 @@
 {#if hasCssSubject && selectedClass}
   <section
     class="css-pane"
-    aria-busy={loadingClassRules || projectionTransitioning}
-    inert={projectionTransitioning}
+    aria-busy={loadingClassRules || projectionTransitioning || (!editingReady && resolution?.state !== "ambiguous")}
   >
-    <div class="css-context">
+    <div class="css-context" inert={!editingReady || projectionTransitioning}>
       <div class="group-header">
         <h3>{t("inspector-css-rules")}</h3>
         <code>{effectiveSelector}</code>
         <span class="viewport-pill">{viewportLabel}</span>
       </div>
 
-      <div class="pseudo-bar" aria-label={t("inspector-css-rules")}>
+      <div class="pseudo-bar ui-segmented compact" aria-label={t("inspector-css-rules")}>
         {#each pseudoOptions as opt}
           <button
             type="button"
-            class="pseudo-btn"
+            class="pseudo-btn ui-segmented-option"
             class:active={!usingCustom && selectorSuffix === opt.suffix}
             onclick={() => {
               customEditorOpen = false;
@@ -112,7 +113,7 @@
         {/each}
         <button
           type="button"
-          class="pseudo-btn pseudo-custom-btn"
+          class="pseudo-btn pseudo-custom-btn ui-segmented-option"
           class:active={customEditorVisible}
           title={t("inspector-css-custom-selector")}
           aria-label={t("inspector-css-toggle-custom")}
@@ -129,7 +130,7 @@
       {#if customEditorVisible}
         <input
           type="text"
-          class="custom-selector-input"
+          class="custom-selector-input ui-input compact code"
           placeholder={t("inspector-css-custom-placeholder")}
           value={customSuffix}
           oninput={(event) => selectCssVariant(event.currentTarget.value)}
@@ -152,6 +153,8 @@
           files: resolution.candidates.map((candidate) => candidate.file).join(", "),
         })}
       </p>
+    {:else if !editingReady}
+      <p class="hint">{t("inspector-css-target-synchronizing")}</p>
     {:else}
       {#if pageCssTarget?.targetKind === "reusable"}
         <p class="hint css-delivery-note">
@@ -274,45 +277,11 @@
   .pseudo-bar {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr)) var(--control-height-compact);
-    gap: 3px;
-    padding: 3px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-control);
-    background: var(--material-inset);
-    box-shadow: var(--shadow-inset);
   }
 
   .pseudo-btn {
     min-width: 0;
-    min-height: var(--control-height-compact);
-    padding: 0 5px;
-    border: 1px solid transparent;
-    border-radius: calc(var(--radius-control) - 2px);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-family: "JetBrains Mono", monospace;
-    cursor: pointer;
-    transition:
-      border-color 100ms ease,
-      color 100ms ease,
-      background 100ms ease,
-      box-shadow 100ms ease;
-    white-space: nowrap;
-  }
-
-  .pseudo-btn:hover {
-    border-color: var(--border-subtle);
-    color: var(--text);
-    background: var(--material-control-hover);
-    box-shadow: var(--shadow-control-hover);
-  }
-
-  .pseudo-btn.active {
-    border-color: color-mix(in srgb, var(--brand) 34%, var(--border-subtle));
-    color: var(--brand-strong);
-    background: var(--material-control);
-    box-shadow: var(--shadow-control);
+    font-family: var(--font-mono);
   }
 
   .pseudo-custom-btn {
@@ -322,16 +291,6 @@
   }
 
   .custom-selector-input {
-    width: 100%;
-    height: 28px;
-    padding: 0 7px;
-    border: 1px solid var(--brand);
-    border-radius: var(--radius-control);
-    background: var(--material-inset);
-    box-shadow: var(--shadow-inset);
-    color: var(--text);
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-    outline: none;
+    min-height: var(--control-height-compact);
   }
 </style>

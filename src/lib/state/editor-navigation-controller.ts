@@ -382,14 +382,16 @@ export async function moveEditorNavigationNode(
       host.setGlobalStatus(reason, "error");
       return blockedAction(reason);
     }
-    await host.projectCommittedMove({
+    const settlement = await host.projectCommittedMove({
       projectRoot: plan.identity.projectRoot,
       sessionId: plan.identity.runtimeSessionId,
       projectSessionEpoch: host.context().projectSessionEpoch,
       expectedWorkspaceRevision: receipt.workspaceMutation.revisionAfter,
     }, receipt);
     exitEditorNavigationScope(host);
-    host.setGlobalStatus(t("editor-navigation-move-confirmed"), "idle");
+    if (settlement.warnings.length === 0) {
+      host.setGlobalStatus(t("editor-navigation-move-confirmed"), "idle");
+    }
     return committedAction();
   } catch (error) {
     const reason = errorMessage(error);

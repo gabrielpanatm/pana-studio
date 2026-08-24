@@ -158,9 +158,9 @@ export async function refreshSourceGraph(
       },
     );
     if (!projectionMatches()) {
-      if (options.strict) {
-        throw new Error(t("source-graph-refresh-superseded"));
-      }
+      // A newer request now owns this projection. Supersession is a normal
+      // latest-wins outcome, including for strict callers; the newer request
+      // is responsible for publishing or reporting its own result.
       return false;
     }
     if (

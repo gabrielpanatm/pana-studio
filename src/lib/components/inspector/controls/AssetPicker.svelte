@@ -4,6 +4,10 @@
   import type { ProjectFile } from "$lib/project/lifecycle-contract";
   import { t } from "$lib/i18n/runtime.svelte";
   import {
+    calculateAnchoredPopoverPlacement,
+    observeAnchoredPopoverPosition,
+  } from "$lib/ui/anchored-popover";
+  import {
     assetEditLeaseMatches,
     cancelledAssetEditValue,
     captureAssetEditLease,
@@ -34,12 +38,7 @@
     disabled?: boolean;
   } = $props();
 
-  const VIEWPORT_MARGIN = 8;
-  const GAP = 4;
-  const MAX_HEIGHT = 260;
-  const MIN_HEIGHT = 96;
   const OPTION_HEIGHT = 28;
-  const POPOVER_PADDING = 8;
 
   let root = $state<HTMLDivElement | null>(null);
   let open = $state(false);
@@ -65,10 +64,6 @@
     `left: ${placement.left}px; top: ${placement.top}px; width: ${placement.width}px; max-height: ${placement.maxHeight}px;`,
   );
 
-  function clamp(value: number, min: number, max: number) {
-    return Math.min(Math.max(value, min), max);
-  }
-
   function updatePlacement() {
     if (!root) return;
 
@@ -76,21 +71,14 @@
     const group = root.closest(".inspector-group") as HTMLElement | null;
     const form = root.closest(".edit-form") as HTMLElement | null;
     const targetRect = (form ?? group ?? root).getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const width = Math.max(anchorRect.width, Math.min(targetRect.width, viewportWidth - VIEWPORT_MARGIN * 2));
-    const left = clamp(targetRect.left, VIEWPORT_MARGIN, Math.max(VIEWPORT_MARGIN, viewportWidth - width - VIEWPORT_MARGIN));
-    const spaceBelow = viewportHeight - anchorRect.bottom - VIEWPORT_MARGIN;
-    const spaceAbove = anchorRect.top - VIEWPORT_MARGIN;
-    const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
-    const availableSpace = Math.max(MIN_HEIGHT, openAbove ? spaceAbove : spaceBelow);
-    const contentHeight = filteredAssets.length * OPTION_HEIGHT + POPOVER_PADDING;
-    const maxHeight = Math.min(MAX_HEIGHT, contentHeight, availableSpace - GAP);
-    const top = openAbove
-      ? Math.max(VIEWPORT_MARGIN, anchorRect.top - GAP - maxHeight)
-      : Math.min(anchorRect.bottom + GAP, viewportHeight - VIEWPORT_MARGIN - maxHeight);
-
-    placement = { left, top, width, maxHeight };
+    placement = calculateAnchoredPopoverPlacement({
+      anchorRect,
+      scopeRect: targetRect,
+      itemCount: filteredAssets.length,
+      itemHeight: OPTION_HEIGHT,
+      minHeight: 96,
+      maxHeight: 260,
+    });
   }
 
   function showPicker() {
@@ -150,12 +138,7 @@
   $effect(() => {
     if (!open || !root) return;
     tick().then(updatePlacement);
-    const pane = root.closest(".inspector-pane");
-    pane?.addEventListener("scroll", updatePlacement, { passive: true });
-
-    return () => {
-      pane?.removeEventListener("scroll", updatePlacement);
-    };
+    return observeAnchoredPopoverPosition(root, updatePlacement);
   });
 
   $effect(() => {
@@ -170,15 +153,13 @@
   $effect(() => () => clearCommitTimer());
 </script>
 
-<svelte:window onresize={updatePlacement} onscroll={updatePlacement} />
-
-<div class="asset-picker" bind:this={root} onfocusout={handleFocusOut}>
-  <span class="asset-icon">
+<div class="asset-picker ui-control-group compact" class:disabled bind:this={root} onfocusout={handleFocusOut}>
+  <span class="asset-icon ui-control-affix ui-control-prefix">
     <IconPhoto size={13} stroke={1.8} />
   </span>
   <input
     type="text"
-    class="asset-input"
+    class="asset-input ui-control-input code"
     {value}
     placeholder="/imagini/exemplu.png"
     autocomplete="off"
@@ -224,7 +205,7 @@
   />
   <button
     type="button"
-    class="asset-toggle"
+    class="asset-toggle ui-icon-button compact quiet ui-control-action"
     title={t("inspector-asset-choose-project")}
     disabled={disabled || !assets.length}
     onclick={() => {
@@ -238,20 +219,20 @@
 </div>
 
 {#if open && filteredAssets.length}
-  <div class="asset-popover" role="listbox" aria-label={t("inspector-asset-project-images")} style={popoverStyle}>
+  <div class="asset-popover ui-popover" role="listbox" aria-label={t("inspector-asset-project-images")} style={popoverStyle}>
     {#each filteredAssets as asset}
       {@const url = assetUrl(asset)}
       {@const meta = assetMeta?.(asset) ?? ""}
       <button
         type="button"
-        class="asset-option"
+        class="asset-option ui-option"
         title={`${asset.relativePath} -> ${url}`}
         onmousedown={(event) => event.preventDefault()}
         onclick={() => selectAsset(asset)}
       >
         <span class="asset-name">{asset.name}</span>
         <span class="asset-path">{url}</span>
-        {#if meta}<span class="asset-origin">{meta}</span>{/if}
+        {#if meta}<span class="asset-origin ui-badge">{meta}</span>{/if}
       </button>
     {/each}
   </div>
@@ -259,76 +240,19 @@
 
 <style>
   .asset-picker {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    background: var(--surface-8);
-  }
-
-  .asset-picker:focus-within {
-    border-color: var(--brand);
-  }
-
-  .asset-picker:has(.asset-input:disabled) {
-    opacity: 0.55;
+    position: relative;
   }
 
   .asset-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin: 0 6px;
-    color: var(--text-muted);
+    padding-inline: 6px;
   }
 
   .asset-input {
-    flex: 1;
-    min-width: 0;
-    height: 27px;
-    padding: 0 6px 0 0;
-    border: none;
-    color: var(--text);
-    background: transparent;
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-    outline: none;
+    padding-left: 6px;
   }
 
   .asset-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 27px;
-    border: none;
-    border-left: 1px solid var(--border-4);
-    color: var(--text-muted);
-    background: var(--surface-4);
-    cursor: pointer;
-  }
-
-  .asset-toggle:hover {
-    color: var(--brand-strong);
-    background: var(--brand-soft);
-  }
-
-  .asset-toggle:disabled {
-    cursor: default;
-    opacity: 0.45;
-  }
-
-  .asset-popover {
-    position: fixed;
-    z-index: 1000;
-    overflow: auto;
-    padding: 4px;
-    border: 1px solid var(--border-4);
-    border-radius: 7px;
-    background: var(--surface-2);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+    border-left-color: var(--border-subtle);
   }
 
   .asset-option {
@@ -336,21 +260,7 @@
     grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
-    width: 100%;
-    min-height: 28px;
     padding: 4px 7px;
-    border: 0;
-    border-radius: 5px;
-    color: var(--text);
-    background: transparent;
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .asset-option:hover,
-  .asset-option:focus {
-    background: var(--brand-soft);
-    outline: none;
   }
 
   .asset-name,
@@ -359,7 +269,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
   }
 
@@ -374,12 +284,5 @@
 
   .asset-origin {
     max-width: 92px;
-    padding: 2px 5px;
-    border: 1px solid var(--border-3);
-    border-radius: 999px;
-    color: var(--text-muted);
-    background: var(--surface-4);
-    font-size: 12px;
-    font-weight: 800;
   }
 </style>

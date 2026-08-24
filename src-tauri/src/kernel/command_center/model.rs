@@ -36,6 +36,7 @@ pub enum CommandCenterItemKind {
 #[serde(rename_all = "snake_case")]
 pub enum CommandCenterAppCommand {
     OpenProject,
+    CloseApplication,
     CloseProject,
     Save,
     Undo,
@@ -59,6 +60,7 @@ pub enum CommandCenterAppCommand {
     ToggleInspector,
     ToggleTheme,
     OpenSettings,
+    OpenAbout,
     ShowVisual,
     ShowCode,
 }

@@ -86,9 +86,9 @@
   }
 </script>
 
-<div class="prop-field" bind:this={root} onfocusout={handleFocusOut}>
+<div class="prop-field ui-control-group compact" bind:this={root} onfocusout={handleFocusOut}>
   {#if prefix || label}
-    <span class="prop-prefix">
+    <span class="prop-prefix ui-control-affix ui-control-prefix code">
       {#if prefix}
         {@render prefix()}
       {:else}
@@ -99,7 +99,7 @@
   {#if suggestions.length}
     <button
       type="button"
-      class="var-btn"
+      class="var-btn ui-icon-button compact quiet ui-control-action"
       title={t("inspector-insert-scss-variable")}
       onclick={() => {
         showSuggestions = !showSuggestions;
@@ -109,7 +109,7 @@
   {/if}
   <input
     id={inputId}
-    class="prop-input"
+    class="prop-input ui-control-input code"
     {type}
     value={draftValue}
     {placeholder}
@@ -135,80 +135,3 @@
     <VariablePopover anchor={root} suggestions={filteredSuggestions} onselect={selectSuggestion} />
   {/if}
 </div>
-
-<style>
-  .prop-field {
-    position: relative;
-    display: flex;
-    align-items: center;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    overflow: visible;
-    background: var(--surface-8);
-    min-width: 0;
-  }
-
-  .prop-field:focus-within {
-    border-color: var(--brand);
-  }
-
-  .prop-prefix {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 5px;
-    border-right: 1px solid var(--border-4);
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 24px;
-    white-space: nowrap;
-    background: var(--surface-4);
-    user-select: none;
-    min-width: 24px;
-    height: 24px;
-    flex-shrink: 0;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  }
-
-  .var-btn {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    margin: 0 2px;
-    padding: 0;
-    border: 1px solid var(--border-4);
-    border-radius: 4px;
-    font-size: 12px;
-    line-height: 1;
-    background: var(--surface-4);
-    cursor: pointer;
-    color: var(--text-muted);
-  }
-
-  .var-btn:hover {
-    border-color: var(--brand-strong);
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-  }
-
-  .prop-input {
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    padding: 0 5px;
-    border: none;
-    color: var(--text);
-    font-size: 12px;
-    background: transparent;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  }
-
-  .prop-input:focus {
-    outline: none;
-  }
-
-</style>

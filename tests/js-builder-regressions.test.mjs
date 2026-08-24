@@ -693,6 +693,18 @@ test("Canvas document commit waits for styledReady and never replaces head/body 
     sync,
     /requestAnimationFrame\(function \(\) \{[\s\S]*requestAnimationFrame\(function \(\) \{[\s\S]*resolve\(\{[\s\S]*styledReady:/,
   );
+  assert.match(sync, /function loadRequiredTypographyFonts/);
+  assert.match(sync, /function requiredFontLoadingError/);
+  assert.match(
+    sync,
+    /document\.fonts\.load\(entry\.font, entry\.text\)[\s\S]*loadRequiredTypographyFonts\(typographyProbe\)\.concat\(\[document\.fonts\.ready\]\)/,
+    "Canvas must explicitly load the typography used by the document before styledReady",
+  );
+  assert.match(
+    sync,
+    /reject\(requiredFontLoadingError\(error, typographyProbe\)\)/,
+    "required font failures must preserve a CSSOM diagnostic instead of surfacing only the browser network error",
+  );
   assert.match(sync, /canvasPhaseReceipts:\s*phaseReceipts/);
   assert.match(
     sync,

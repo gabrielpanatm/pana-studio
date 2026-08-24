@@ -7,14 +7,14 @@ use crate::kernel::{
 use super::model::{
     ContentWorkspaceMode, ContentWorkspaceSnapshot, WorkbenchActivity,
     WorkbenchBottomPanelSnapshot, WorkbenchCanvasViewportSnapshot, WorkbenchCommandReceipt,
-    WorkbenchDocumentSnapshot, WorkbenchGroupId, WorkbenchGroupSnapshot, WorkbenchIdentity,
-    WorkbenchIntent, WorkbenchProjectEntryKind, WorkbenchProjectEntryRemap,
-    WorkbenchProjectEntrySelection, WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface,
-    WORKBENCH_COMMAND_SCHEMA_VERSION, WORKBENCH_DEFAULT_SPLIT_RATIO_BASIS_POINTS,
-    WORKBENCH_MAX_OPEN_DOCUMENTS, WORKBENCH_MAX_SPLIT_RATIO_BASIS_POINTS,
-    WORKBENCH_MAX_VIEWPORT_WIDTH_PX, WORKBENCH_MAX_VIEWPORT_ZOOM_PERCENT,
-    WORKBENCH_MIN_SPLIT_RATIO_BASIS_POINTS, WORKBENCH_MIN_VIEWPORT_WIDTH_PX,
-    WORKBENCH_MIN_VIEWPORT_ZOOM_PERCENT, WORKBENCH_SCHEMA_VERSION,
+    WorkbenchDocumentPresentation, WorkbenchDocumentPresentationEntry, WorkbenchDocumentSnapshot,
+    WorkbenchGroupId, WorkbenchGroupSnapshot, WorkbenchIdentity, WorkbenchIntent,
+    WorkbenchProjectEntryKind, WorkbenchProjectEntryRemap, WorkbenchProjectEntrySelection,
+    WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface, WORKBENCH_COMMAND_SCHEMA_VERSION,
+    WORKBENCH_DEFAULT_SPLIT_RATIO_BASIS_POINTS, WORKBENCH_MAX_OPEN_DOCUMENTS,
+    WORKBENCH_MAX_SPLIT_RATIO_BASIS_POINTS, WORKBENCH_MAX_VIEWPORT_WIDTH_PX,
+    WORKBENCH_MAX_VIEWPORT_ZOOM_PERCENT, WORKBENCH_MIN_SPLIT_RATIO_BASIS_POINTS,
+    WORKBENCH_MIN_VIEWPORT_WIDTH_PX, WORKBENCH_MIN_VIEWPORT_ZOOM_PERCENT, WORKBENCH_SCHEMA_VERSION,
 };
 
 #[derive(Clone, Debug)]
@@ -142,10 +142,17 @@ impl WorkbenchSession {
                 relative_path,
                 group_id,
                 surface,
+                presentation,
                 pinned,
             } => {
                 let selection_path = normalize_project_relative_path(&relative_path)?;
-                self.open_document(selection_path.clone(), group_id, surface, pinned)?;
+                self.open_document(
+                    selection_path.clone(),
+                    group_id,
+                    surface,
+                    presentation,
+                    pinned,
+                )?;
                 self.selected_project_entry = Some(WorkbenchProjectEntrySelection {
                     relative_path: selection_path,
                     kind: WorkbenchProjectEntryKind::Text,
@@ -156,12 +163,28 @@ impl WorkbenchSession {
                 relative_path,
                 entry_kind,
                 open_surface,
-            } => self.select_project_entry(relative_path, entry_kind, open_surface),
+                open_presentation,
+            } => self.select_project_entry(
+                relative_path,
+                entry_kind,
+                open_surface,
+                open_presentation,
+            ),
             WorkbenchIntent::ReconcileProjectEntries {
                 remaps,
                 deleted_prefixes,
                 selection_override,
-            } => self.reconcile_project_entries(remaps, deleted_prefixes, selection_override),
+                document_presentations,
+            } => {
+                self.reconcile_project_entries(remaps, deleted_prefixes, selection_override)?;
+                if !document_presentations.is_empty() {
+                    self.reconcile_document_presentations(document_presentations)?;
+                }
+                Ok(())
+            }
+            WorkbenchIntent::ReconcileDocumentPresentations { documents } => {
+                self.reconcile_document_presentations(documents)
+            }
             WorkbenchIntent::ActivateDocument {
                 document_id,
                 group_id,
@@ -198,12 +221,14 @@ impl WorkbenchSession {
                 split,
                 relative_path,
                 secondary_surface,
+                presentation,
             } => {
                 let selection_path = normalize_project_relative_path(&relative_path)?;
                 self.configure_synchronized_split(
                     split,
                     selection_path.clone(),
                     secondary_surface,
+                    presentation,
                 )?;
                 self.selected_project_entry = Some(WorkbenchProjectEntrySelection {
                     relative_path: selection_path,
@@ -240,6 +265,7 @@ impl WorkbenchSession {
                 Ok(())
             }
         }?;
+        self.collapse_incompatible_split()?;
         self.require_invariants()
     }
 
@@ -248,6 +274,7 @@ impl WorkbenchSession {
         relative_path: String,
         entry_kind: WorkbenchProjectEntryKind,
         open_surface: Option<WorkbenchSurface>,
+        open_presentation: Option<WorkbenchDocumentPresentation>,
     ) -> Result<(), String> {
         let relative_path = normalize_project_relative_path(&relative_path)?;
         if entry_kind == WorkbenchProjectEntryKind::Directory && open_surface.is_some() {
@@ -257,7 +284,21 @@ impl WorkbenchSession {
             if entry_kind != WorkbenchProjectEntryKind::Text {
                 return Err("Workbench poate deschide în editor numai intrări text.".to_string());
             }
-            self.open_document(relative_path.clone(), self.active_group_id, surface, false)?;
+            let presentation = open_presentation.ok_or_else(|| {
+                "Workbench cere capabilitatea documentului pentru deschiderea în editor."
+                    .to_string()
+            })?;
+            self.open_document(
+                relative_path.clone(),
+                self.active_group_id,
+                surface,
+                presentation,
+                false,
+            )?;
+        } else if open_presentation.is_some() {
+            return Err(
+                "Workbench a primit o capabilitate fără o suprafață de deschidere.".to_string(),
+            );
         }
         self.selected_project_entry = Some(WorkbenchProjectEntrySelection {
             relative_path,
@@ -413,14 +454,48 @@ impl WorkbenchSession {
         Ok(())
     }
 
+    fn reconcile_document_presentations(
+        &mut self,
+        documents: Vec<WorkbenchDocumentPresentationEntry>,
+    ) -> Result<(), String> {
+        let presentations = documents
+            .into_iter()
+            .map(|entry| {
+                Ok((
+                    normalize_project_relative_path(&entry.relative_path)?,
+                    entry.presentation,
+                ))
+            })
+            .collect::<Result<std::collections::HashMap<_, _>, String>>()?;
+
+        for group in &mut self.groups {
+            for document in &mut group.documents {
+                document.presentation = presentations
+                    .get(&document.relative_path)
+                    .copied()
+                    .unwrap_or(WorkbenchDocumentPresentation::CodeOnly);
+                if !document.presentation.supports_visual() {
+                    document.surface = WorkbenchSurface::Code;
+                }
+            }
+        }
+        self.collapse_incompatible_split()
+    }
+
     fn open_document(
         &mut self,
         relative_path: String,
-        group_id: WorkbenchGroupId,
+        mut group_id: WorkbenchGroupId,
         surface: WorkbenchSurface,
+        presentation: WorkbenchDocumentPresentation,
         pinned: bool,
     ) -> Result<(), String> {
         let relative_path = normalize_project_relative_path(&relative_path)?;
+        require_supported_surface(presentation, surface)?;
+        if !presentation.supports_visual() && self.split != WorkbenchSplit::None {
+            self.set_split(WorkbenchSplit::None)?;
+            group_id = WorkbenchGroupId::Primary;
+        }
         let document_id = document_id(&relative_path);
         let title = document_title(&relative_path);
         let total_documents = self
@@ -434,6 +509,7 @@ impl WorkbenchSession {
             .iter_mut()
             .find(|document| document.document_id == document_id)
         {
+            document.presentation = presentation;
             document.surface = surface;
             document.pinned |= pinned;
             group.active_document_id = Some(document_id);
@@ -449,6 +525,7 @@ impl WorkbenchSession {
             document_id: document_id.clone(),
             relative_path,
             title,
+            presentation,
             surface,
             pinned,
         });
@@ -460,17 +537,31 @@ impl WorkbenchSession {
     fn activate_document(
         &mut self,
         document_id: &str,
-        group_id: WorkbenchGroupId,
+        mut group_id: WorkbenchGroupId,
     ) -> Result<(), String> {
-        let group = self.require_group_mut(group_id)?;
-        if !group
+        let presentation = self
+            .require_group(group_id)?
             .documents
             .iter()
-            .any(|document| document.document_id == document_id)
-        {
-            return Err(format!(
-                "Documentul {document_id} nu este deschis în grupul {group_id:?}."
-            ));
+            .find(|document| document.document_id == document_id)
+            .map(|document| document.presentation)
+            .ok_or_else(|| {
+                format!("Documentul {document_id} nu este deschis în grupul {group_id:?}.")
+            })?;
+        if !presentation.supports_visual() && self.split != WorkbenchSplit::None {
+            self.set_split(WorkbenchSplit::None)?;
+            group_id = WorkbenchGroupId::Primary;
+        }
+        let group = self.require_group_mut(group_id)?;
+        let document = group
+            .documents
+            .iter_mut()
+            .find(|document| document.document_id == document_id)
+            .ok_or_else(|| {
+                format!("Documentul {document_id} nu este deschis în grupul {group_id:?}.")
+            })?;
+        if !document.presentation.supports_visual() {
+            document.surface = WorkbenchSurface::Code;
         }
         group.active_document_id = Some(document_id.to_string());
         self.active_group_id = group_id;
@@ -561,6 +652,7 @@ impl WorkbenchSession {
             .ok_or_else(|| {
                 format!("Documentul {document_id} nu este deschis în grupul {group_id:?}.")
             })?;
+        require_supported_surface(document.presentation, surface)?;
         document.surface = surface;
         Ok(())
     }
@@ -575,6 +667,12 @@ impl WorkbenchSession {
             self.active_group_id = WorkbenchGroupId::Primary;
             return Ok(());
         }
+        let active = self.active_document().ok_or_else(|| {
+            "Workbench cere un document HTML activ pentru modul split.".to_string()
+        })?;
+        if !active.presentation.supports_visual() {
+            return Err("Modul split Vizual | Cod este disponibil numai pentru HTML.".to_string());
+        }
         if self.group(WorkbenchGroupId::Secondary).is_none() {
             self.groups.push(empty_group(WorkbenchGroupId::Secondary));
         }
@@ -587,6 +685,7 @@ impl WorkbenchSession {
         split: WorkbenchSplit,
         relative_path: String,
         secondary_surface: WorkbenchSurface,
+        presentation: WorkbenchDocumentPresentation,
     ) -> Result<(), String> {
         if split == WorkbenchSplit::None {
             return Err(
@@ -594,18 +693,24 @@ impl WorkbenchSession {
                     .to_string(),
             );
         }
+        if !presentation.supports_visual() {
+            return Err("Modul split Vizual | Cod este disponibil numai pentru HTML.".to_string());
+        }
+        require_supported_surface(presentation, secondary_surface)?;
         let relative_path = normalize_project_relative_path(&relative_path)?;
-        self.set_split(split)?;
         self.open_document(
             relative_path.clone(),
             WorkbenchGroupId::Primary,
             WorkbenchSurface::Visual,
+            presentation,
             false,
         )?;
+        self.set_split(split)?;
         self.open_document(
             relative_path,
             WorkbenchGroupId::Secondary,
             secondary_surface,
+            presentation,
             false,
         )
     }
@@ -656,6 +761,38 @@ impl WorkbenchSession {
                 .or_else(|| primary.active_document_id.clone());
         }
         Ok(())
+    }
+
+    fn collapse_incompatible_split(&mut self) -> Result<(), String> {
+        if self.split == WorkbenchSplit::None {
+            return Ok(());
+        }
+        let compatible = self.groups.iter().all(|group| {
+            group
+                .active_document_id
+                .as_deref()
+                .and_then(|active| {
+                    group
+                        .documents
+                        .iter()
+                        .find(|document| document.document_id == active)
+                })
+                .is_some_and(|document| document.presentation.supports_visual())
+        });
+        if compatible {
+            Ok(())
+        } else {
+            self.set_split(WorkbenchSplit::None)
+        }
+    }
+
+    fn active_document(&self) -> Option<&WorkbenchDocumentSnapshot> {
+        let group = self.group(self.active_group_id)?;
+        let active = group.active_document_id.as_deref()?;
+        group
+            .documents
+            .iter()
+            .find(|document| document.document_id == active)
     }
 
     fn group(&self, group_id: WorkbenchGroupId) -> Option<&WorkbenchGroupSnapshot> {
@@ -715,6 +852,7 @@ impl WorkbenchSession {
                         group.group_id
                     ));
                 }
+                require_supported_surface(document.presentation, document.surface)?;
             }
             if group.active_document_id.as_ref().is_some_and(|active| {
                 !group
@@ -727,6 +865,22 @@ impl WorkbenchSession {
                     group.group_id
                 ));
             }
+        }
+        if self.split != WorkbenchSplit::None
+            && self.groups.iter().any(|group| {
+                group
+                    .active_document_id
+                    .as_deref()
+                    .and_then(|active| {
+                        group
+                            .documents
+                            .iter()
+                            .find(|document| document.document_id == active)
+                    })
+                    .is_none_or(|document| !document.presentation.supports_visual())
+            })
+        {
+            return Err("Workbench conține un split incompatibil cu documentul activ.".to_string());
         }
         if let Some(selected) = &self.selected_project_entry {
             let normalized = normalize_project_relative_path(&selected.relative_path)?;
@@ -761,6 +915,16 @@ fn normalize_content_page_path(relative_path: &str) -> Result<String, String> {
         );
     }
     Ok(normalized)
+}
+
+fn require_supported_surface(
+    presentation: WorkbenchDocumentPresentation,
+    surface: WorkbenchSurface,
+) -> Result<(), String> {
+    if surface == WorkbenchSurface::Visual && !presentation.supports_visual() {
+        return Err("Suprafața Vizual este disponibilă numai pentru documente HTML.".to_string());
+    }
+    Ok(())
 }
 
 fn validate_canvas_viewport(viewport: &WorkbenchCanvasViewportSnapshot) -> Result<(), String> {
@@ -1089,6 +1253,7 @@ mod tests {
                     relative_path: " ./templates\\index.html ".to_string(),
                     group_id: WorkbenchGroupId::Primary,
                     surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::Html,
                     pinned: false,
                 },
             )
@@ -1156,6 +1321,7 @@ mod tests {
                     split: WorkbenchSplit::Vertical,
                     relative_path: "templates/index.html".to_string(),
                     secondary_surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::Html,
                 },
             )
             .unwrap();
@@ -1181,6 +1347,110 @@ mod tests {
             )
             .unwrap();
         assert_eq!(resized.snapshot.split_ratio_basis_points, 6_250);
+    }
+
+    #[test]
+    fn rejects_visual_surface_for_code_only_document() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+
+        let error = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::OpenDocument {
+                    relative_path: "sass/app.scss".to_string(),
+                    group_id: WorkbenchGroupId::Primary,
+                    surface: WorkbenchSurface::Visual,
+                    presentation: WorkbenchDocumentPresentation::CodeOnly,
+                    pinned: false,
+                },
+            )
+            .unwrap_err();
+
+        assert!(error.contains("numai pentru documente HTML"));
+        assert_eq!(runtime.read(&project).unwrap(), before);
+    }
+
+    #[test]
+    fn presentation_reconciliation_normalizes_legacy_split_in_one_revision() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+        let split = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::ConfigureSynchronizedSplit {
+                    split: WorkbenchSplit::Vertical,
+                    relative_path: "sass/mislabeled.scss".to_string(),
+                    secondary_surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::Html,
+                },
+            )
+            .unwrap()
+            .snapshot;
+
+        let receipt = runtime
+            .apply(
+                &project,
+                &identity(&split),
+                WorkbenchIntent::ReconcileDocumentPresentations {
+                    documents: vec![WorkbenchDocumentPresentationEntry {
+                        relative_path: "sass/mislabeled.scss".to_string(),
+                        presentation: WorkbenchDocumentPresentation::CodeOnly,
+                    }],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(receipt.revision_after, split.revision + 1);
+        assert_eq!(receipt.snapshot.split, WorkbenchSplit::None);
+        assert_eq!(receipt.snapshot.groups.len(), 1);
+        assert_eq!(receipt.snapshot.groups[0].documents.len(), 1);
+        assert_eq!(
+            receipt.snapshot.groups[0].documents[0].surface,
+            WorkbenchSurface::Code
+        );
+        assert_eq!(
+            receipt.snapshot.groups[0].documents[0].presentation,
+            WorkbenchDocumentPresentation::CodeOnly
+        );
+    }
+
+    #[test]
+    fn split_is_rejected_for_active_code_only_document() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+        let opened = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::OpenDocument {
+                    relative_path: "sass/app.scss".to_string(),
+                    group_id: WorkbenchGroupId::Primary,
+                    surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::CodeOnly,
+                    pinned: false,
+                },
+            )
+            .unwrap()
+            .snapshot;
+
+        let error = runtime
+            .apply(
+                &project,
+                &identity(&opened),
+                WorkbenchIntent::SetSplit {
+                    split: WorkbenchSplit::Vertical,
+                },
+            )
+            .unwrap_err();
+
+        assert!(error.contains("numai pentru HTML"));
+        assert_eq!(runtime.read(&project).unwrap(), opened);
     }
 
     #[test]
@@ -1242,39 +1512,111 @@ mod tests {
     }
 
     #[test]
-    fn collapsing_split_merges_unique_documents() {
+    fn opening_code_only_document_collapses_split_atomically() {
         let runtime = WorkbenchRuntime::default();
         let project = session("project-a", "/project/a", 10);
-        let mut snapshot = runtime.read(&project).unwrap();
-        for intent in [
-            WorkbenchIntent::SetSplit {
-                split: WorkbenchSplit::Horizontal,
-            },
-            WorkbenchIntent::OpenDocument {
-                relative_path: "templates/index.html".to_string(),
-                group_id: WorkbenchGroupId::Primary,
-                surface: WorkbenchSurface::Visual,
-                pinned: false,
-            },
-            WorkbenchIntent::OpenDocument {
-                relative_path: "sass/app.scss".to_string(),
-                group_id: WorkbenchGroupId::Secondary,
-                surface: WorkbenchSurface::Code,
-                pinned: false,
-            },
-            WorkbenchIntent::SetSplit {
-                split: WorkbenchSplit::None,
-            },
-        ] {
-            snapshot = runtime
-                .apply(&project, &identity(&snapshot), intent)
-                .unwrap()
-                .snapshot;
-        }
+        let before = runtime.read(&project).unwrap();
+        let split = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::ConfigureSynchronizedSplit {
+                    split: WorkbenchSplit::Horizontal,
+                    relative_path: "templates/index.html".to_string(),
+                    secondary_surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::Html,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        let snapshot = runtime
+            .apply(
+                &project,
+                &identity(&split),
+                WorkbenchIntent::OpenDocument {
+                    relative_path: "sass/app.scss".to_string(),
+                    group_id: WorkbenchGroupId::Secondary,
+                    surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::CodeOnly,
+                    pinned: false,
+                },
+            )
+            .unwrap()
+            .snapshot;
 
+        assert_eq!(snapshot.split, WorkbenchSplit::None);
         assert_eq!(snapshot.groups.len(), 1);
         assert_eq!(snapshot.groups[0].documents.len(), 2);
         assert_eq!(snapshot.active_group_id, WorkbenchGroupId::Primary);
+        assert_eq!(
+            snapshot.groups[0]
+                .documents
+                .iter()
+                .find(|document| document.relative_path == "sass/app.scss")
+                .map(|document| document.surface),
+            Some(WorkbenchSurface::Code)
+        );
+    }
+
+    #[test]
+    fn activating_open_code_only_document_collapses_existing_html_split() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+        let code_open = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::OpenDocument {
+                    relative_path: "sass/app.scss".to_string(),
+                    group_id: WorkbenchGroupId::Primary,
+                    surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::CodeOnly,
+                    pinned: false,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        let split = runtime
+            .apply(
+                &project,
+                &identity(&code_open),
+                WorkbenchIntent::ConfigureSynchronizedSplit {
+                    split: WorkbenchSplit::Vertical,
+                    relative_path: "templates/index.html".to_string(),
+                    secondary_surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::Html,
+                },
+            )
+            .unwrap()
+            .snapshot;
+
+        let receipt = runtime
+            .apply(
+                &project,
+                &identity(&split),
+                WorkbenchIntent::ActivateDocument {
+                    document_id: "project:sass/app.scss".to_string(),
+                    group_id: WorkbenchGroupId::Primary,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(receipt.revision_after, split.revision + 1);
+        assert_eq!(receipt.snapshot.split, WorkbenchSplit::None);
+        assert_eq!(receipt.snapshot.active_group_id, WorkbenchGroupId::Primary);
+        assert_eq!(
+            receipt.snapshot.groups[0].active_document_id.as_deref(),
+            Some("project:sass/app.scss")
+        );
+        assert_eq!(
+            receipt.snapshot.groups[0]
+                .documents
+                .iter()
+                .find(|document| document.document_id == "project:sass/app.scss")
+                .map(|document| document.surface),
+            Some(WorkbenchSurface::Code)
+        );
     }
 
     #[test]
@@ -1313,6 +1655,7 @@ mod tests {
                     relative_path: "templates/index.html".to_string(),
                     group_id: WorkbenchGroupId::Primary,
                     surface: WorkbenchSurface::Visual,
+                    presentation: WorkbenchDocumentPresentation::Html,
                     pinned: false,
                 },
             )
@@ -1345,6 +1688,7 @@ mod tests {
                     relative_path: "../secret".to_string(),
                     group_id: WorkbenchGroupId::Primary,
                     surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::CodeOnly,
                     pinned: false,
                 },
             )
@@ -1387,6 +1731,7 @@ mod tests {
                     relative_path: "templates/index.html".to_string(),
                     group_id: WorkbenchGroupId::Primary,
                     surface: WorkbenchSurface::Visual,
+                    presentation: WorkbenchDocumentPresentation::Html,
                     pinned: false,
                 },
             )
@@ -1420,6 +1765,7 @@ mod tests {
                     relative_path: "templates/partials/header.html".to_string(),
                     group_id: WorkbenchGroupId::Primary,
                     surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::Html,
                     pinned: false,
                 },
             )
@@ -1437,6 +1783,7 @@ mod tests {
                     }],
                     deleted_prefixes: Vec::new(),
                     selection_override: None,
+                    document_presentations: Vec::new(),
                 },
             )
             .unwrap()
@@ -1461,6 +1808,7 @@ mod tests {
                     relative_path: "sass/app.scss".to_string(),
                     group_id: WorkbenchGroupId::Primary,
                     surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::CodeOnly,
                     pinned: false,
                 },
             )
@@ -1485,6 +1833,7 @@ mod tests {
                     remaps: Vec::new(),
                     deleted_prefixes: vec!["templates/components".to_string()],
                     selection_override: None,
+                    document_presentations: Vec::new(),
                 },
             )
             .unwrap()
@@ -1516,6 +1865,7 @@ mod tests {
                     relative_path: "templates/partials".to_string(),
                     entry_kind: WorkbenchProjectEntryKind::Directory,
                     open_surface: None,
+                    open_presentation: None,
                 },
             )
             .unwrap()
@@ -1530,6 +1880,7 @@ mod tests {
                     }],
                     deleted_prefixes: Vec::new(),
                     selection_override: None,
+                    document_presentations: Vec::new(),
                 },
                 |_| Ok(()),
             )
@@ -1657,6 +2008,7 @@ mod tests {
                     }],
                     deleted_prefixes: Vec::new(),
                     selection_override: None,
+                    document_presentations: Vec::new(),
                 },
             )
             .unwrap()
@@ -1674,6 +2026,7 @@ mod tests {
                     remaps: Vec::new(),
                     deleted_prefixes: vec!["content/documentatie.md".to_string()],
                     selection_override: None,
+                    document_presentations: Vec::new(),
                 },
             )
             .unwrap()

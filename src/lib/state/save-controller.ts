@@ -29,7 +29,10 @@ import type {
   ProjectWorkspaceSaveReceipt,
   ProjectWorkspaceSnapshot,
 } from "$lib/project/workspace-contract";
-import type { GlobalStatusKind } from "$lib/status/global-status";
+import {
+  projectWorkspaceDirtyStatusKey,
+  type GlobalStatusKind,
+} from "$lib/status/global-status";
 import type { HtmlDraftSessionController } from "$lib/state/html-draft-session.svelte";
 import { errorMessage, isRecoveryRequiredError } from "$lib/util";
 import { t } from "$lib/i18n/runtime.svelte";
@@ -54,6 +57,7 @@ export type SaveControllerHost = {
   markDiskSaved: (activeScannedPath: string | null) => void;
   bumpRefreshTokens: () => void;
   setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
+  resolveGlobalStatus: (key: string) => void;
   html: {
     inspectorPending: Record<InspectorPendingArea, boolean>;
     pending: Record<HtmlPendingArea, boolean>;
@@ -252,6 +256,10 @@ async function settleFrontendProjection(
   if (noNewFrontendMutation) {
     host.html.setInspectorPending("css", false);
     host.html.setInspectorPending("js", false);
+    host.resolveGlobalStatus(projectWorkspaceDirtyStatusKey(
+      identity.expectedProjectRoot,
+      identity.expectedSessionId,
+    ));
   }
   for (const path of [...receipt.writtenFiles, ...receipt.removedFiles]) {
     invalidateFileBufferDraftSyncCursor(path);

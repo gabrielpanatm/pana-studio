@@ -3,6 +3,7 @@ mod engine;
 pub(crate) mod http;
 pub(crate) mod inject;
 mod process;
+mod resource_url;
 mod server;
 mod source_browser;
 

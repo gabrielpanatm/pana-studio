@@ -37,6 +37,7 @@
       workspaceRevision: number;
       allProjectFiles: ProjectFile[];
       activeScannedPath: string | null;
+      layersAvailable: boolean;
       fileExplorerSnapshot: FileExplorerSnapshot | null;
       fileExplorerLoading: boolean;
       fileExplorerError: string;
@@ -100,6 +101,7 @@
         workspaceRevision={pane.workspaceRevision}
         allProjectFiles={pane.allProjectFiles}
         activeScannedPath={pane.activeScannedPath}
+        layersAvailable={pane.layersAvailable}
         fileExplorerSnapshot={pane.fileExplorerSnapshot}
         fileExplorerLoading={pane.fileExplorerLoading}
         fileExplorerError={pane.fileExplorerError}

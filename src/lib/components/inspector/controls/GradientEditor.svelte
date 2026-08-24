@@ -293,7 +293,7 @@
     />
     <button
       type="button"
-      class="icon-button repeat-button"
+      class="repeat-button ui-icon-button mini"
       class:active={gradient.repeating}
       aria-pressed={gradient.repeating}
       aria-label={t("inspector-background-gradient-repeating")}
@@ -414,16 +414,16 @@
   </div>
 
   <div class="ramp-actions">
-    <button type="button" class="small-button" onclick={() => addStopAtPosition(50)}>
+    <button type="button" class="small-button ui-button compact quiet" onclick={() => addStopAtPosition(50)}>
       <IconPlus size={12} /> {t("inspector-background-gradient-add-stop")}
     </button>
-    <button type="button" class="small-button" onclick={addHint}>
+    <button type="button" class="small-button ui-button compact quiet" onclick={addHint}>
       <IconPlus size={12} /> {t("inspector-background-gradient-add-hint")}
     </button>
   </div>
 
   {#if activeStop}
-    <div class="active-stop-editor">
+    <div class="active-stop-editor ui-card">
       <div class="field-label">{t("inspector-background-gradient-stop-color")}</div>
       <div class="stop-row">
         <div class="stop-color">
@@ -435,8 +435,8 @@
             oncancel={cancelEdit}
           />
         </div>
-        <button type="button" class="icon-button" title={t("inspector-duplicate")} aria-label={t("inspector-duplicate")} onclick={() => duplicateStop(activeStop)}><IconCopy size={13} /></button>
-        <button type="button" class="icon-button danger" disabled={stops.length <= 2} title={t("inspector-delete")} aria-label={t("inspector-delete")} onclick={() => removeItem(activeStop.id)}><IconTrash size={13} /></button>
+        <button type="button" class="ui-icon-button mini" title={t("inspector-duplicate")} aria-label={t("inspector-duplicate")} onclick={() => duplicateStop(activeStop)}><IconCopy size={13} /></button>
+        <button type="button" class="ui-icon-button mini danger" disabled={stops.length <= 2} title={t("inspector-delete")} aria-label={t("inspector-delete")} onclick={() => removeItem(activeStop.id)}><IconTrash size={13} /></button>
       </div>
       <div class="field-label">{t("inspector-background-gradient-stop-position")}</div>
       <TextWithOptions
@@ -450,7 +450,7 @@
       />
     </div>
   {:else if activeHint}
-    <div class="active-stop-editor">
+    <div class="active-stop-editor ui-card">
       <div class="field-label">{t("inspector-background-gradient-color-hint")}</div>
       <div class="stop-row">
         <div class="stop-color">
@@ -463,7 +463,7 @@
             oncancel={cancelEdit}
           />
         </div>
-        <button type="button" class="icon-button danger" title={t("inspector-delete")} aria-label={t("inspector-delete")} onclick={() => removeItem(activeHint.id)}><IconTrash size={13} /></button>
+        <button type="button" class="ui-icon-button mini danger" title={t("inspector-delete")} aria-label={t("inspector-delete")} onclick={() => removeItem(activeHint.id)}><IconTrash size={13} /></button>
       </div>
     </div>
   {/if}
@@ -482,23 +482,13 @@
 
 <style>
   .gradient-editor { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-  .gradient-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 5px; }
+  .gradient-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 20px; gap: 5px; }
   .field-label { margin-top: 1px; color: var(--text-muted); font-size: 11px; }
   .two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .two-fields > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .icon-button, .small-button {
-    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
-    min-height: 26px; border: 1px solid var(--border-4); border-radius: 6px;
-    background: var(--surface-8); color: var(--text-muted); cursor: pointer;
-  }
-  .icon-button { width: 28px; padding: 0; }
-  .icon-button:hover, .small-button:hover { color: var(--text); border-color: var(--brand); }
-  .icon-button.active { color: var(--brand); border-color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, var(--surface-8)); }
-  .icon-button.danger:hover { color: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
-  .icon-button:disabled { opacity: .38; cursor: not-allowed; }
   .ramp-shell { padding: 11px 7px 13px; }
   .gradient-ramp {
-    position: relative; height: 34px; border: 1px solid var(--border-4); border-radius: 8px;
+    position: relative; height: 34px; border: 1px solid var(--border-strong); border-radius: var(--radius-card);
     background: conic-gradient(#d7d7d7 25%, white 0 50%, #d7d7d7 0 75%, white 0) 0 0 / 10px 10px;
     box-shadow: inset 0 0 0 1px color-mix(in srgb, white 28%, transparent);
   }
@@ -524,8 +514,8 @@
   .gradient-hint.active { background: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
   .dragging .gradient-stop { cursor: grabbing; }
   .ramp-actions { display: flex; gap: 5px; }
-  .small-button { flex: 1; padding: 3px 6px; font-size: 11px; }
-  .active-stop-editor { display: flex; flex-direction: column; gap: 5px; padding: 7px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-4); }
+  .small-button { flex: 1; }
+  .active-stop-editor { display: flex; flex-direction: column; gap: 5px; padding: 7px; }
   .stop-row { display: flex; gap: 5px; align-items: center; }
   .stop-color { flex: 1; min-width: 0; }
   .advanced-source { border-top: 1px solid var(--border-subtle); padding-top: 5px; }

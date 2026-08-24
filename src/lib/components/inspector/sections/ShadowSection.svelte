@@ -129,7 +129,7 @@
   <!-- ── BOX SHADOW ────────────────────────────────────────────────────── -->
   <div class="sh-subheader">
     <span class="sh-label">{t("inspector-shadow-box")}</span>
-    <button type="button" class="sh-add" title={t("inspector-shadow-add-box")} aria-label={t("inspector-shadow-add-box")} disabled={!boxStructured} onclick={addBox}>
+    <button type="button" class="sh-add ui-icon-button mini" title={t("inspector-shadow-add-box")} aria-label={t("inspector-shadow-add-box")} disabled={!boxStructured} onclick={addBox}>
       <IconPlus size={13} stroke={1.9} />
     </button>
   </div>
@@ -141,13 +141,14 @@
     <p class="sh-empty">{t("inspector-shadow-no-box")}</p>
   {:else}
     {#each boxShadows as s (s.id)}
-      <div class="sh-card">
+      <div class="sh-card ui-card">
         <div class="sh-color-row">
           <div class="sh-color">
             <ColorInput
               property="box-shadow-color-{s.id}"
               value={s.color}
               suggestions={colorSuggestions}
+              resolutionVariables={scssVariables}
               oninput={(value) => patchBox(s.id, { color: value })}
               oncommit={() => edit.commit("box-shadow")}
               oncancel={() => edit.cancel("box-shadow")}
@@ -155,12 +156,12 @@
           </div>
           <button
             type="button"
-            class="sh-inset"
-            class:active={s.inset}
+            class="sh-inset ui-button compact quiet"
+            aria-pressed={s.inset}
             title={t("inspector-shadow-inset")}
             onclick={() => patchBox(s.id, { inset: !s.inset }, true)}
           >{t("inspector-shadow-inset-short")}</button>
-          <button type="button" class="sh-del" title={t("inspector-delete")} onclick={() => removeBox(s.id)}>
+          <button type="button" class="sh-del ui-icon-button mini danger" title={t("inspector-delete")} aria-label={t("inspector-delete")} onclick={() => removeBox(s.id)}>
             <IconTrash size={11} stroke={1.8} />
           </button>
         </div>
@@ -177,9 +178,9 @@
   {/if}
 
   <!-- ── TEXT SHADOW ───────────────────────────────────────────────────── -->
-  <div class="sh-subheader" style="margin-top: 4px;">
+  <div class="sh-subheader spaced">
     <span class="sh-label">{t("inspector-shadow-text")}</span>
-    <button type="button" class="sh-add" title={t("inspector-shadow-add-text")} aria-label={t("inspector-shadow-add-text")} disabled={!textStructured} onclick={addText}>
+    <button type="button" class="sh-add ui-icon-button mini" title={t("inspector-shadow-add-text")} aria-label={t("inspector-shadow-add-text")} disabled={!textStructured} onclick={addText}>
       <IconPlus size={13} stroke={1.9} />
     </button>
   </div>
@@ -191,19 +192,20 @@
     <p class="sh-empty">{t("inspector-shadow-no-text")}</p>
   {:else}
     {#each textShadows as s (s.id)}
-      <div class="sh-card">
+      <div class="sh-card ui-card">
         <div class="sh-color-row">
           <div class="sh-color">
             <ColorInput
               property="text-shadow-color-{s.id}"
               value={s.color}
               suggestions={colorSuggestions}
+              resolutionVariables={scssVariables}
               oninput={(value) => patchText(s.id, { color: value })}
               oncommit={() => edit.commit("text-shadow")}
               oncancel={() => edit.cancel("text-shadow")}
             />
           </div>
-          <button type="button" class="sh-del" title={t("inspector-delete")} onclick={() => removeText(s.id)}>
+          <button type="button" class="sh-del ui-icon-button mini danger" title={t("inspector-delete")} aria-label={t("inspector-delete")} onclick={() => removeText(s.id)}>
             <IconTrash size={11} stroke={1.8} />
           </button>
         </div>
@@ -226,35 +228,13 @@
     justify-content: space-between;
   }
 
+  .sh-subheader.spaced {
+    margin-top: 4px;
+  }
+
   .sh-label {
     font-size: 12px;
     color: var(--text-muted);
-  }
-
-  .sh-add {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid var(--border-3);
-    border-radius: 4px;
-    background: var(--surface-4);
-    color: var(--text-muted);
-    font-size: 14px;
-    line-height: 1;
-    cursor: pointer;
-    transition: color 80ms, border-color 80ms;
-  }
-
-  .sh-add:hover {
-    color: var(--brand-strong);
-    border-color: var(--brand);
-  }
-
-  .sh-add:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
   }
 
   .sh-empty {
@@ -272,9 +252,6 @@
     flex-direction: column;
     gap: 5px;
     padding: 7px 8px;
-    border: 1px solid var(--border-3);
-    border-radius: 8px;
-    background: var(--surface-3);
   }
 
   .sh-color-row {
@@ -291,50 +268,8 @@
 
   .sh-inset {
     flex-shrink: 0;
-    height: 24px;
-    padding: 0 7px;
-    border: 1px solid var(--border-4);
-    border-radius: 5px;
-    background: var(--surface-5);
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 700;
     letter-spacing: 0.04em;
-    cursor: pointer;
-    transition: border-color 80ms, color 80ms, background 80ms;
     white-space: nowrap;
-  }
-
-  .sh-inset.active {
-    border-color: var(--brand);
-    color: var(--brand-strong);
-    background: var(--brand-soft);
-  }
-
-  .sh-inset:hover:not(.active) {
-    border-color: var(--border-4);
-    color: var(--text);
-  }
-
-  .sh-del {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 24px;
-    border: 1px solid var(--border-4);
-    border-radius: 5px;
-    background: var(--surface-5);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: color 80ms, background 80ms, border-color 80ms;
-  }
-
-  .sh-del:hover {
-    border-color: #cf4a4a;
-    background: color-mix(in srgb, #cf4a4a 12%, transparent);
-    color: #cf4a4a;
   }
 
   .sh-dims {

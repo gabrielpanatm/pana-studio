@@ -6,6 +6,7 @@ import { resetProjectWorkspacePreviewCoordinator } from "$lib/kernel/project-wor
 import { createDiskState } from "$lib/session/disk-state";
 import { resetPageJsDraftSyncState } from "$lib/session/page-js-draft-sync";
 import { saveSessionDrafts } from "$lib/state/save-controller";
+import { projectWorkspaceDirtyStatusKey } from "$lib/status/global-status";
 
 if (!globalThis.window) globalThis.window = globalThis;
 
@@ -27,17 +28,22 @@ function workspace(dirty) {
   };
 }
 
-test("Save rămâne saved când Source Graph și Preview 404 eșuează după receipt-ul atomic", async () => {
+test("Save rezolvă statusul dirty, dar păstrează o editare pornită în timpul scrierii", async () => {
   const statuses = [];
+  const resolvedStatuses = [];
   let saveCalls = 0;
   let previewCalls = 0;
+  let workspaceDirty = true;
+  let injectConcurrentMutation = false;
   const savedWorkspace = workspace(false);
   mockIPC((command) => {
     if (command === "read_project_workspace_state") {
-      return saveCalls === 0 ? workspace(true) : savedWorkspace;
+      return workspaceDirty ? workspace(true) : savedWorkspace;
     }
     if (command === "save_project_workspace") {
       saveCalls += 1;
+      workspaceDirty = false;
+      if (injectConcurrentMutation) state.editorMutationEpoch += 1;
       return {
         schemaVersion: 1,
         transactionId: "save-4",
@@ -105,6 +111,9 @@ test("Save rămâne saved când Source Graph și Preview 404 eșuează după rec
     setGlobalStatus(text, kind) {
       statuses.push({ text, kind });
     },
+    resolveGlobalStatus(key) {
+      resolvedStatuses.push(key);
+    },
     html: {
       get inspectorPending() { return state.inspectorPending; },
       get pending() { return state.htmlPending; },
@@ -136,4 +145,19 @@ test("Save rămâne saved când Source Graph și Preview 404 eșuează după rec
   assert.match(statuses.at(-1)?.text ?? "", /Atomically saved/);
   assert.match(statuses.at(-1)?.text ?? "", /interface must resynchronize/i);
   assert.equal(statuses.some(({ kind }) => kind === "error"), false);
+  assert.deepEqual(resolvedStatuses, [
+    projectWorkspaceDirtyStatusKey("/project", "session:runtime"),
+  ]);
+
+  // A second edit committed while Rust is saving must keep both the pending
+  // projection and its unsaved status alive after the older receipt settles.
+  workspaceDirty = true;
+  injectConcurrentMutation = true;
+  state.projectWorkspaceSnapshot = workspace(true);
+  state.inspectorPending.css = true;
+
+  assert.equal(await saveSessionDrafts(host), true);
+  assert.equal(saveCalls, 2);
+  assert.equal(state.inspectorPending.css, true);
+  assert.equal(resolvedStatuses.length, 1);
 });

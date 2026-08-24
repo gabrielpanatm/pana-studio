@@ -1,5 +1,8 @@
 <script lang="ts">
   import { IconPhoto, IconPlus, IconTrash } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import type { ContentFieldDefinition } from "$lib/content-models/contracts";
   import CustomFieldInput from "./CustomFieldInput.svelte";
 
@@ -81,14 +84,14 @@
           onValueChange={(nextValue: unknown) => updateObjectField(child.key, nextValue)}
         />
       {:else}
-        <p class="empty">Grupul nu definește încă subcâmpuri.</p>
+        <EmptyState compact title="Grupul nu definește încă subcâmpuri." />
       {/each}
     </div>
   {:else if field.kind === "repeater"}
     <div class="repeater">
       {#each arrayValue as item, index (`${field.id}:${index}`)}
         <section class="repeater-item">
-          <header><strong>Element {index + 1}</strong><button type="button" aria-label="Șterge elementul" onclick={() => removeRepeaterItem(index)}><IconTrash size={13} /></button></header>
+          <header><strong>Element {index + 1}</strong><button class="ui-icon-button mini danger" type="button" aria-label="Șterge elementul" onclick={() => removeRepeaterItem(index)}><IconTrash size={13} /></button></header>
           <div class="nested-fields">
             {#each field.fields as child (child.id)}
               <CustomFieldInput
@@ -101,24 +104,24 @@
           </div>
         </section>
       {:else}
-        <p class="empty">Lista este goală.</p>
+        <EmptyState compact title="Lista este goală." />
       {/each}
-      <button class="add-item" type="button" onclick={addRepeaterItem}><IconPlus size={13} /> Adaugă element</button>
+      <button class="ui-button compact add-item" type="button" onclick={addRepeaterItem}><IconPlus size={13} /> Adaugă element</button>
     </div>
   {:else if field.kind === "textarea" || field.kind === "markdown"}
-    <textarea value={textValue()} rows={field.kind === "markdown" ? 7 : 4} oninput={(event) => onValueChange(event.currentTarget.value)}></textarea>
+    <textarea class="ui-textarea" value={textValue()} rows={field.kind === "markdown" ? 7 : 4} oninput={(event) => onValueChange(event.currentTarget.value)}></textarea>
   {:else if field.kind === "number"}
-    <input type="number" value={numberValue()} min={field.minimum} max={field.maximum} oninput={(event) => onValueChange(event.currentTarget.value === "" ? undefined : Number(event.currentTarget.value))} />
+    <input class="ui-input compact" type="number" value={numberValue()} min={field.minimum} max={field.maximum} oninput={(event) => onValueChange(event.currentTarget.value === "" ? undefined : Number(event.currentTarget.value))} />
   {:else if field.kind === "boolean"}
-    <span class="toggle"><input type="checkbox" checked={value === true} onchange={(event) => onValueChange(event.currentTarget.checked)} /> Activ</span>
+    <CheckboxControl compact label="Activ" checked={value === true} onchange={onValueChange} />
   {:else if field.kind === "select"}
-    <select value={textValue()} onchange={(event) => onValueChange(event.currentTarget.value)}><option value="">Alege…</option>{#each field.choices as choice (choice.value)}<option value={choice.value}>{choice.label}</option>{/each}</select>
+    <SelectControl value={textValue()} options={field.choices} placeholder="Alege…" ariaLabel={field.label} onchange={onValueChange} />
   {:else if field.kind === "color"}
-    <span class="color-control"><input type="color" value={/^#[0-9a-f]{6}$/i.test(textValue()) ? textValue() : "#000000"} oninput={(event) => onValueChange(event.currentTarget.value)} /><input value={textValue()} placeholder="#000000" oninput={(event) => onValueChange(event.currentTarget.value)} /></span>
+    <span class="color-control"><input type="color" value={/^#[0-9a-f]{6}$/i.test(textValue()) ? textValue() : "#000000"} oninput={(event) => onValueChange(event.currentTarget.value)} /><input class="ui-input compact" value={textValue()} placeholder="#000000" oninput={(event) => onValueChange(event.currentTarget.value)} /></span>
   {:else if field.kind === "image"}
-    <span class="image-control"><IconPhoto size={15} /><input value={textValue()} placeholder="/imagini/exemplu.jpg" oninput={(event) => onValueChange(event.currentTarget.value)} /></span>
+    <span class="image-control"><IconPhoto size={15} /><input class="ui-input compact" value={textValue()} placeholder="/imagini/exemplu.jpg" oninput={(event) => onValueChange(event.currentTarget.value)} /></span>
   {:else}
-    <input type={field.kind === "date" ? "date" : field.kind === "url" ? "url" : "text"} value={textValue()} pattern={field.pattern} oninput={(event) => onValueChange(event.currentTarget.value)} />
+    <input class="ui-input compact" type={field.kind === "date" ? "date" : field.kind === "url" ? "url" : "text"} value={textValue()} pattern={field.pattern} oninput={(event) => onValueChange(event.currentTarget.value)} />
   {/if}
 
   {#if field.help}<small>{field.help}</small>{/if}
@@ -131,19 +134,12 @@
   .field-heading > span { color: var(--text-strong); font-size: 12px; }
   .field-heading i { margin-left: 2px; color: var(--danger); font-style: normal; }
   .field-heading code { color: var(--wb-text-muted); font-size: 11px; font-weight: 500; }
-  input, select, textarea { width: 100%; min-width: 0; min-height: 31px; padding: 6px 7px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--material-inset); font: inherit; font-weight: 500; }
-  textarea { resize: vertical; line-height: 1.45; }
   small { font-weight: 500; line-height: 1.4; }
-  .toggle { display: flex; align-items: center; gap: 7px; min-height: 31px; text-transform: none; }
-  .toggle input { width: 16px; min-height: auto; }
   .color-control, .image-control { display: flex; align-items: center; gap: 5px; }
   .color-control input[type="color"] { width: 36px; padding: 3px; }
   .nested-fields, .repeater { display: grid; gap: 7px; }
   .repeater-item { display: grid; gap: 6px; padding: 7px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; background: var(--wb-surface-document); }
   .repeater-item > header { display: flex; align-items: center; justify-content: space-between; }
   .repeater-item strong { color: var(--text-strong); font-size: 11px; }
-  button { display: inline-flex; min-height: 28px; align-items: center; justify-content: center; gap: 4px; padding: 0 8px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); }
-  .repeater-item header button { width: 27px; padding: 0; color: var(--danger); }
   .add-item { justify-self: start; }
-  .empty { margin: 0; padding: 8px; color: var(--wb-text-muted); font-size: 11px; font-weight: 500; text-align: center; }
 </style>

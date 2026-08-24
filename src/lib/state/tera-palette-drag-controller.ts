@@ -44,7 +44,6 @@ function previewPayloadFor(item: TeraPaletteItem) {
     target: item.target,
     name: item.name,
     expression: item.expression,
-    dynamicBinding: item.dynamicBinding,
     dynamicWidget: item.dynamicWidget,
     sourceNodeId: item.sourceNodeId,
   };
@@ -74,13 +73,13 @@ function createDragOverlay(item: TeraPaletteItem) {
   ghost.style.color = "#f7f2ff";
   ghost.style.background = "rgba(31, 18, 50, 0.94)";
   ghost.style.boxShadow = "0 12px 30px rgba(0, 0, 0, 0.28)";
-  ghost.style.font = "700 12px/1.2 Inter, ui-sans-serif, system-ui, sans-serif";
+  ghost.style.font = "700 12px/1.2 var(--font-ui)";
   ghost.style.pointerEvents = "none";
 
   const kind = document.createElement("span");
   kind.textContent = item.kind;
   kind.style.color = "#c4b5fd";
-  kind.style.fontFamily = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+  kind.style.fontFamily = "var(--font-mono)";
 
   const label = document.createElement("span");
   label.textContent = item.label;

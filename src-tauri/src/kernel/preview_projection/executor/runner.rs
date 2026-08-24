@@ -3,7 +3,9 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 use crate::{
     kernel::project_workspace::ProjectWorkspace,
     localization::LocalizedDiagnostic,
-    project_model::cache::rebuild_project_model_from_previous_projection,
+    project_model::cache::{
+        project_model_sources_match_projection, rebuild_project_model_from_previous_projection,
+    },
     project_model::{
         attribute_engine::{ProjectHtmlAttributePatch, ProjectHtmlAttributePlan},
         delete_engine::{ProjectHtmlDeletePatch, ProjectHtmlDeletePlan},
@@ -67,6 +69,8 @@ where
     P: PreviewStructuralPatch,
     Plan: PreviewStructuralPlan<Patch = P>,
 {
+    let before_model =
+        require_authoritative_structural_model(project_root, workspace, before_model)?;
     run_preview_structural_plan_with_model_in_history_group(
         project_root,
         workspace,
@@ -89,15 +93,20 @@ where
     Plan: PreviewStructuralPlan<Patch = P>,
 {
     let projection = workspace.capture_projection_snapshot()?;
-    let before_model = if workspace.project_model_source_revision == Some(projection.revision) {
-        workspace.project_model.clone().ok_or_else(|| {
+    let cached_model = workspace.project_model.clone();
+    let before_model = if workspace.project_model_source_revision == Some(projection.revision)
+        && cached_model
+            .as_ref()
+            .is_some_and(|model| project_model_sources_match_projection(model, &projection))
+    {
+        cached_model.ok_or_else(|| {
             "ProjectWorkspace declară o revizie ProjectModel curentă fără modelul canonic."
                 .to_string()
         })?
     } else {
         let model = rebuild_project_model_from_previous_projection(
             project_root,
-            workspace.project_model.as_ref(),
+            cached_model.as_ref(),
             workspace.project_model_source_revision,
             &projection,
         )?;
@@ -112,6 +121,25 @@ where
         history_group_id,
         plan,
     )
+}
+
+fn require_authoritative_structural_model(
+    project_root: &Path,
+    workspace: &mut ProjectWorkspace,
+    candidate: Arc<ProjectModel>,
+) -> Result<Arc<ProjectModel>, String> {
+    let projection = workspace.capture_projection_snapshot()?;
+    if project_model_sources_match_projection(&candidate, &projection) {
+        return Ok(candidate);
+    }
+    let model = rebuild_project_model_from_previous_projection(
+        project_root,
+        Some(&candidate),
+        workspace.project_model_source_revision,
+        &projection,
+    )?;
+    workspace.publish_project_model(&projection, model.clone())?;
+    Ok(model)
 }
 
 fn run_preview_structural_plan_with_model_in_history_group<P, Plan>(
@@ -171,7 +199,11 @@ where
         patch.file(),
         patch.contents(),
     )?;
-    patch.validate_after_model(&before_model, &commit.after_model)?;
+    let operation_model = commit
+        .intermediate_model
+        .as_ref()
+        .unwrap_or(&commit.after_model);
+    patch.validate_after_model(&before_model, operation_model)?;
 
     Ok(Ok(PreviewStructuralPlanCommitted {
         before_model,
@@ -1918,7 +1950,6 @@ mod tests {
                     target: None,
                     name: None,
                     expression: Some("page.title".to_string()),
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -1984,7 +2015,6 @@ mod tests {
                     target: Some("macros.html".to_string()),
                     name: Some("card".to_string()),
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -2091,7 +2121,6 @@ mod tests {
                     target: None,
                     name: None,
                     expression: Some("page.title".to_string()),
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },

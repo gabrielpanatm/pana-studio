@@ -31,7 +31,7 @@ test("Straturi păstrează Canvas global și proiectează separat documentul act
   assert.match(tree, /if \(node\.kind === "boundary"\) return/);
   assert.doesNotMatch(tree, /nodeDetail/);
   assert.doesNotMatch(tree, /boundaryClosed/);
-  assert.match(tree, /class="delete-action"/);
+  assert.match(tree, /class="delete-action ui-icon-button mini danger"/);
   assert.match(tree, /deleteNode\(resolved\)/);
   assert.doesNotMatch(tree, /import AppScrollArea/);
   assert.doesNotMatch(tree, /<AppScrollArea/);

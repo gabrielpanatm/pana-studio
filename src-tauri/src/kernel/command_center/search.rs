@@ -138,6 +138,18 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
     );
     push_app_command(
         &mut candidates,
+        "command.close_application",
+        "Închide Pană Studio",
+        "Închide fereastra aplicației după verificarea sesiunii active",
+        "close quit exit inchide aplicatie fereastra",
+        Some("Ctrl+Q"),
+        false,
+        590,
+        CommandCenterAppCommand::CloseApplication,
+        has_project,
+    );
+    push_app_command(
+        &mut candidates,
         "command.save",
         "Salvează proiectul",
         "Persistă atomic modificările sesiunii proiectului",
@@ -146,6 +158,18 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
         true,
         970,
         CommandCenterAppCommand::Save,
+        has_project,
+    );
+    push_app_command(
+        &mut candidates,
+        "command.open_about",
+        "Despre Pană Studio",
+        "Deschide informațiile despre aplicație",
+        "about despre versiune aplicatie",
+        None,
+        false,
+        580,
+        CommandCenterAppCommand::OpenAbout,
         has_project,
     );
     push_app_command(
@@ -428,13 +452,6 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
             820,
         ),
         (
-            WorkbenchActivity::Blocks,
-            "Blocuri",
-            "Ansambluri vizuale preasamblate și providerii lor Rust",
-            "blocks visual native rust blocuri interactive",
-            815,
-        ),
-        (
             WorkbenchActivity::DesignSystem,
             "Sistem de design",
             "Token-uri, clase, tipografie și identitate vizuală",
@@ -497,6 +514,13 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
             "publish deploy build publicare",
             770,
         ),
+        (
+            WorkbenchActivity::ProjectSettings,
+            "Setările proiectului",
+            "Configurație Zola și opțiuni portabile ale proiectului",
+            "project settings zola configuration setari proiect configuratie",
+            765,
+        ),
     ] {
         let id = format!("activity.{activity:?}").to_lowercase();
         candidates.push(Candidate {
@@ -553,6 +577,11 @@ const COMMAND_CENTER_COPY_CODES: &[(&str, &str, &str)] = &[
         "command.open_project",
         "command-center-command-open-project-title",
         "command-center-command-open-project-subtitle",
+    ),
+    (
+        "command.close_application",
+        "command-center-command-close-application-title",
+        "command-center-command-close-application-subtitle",
     ),
     (
         "command.save",
@@ -670,6 +699,11 @@ const COMMAND_CENTER_COPY_CODES: &[(&str, &str, &str)] = &[
         "command-center-command-open-settings-subtitle",
     ),
     (
+        "command.open_about",
+        "command-center-command-open-about-title",
+        "command-center-command-open-about-subtitle",
+    ),
+    (
         "command.show_visual",
         "command-center-command-show-visual-title",
         "command-center-command-show-visual-subtitle",
@@ -693,11 +727,6 @@ const COMMAND_CENTER_COPY_CODES: &[(&str, &str, &str)] = &[
         "activity.components",
         "command-center-activity-components-title",
         "command-center-activity-components-subtitle",
-    ),
-    (
-        "activity.blocks",
-        "command-center-activity-blocks-title",
-        "command-center-activity-blocks-subtitle",
     ),
     (
         "activity.designsystem",
@@ -743,6 +772,11 @@ const COMMAND_CENTER_COPY_CODES: &[(&str, &str, &str)] = &[
         "activity.publish",
         "command-center-activity-publish-title",
         "command-center-activity-publish-subtitle",
+    ),
+    (
+        "activity.projectsettings",
+        "command-center-activity-project-settings-title",
+        "command-center-activity-project-settings-subtitle",
     ),
 ];
 
@@ -1285,7 +1319,7 @@ mod tests {
     #[test]
     fn search_is_romanian_diacritic_insensitive() {
         let response = search_command_center_index(
-            request("setari", CommandCenterScope::Commands),
+            request("setari aplicatie", CommandCenterScope::Commands),
             None,
             None,
             None,
@@ -1410,6 +1444,7 @@ mod tests {
             contents: "+++#\n+++#\n".to_string(),
             size_bytes: 10,
             revision: "notes-revision".to_string(),
+            source_hash: crate::kernel::file_buffer_store::hash_text("+++#\n+++#\n"),
             from_draft: false,
         });
 

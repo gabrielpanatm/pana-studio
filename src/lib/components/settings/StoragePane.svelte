@@ -12,6 +12,7 @@
     IconTrash,
   } from "@tabler/icons-svelte";
   import { onMount } from "svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
   import {
     clearApplicationCacheStorage,
     clearApplicationLogStorage,
@@ -237,7 +238,7 @@
     </div>
     <button
       type="button"
-      class="icon-action"
+      class="ui-icon-button mini"
       title={t("settings-storage-refresh")}
       aria-label={t("settings-storage-refresh")}
       disabled={loading || busy !== null}
@@ -393,12 +394,14 @@
       {:else}
         <div class="session-list">
           {#each snapshot.sessions.items as item (item.id)}
-            <label class:active={item.active} class:recovery={item.hasRecovery}>
-              <input
-                type="checkbox"
+            <div class="session-row" class:active={item.active} class:recovery={item.hasRecovery}>
+              <CheckboxControl
+                compact
+                labelHidden
+                label={item.projectName}
                 checked={selectedSessionIds.includes(item.id)}
                 disabled={!item.deletable || busy !== null}
-                onchange={(event) => toggleSession(item, event.currentTarget.checked)}
+                onchange={(checked) => toggleSession(item, checked)}
               />
               <span class="session-main">
                 <strong>{item.projectName}</strong>
@@ -411,7 +414,7 @@
                 {#if !item.projectExists}<em>{t("settings-storage-session-missing")}</em>{/if}
                 <b>{formatBytes(item.bytes)}</b>
               </span>
-            </label>
+            </div>
           {/each}
         </div>
       {/if}
@@ -452,7 +455,6 @@
   h2 { font-size: 14px; font-weight: 850; }
   h3 { font-size: 13px; font-weight: 850; }
   .storage-introduction p, .card-heading p { margin-top: 3px; color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; line-height: 1.45; }
-  .icon-action { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--control-bg, var(--surface)); }
   .spinning { display: inline-flex; animation: spin .8s linear infinite; }
   .storage-error { padding: 10px 12px; overflow: auto; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); border-radius: 8px; color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font: inherit; font-size: 11px; white-space: pre-wrap; }
   .storage-success { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--brand-strong) 35%, var(--border)); border-radius: 8px; color: var(--brand-strong); background: color-mix(in srgb, var(--brand-strong) 7%, var(--surface)); }
@@ -494,9 +496,9 @@
   .selection-toolbar span { margin-right: auto; color: var(--wb-text-muted); font-size: 11px; font-weight: 700; }
   .selection-toolbar button { min-height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--control-bg); font: inherit; font-size: 11px; }
   .session-list { display: grid; gap: 6px; max-height: 330px; overflow: auto; }
-  .session-list label { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-  .session-list label.active { opacity: .72; }
-  .session-list label.recovery { border-color: color-mix(in srgb, var(--warning, #c88719) 35%, var(--border)); }
+  .session-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  .session-row.active { opacity: .72; }
+  .session-row.recovery { border-color: color-mix(in srgb, var(--warning, #c88719) 35%, var(--border)); }
   .session-main { display: grid; min-width: 0; gap: 2px; }
   .session-main strong { font-size: 11px; }
   .session-main code { overflow: hidden; color: var(--wb-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -508,14 +510,14 @@
   .session-state b { min-width: 56px; font-size: 11px; text-align: right; }
   .empty-state { display: flex; align-items: center; gap: 7px; padding: 12px; color: var(--brand-strong); font-size: 11px; }
   .storage-boundary { justify-content: center; padding: 2px 12px; text-align: center; }
-  button:disabled, input:disabled { cursor: not-allowed; opacity: .55; }
+  button:not(.ui-icon-button):disabled { cursor: not-allowed; opacity: .55; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 760px) {
     .storage-summary, .area-list { grid-template-columns: 1fr; }
     .storage-summary > small { grid-column: auto; }
     .confirmation { grid-template-columns: auto 1fr; }
     .confirmation button { grid-column: span 1; }
-    .session-list label { grid-template-columns: auto minmax(0, 1fr); }
+    .session-row { grid-template-columns: auto minmax(0, 1fr); }
     .session-state { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }
   }
 </style>

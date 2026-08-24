@@ -19,6 +19,10 @@
     IconTrash,
     IconX,
   } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import {
   createListingItem,
@@ -787,9 +791,9 @@
   <div class="workspace-body">
     <div class="template-list" role="listbox" aria-label={t("templates-list-label")}>
       {#if loadError}
-        <div class="workspace-state error" role="alert">{loadError}</div>
+        <EmptyState title={loadError} tone="error" />
       {:else if loading && !catalog}
-        <div class="workspace-state">
+        <div class="ui-empty-state">
           <span class="spin"><IconRefresh size={18} /></span>
           {t("templates-loading")}
         </div>
@@ -828,7 +832,7 @@
             {/if}
           </button>
         {:else}
-          <div class="workspace-state">{t("templates-empty-category")}</div>
+          <EmptyState title={t("templates-empty-category")} />
         {/each}
       {/if}
     </div>
@@ -851,9 +855,10 @@
 
           <div class="form-fields">
             {#if createRole === "listing_item" && !duplicateSourcePath}
-              <label>
-                <span>{t("templates-listing-name")}</span>
+              <label class="ui-form-field">
+                <span class="ui-form-label">{t("templates-listing-name")}</span>
                 <input
+                  class="ui-input"
                   bind:this={draftNameInput}
                   value={listingLabel}
                   type="text"
@@ -863,9 +868,10 @@
                   oninput={(event) => updateListingLabel(event.currentTarget.value)}
                 />
               </label>
-              <label>
-                <span>{t("templates-listing-id")}</span>
+              <label class="ui-form-field">
+                <span class="ui-form-label">{t("templates-listing-id")}</span>
                 <input
+                  class="ui-input"
                   value={createName}
                   type="text"
                   autocomplete="off"
@@ -876,71 +882,51 @@
                     createName = collectionSlug(event.currentTarget.value);
                   }}
                 />
-                <small>{t("templates-listing-result-file")} <code>templates/listing-items/{createName || "…"}.html</code></small>
+                <small class="ui-form-help">{t("templates-listing-result-file")} <code>templates/listing-items/{createName || "…"}.html</code></small>
               </label>
-              <label>
-                <span>{t("templates-listing-model")}</span>
-                <select value={listingModelId} disabled={busy} onchange={(event) => changeListingModel(event.currentTarget.value)}>
-                  {#each listingModels as model (model.id)}
-                    <option value={model.id}>{model.label} · {model.id}</option>
-                  {/each}
-                </select>
-                <small>{t("templates-listing-model-help")}</small>
-              </label>
-              <label>
-                <span>{t("templates-listing-preview-page")}</span>
-                <select bind:value={listingPreviewPageFile} disabled={busy || listingPreviewPages.length === 0}>
-                  {#each listingPreviewPages as page (page.file)}
-                    <option value={page.file}>{page.title} · {page.url}</option>
-                  {/each}
-                </select>
-                <small>{t("templates-listing-preview-help")}</small>
-              </label>
+              <div class="ui-form-field">
+                <span class="ui-form-label">{t("templates-listing-model")}</span>
+                <SelectControl size="default" value={listingModelId} options={listingModels.map((model) => ({ value: model.id, label: `${model.label} · ${model.id}` }))} disabled={busy} ariaLabel={t("templates-listing-model")} onchange={changeListingModel} />
+                <small class="ui-form-help">{t("templates-listing-model-help")}</small>
+              </div>
+              <div class="ui-form-field">
+                <span class="ui-form-label">{t("templates-listing-preview-page")}</span>
+                <SelectControl size="default" value={listingPreviewPageFile} options={listingPreviewPages.map((page) => ({ value: page.file, label: `${page.title} · ${page.url}` }))} disabled={busy || listingPreviewPages.length === 0} ariaLabel={t("templates-listing-preview-page")} onchange={(value) => { listingPreviewPageFile = value; }} />
+                <small class="ui-form-help">{t("templates-listing-preview-help")}</small>
+              </div>
               {#if listingModels.length === 0}
-                <p class="guard-message">{t("templates-listing-model-missing")}</p>
+                <InlineMessage message={t("templates-listing-model-missing")} tone="warning" />
               {:else if listingPreviewPages.length === 0}
-                <p class="guard-message">{t("templates-listing-preview-missing")}</p>
+                <InlineMessage message={t("templates-listing-preview-missing")} tone="warning" />
               {/if}
             {:else}
             {#if !duplicateSourcePath && createRoles[activeView].length > 1}
-              <label>
-                <span>{t("templates-field-role")}</span>
-                <select value={createRole} disabled={busy} onchange={(event) => changeCreateRole(event.currentTarget.value as TemplateSemanticCreateRole)}>
-                  {#each createRoles[activeView] as role}
-                    <option value={role}>{roleLabel(role)}</option>
-                  {/each}
-                </select>
-              </label>
+              <div class="ui-form-field">
+                <span class="ui-form-label">{t("templates-field-role")}</span>
+                <SelectControl size="default" value={createRole} options={createRoles[activeView].map((role) => ({ value: role, label: roleLabel(role) }))} disabled={busy} ariaLabel={t("templates-field-role")} onchange={(value) => changeCreateRole(value as TemplateSemanticCreateRole)} />
+              </div>
             {/if}
 
             {#if !duplicateSourcePath && createRole === "section_archive"}
-              <label>
-                <span>{t("templates-field-section-target")}</span>
-                <select value={createTargetId} disabled={busy} onchange={(event) => changeCreateTarget(event.currentTarget.value)}>
-                  <option value={NEW_SECTION_TARGET}>{t("templates-create-new-section")}</option>
-                  {#each createTargets as target (target.id)}
-                    <option value={target.id}>{target.label} · {target.url ?? target.file}</option>
-                  {/each}
-                </select>
-                <small>{creatingNewArchiveSection
+              <div class="ui-form-field">
+                <span class="ui-form-label">{t("templates-field-section-target")}</span>
+                <SelectControl size="default" value={createTargetId} options={[{ value: NEW_SECTION_TARGET, label: t("templates-create-new-section") }, ...createTargets.map((target) => ({ value: target.id, label: `${target.label} · ${target.url ?? target.file}` }))]} disabled={busy} ariaLabel={t("templates-field-section-target")} onchange={changeCreateTarget} />
+                <small class="ui-form-help">{creatingNewArchiveSection
                   ? t("templates-new-section-atomic-help")
                   : t("templates-existing-section-help")}</small>
-              </label>
+              </div>
             {:else if !duplicateSourcePath && createTargets.length > 0}
-              <label>
-                <span>{t("templates-field-exact-target")}</span>
-                <select value={createTargetId} disabled={busy} onchange={(event) => changeCreateTarget(event.currentTarget.value)}>
-                  {#each createTargets as target (target.id)}
-                    <option value={target.id}>{target.label} · {target.url ?? target.file}</option>
-                  {/each}
-                </select>
-              </label>
+              <div class="ui-form-field">
+                <span class="ui-form-label">{t("templates-field-exact-target")}</span>
+                <SelectControl size="default" value={createTargetId} options={createTargets.map((target) => ({ value: target.id, label: `${target.label} · ${target.url ?? target.file}` }))} disabled={busy} ariaLabel={t("templates-field-exact-target")} onchange={changeCreateTarget} />
+              </div>
             {/if}
 
             {#if !duplicateSourcePath && creatingNewArchiveSection}
-              <label>
-                <span>{t("templates-field-section-title")}</span>
+              <label class="ui-form-field">
+                <span class="ui-form-label">{t("templates-field-section-title")}</span>
                 <input
+                  class="ui-input"
                   bind:this={draftSectionTitleInput}
                   value={createSectionTitle}
                   type="text"
@@ -950,9 +936,10 @@
                   oninput={(event) => updateSectionTitle(event.currentTarget.value)}
                 />
               </label>
-              <label>
-                <span>{t("templates-field-section-slug")}</span>
+              <label class="ui-form-field">
+                <span class="ui-form-label">{t("templates-field-section-slug")}</span>
                 <input
+                  class="ui-input"
                   value={createSectionSlug}
                   type="text"
                   autocomplete="off"
@@ -960,22 +947,23 @@
                   disabled={busy}
                   oninput={(event) => updateSectionSlug(event.currentTarget.value)}
                 />
-                <small>{t("templates-resulting-section-path")} <code>content/{createSectionSlug || "…"}/_index.md</code></small>
+                <small class="ui-form-help">{t("templates-resulting-section-path")} <code>content/{createSectionSlug || "…"}/_index.md</code></small>
               </label>
-              <label>
-                <span>{t("templates-field-section-sort")}</span>
-                <select bind:value={createSectionSort} disabled={busy}>
-                  <option value="weight">{t("templates-section-sort-weight")}</option>
-                  <option value="date">{t("templates-section-sort-date")}</option>
-                  <option value="title">{t("templates-section-sort-title")}</option>
-                  <option value="none">{t("templates-section-sort-none")}</option>
-                </select>
-              </label>
+              <div class="ui-form-field">
+                <span class="ui-form-label">{t("templates-field-section-sort")}</span>
+                <SelectControl size="default" value={createSectionSort} options={[
+                  { value: "weight", label: t("templates-section-sort-weight") },
+                  { value: "date", label: t("templates-section-sort-date") },
+                  { value: "title", label: t("templates-section-sort-title") },
+                  { value: "none", label: t("templates-section-sort-none") },
+                ]} disabled={busy} ariaLabel={t("templates-field-section-sort")} onchange={(value) => { createSectionSort = value as SectionSort; }} />
+              </div>
             {/if}
 
-            <label>
-              <span>{t("templates-field-logical-name")}</span>
+            <label class="ui-form-field">
+              <span class="ui-form-label">{t("templates-field-logical-name")}</span>
               <input
+                class="ui-input"
                 bind:this={draftNameInput}
                 bind:value={createName}
                 type="text"
@@ -983,36 +971,28 @@
                 disabled={busy}
                 oninput={() => { createNameTouched = true; }}
               />
-              <small>{t("templates-resulting-path")} <code>templates/{createName || "…"}.html</code></small>
+              <small class="ui-form-help">{t("templates-resulting-path")} <code>templates/{createName || "…"}.html</code></small>
             </label>
 
             {#if !duplicateSourcePath && createRole !== "not_found"}
-              <label>
-                <span>{t("templates-field-parent-layout")}</span>
-                <select bind:value={createParent} disabled={busy || createRole === "layout"}>
-                  <option value="">{t("templates-no-parent-layout")}</option>
-                  {#each layoutOptions as layout (layout.id)}
-                    <option value={layout.name}>{layout.name} · {originLabel(layout)}</option>
-                  {/each}
-                </select>
-                <small>{t("templates-parent-help")}</small>
-              </label>
+              <div class="ui-form-field">
+                <span class="ui-form-label">{t("templates-field-parent-layout")}</span>
+                <SelectControl size="default" value={createParent} options={[{ value: "", label: t("templates-no-parent-layout") }, ...layoutOptions.map((layout) => ({ value: layout.name, label: `${layout.name} · ${originLabel(layout)}` }))]} disabled={busy || createRole === "layout"} ariaLabel={t("templates-field-parent-layout")} onchange={(value) => { createParent = value; }} />
+                <small class="ui-form-help">{t("templates-parent-help")}</small>
+              </div>
             {:else if duplicateSourcePath}
               <div class="source-summary"><span>{t("templates-copied-source")}</span><code>{duplicateSourcePath}</code></div>
             {/if}
 
             {#if createRole === "section_element" && !duplicateSourcePath}
-              <label class="check-field">
-                <input bind:checked={includePageContent} type="checkbox" disabled={busy} />
-                <span>{t("templates-include-page-content")}</span>
-              </label>
+              <CheckboxControl label={t("templates-include-page-content")} checked={includePageContent} disabled={busy} onchange={(value) => { includePageContent = value; }} />
             {/if}
             {/if}
           </div>
 
-          {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+          {#if formError}<InlineMessage message={formError} tone="error" />{/if}
           <div class="form-actions">
-            <button type="button" disabled={busy} onclick={resetPanelState}>{t("templates-cancel")}</button>
+            <button class="ui-button compact" type="button" disabled={busy} onclick={resetPanelState}>{t("templates-cancel")}</button>
             <button class="ui-button primary" type="submit" disabled={busy}>
               <IconPlus size={14} /> {busy ? t("templates-validating") : t("templates-create-session")}
             </button>
@@ -1029,11 +1009,11 @@
             <button class="ui-icon-button ui-close-button" type="button" aria-label={t("templates-cancel")} disabled={busy} onclick={resetPanelState}><IconX size={14} /></button>
           </div>
           <div class="form-fields">
-            <label><span>{t("templates-field-logical-name")}</span><input bind:this={draftNameInput} bind:value={createName} type="text" disabled={busy} /></label>
+            <label class="ui-form-field"><span class="ui-form-label">{t("templates-field-logical-name")}</span><input class="ui-input" bind:this={draftNameInput} bind:value={createName} type="text" disabled={busy} /></label>
           </div>
-          {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+          {#if formError}<InlineMessage message={formError} tone="error" />{/if}
           <div class="form-actions">
-            <button type="button" disabled={busy} onclick={resetPanelState}>{t("templates-cancel")}</button>
+            <button class="ui-button compact" type="button" disabled={busy} onclick={resetPanelState}>{t("templates-cancel")}</button>
             <button class="ui-button primary" type="submit" disabled={busy}><IconDeviceFloppy size={14} /> {t("templates-save")}</button>
           </div>
         </form>
@@ -1046,6 +1026,7 @@
           </div>
           {#if selectedResource}
             <button
+              class="ui-button compact"
               type="button"
               disabled={busy}
               title={diagnosticText(selectedEntry.previewContext?.unavailableDiagnostic) || t("templates-open-editor")}
@@ -1079,26 +1060,22 @@
 
         {#if canAssignSelected}
           <section class="control-section">
-            <div>
+            <div class="control-copy">
               <h3>{t("templates-assignment")}</h3>
               <p>{t("templates-assignment-description", {
                 key: selectedEntry.assignment.key ?? "",
                 file: selectedEntry.target.file ?? "",
               })}</p>
             </div>
-            <label>
-              <span>{t("templates-resource")}</span>
-              <select bind:value={assignmentDraft} disabled={busy}>
-                {#each assignableResources as resource (resource.id)}
-                  <option value={resource.name}>{resource.name} · {originLabel(resource)}</option>
-                {/each}
-              </select>
-            </label>
-            <button type="button" disabled={busy || assignmentDraft === selectedEntry.assignment.resourceName} onclick={() => { void saveAssignment(selectedEntry); }}>
+            <div class="ui-form-field">
+              <span class="ui-form-label">{t("templates-resource")}</span>
+              <SelectControl value={assignmentDraft} options={assignableResources.map((resource) => ({ value: resource.name, label: `${resource.name} · ${originLabel(resource)}` }))} disabled={busy} ariaLabel={t("templates-resource")} onchange={(value) => { assignmentDraft = value; }} />
+            </div>
+            <button class="ui-button compact" type="button" disabled={busy || assignmentDraft === selectedEntry.assignment.resourceName} onclick={() => { void saveAssignment(selectedEntry); }}>
               <IconDeviceFloppy size={14} /> {t("templates-apply")}
             </button>
             {#if selectedEntry.assignment.source === "explicit"}
-              <button type="button" disabled={busy} onclick={() => { void clearAssignment(selectedEntry); }}>{t("templates-return-to-inheritance")}</button>
+              <button class="ui-button compact" type="button" disabled={busy} onclick={() => { void clearAssignment(selectedEntry); }}>{t("templates-return-to-inheritance")}</button>
             {/if}
           </section>
         {/if}
@@ -1119,16 +1096,11 @@
 
             {#if selectedResource.editable && selectedEntry.role !== "listing_item"}
               <div class="parent-control">
-                <label>
-                  <span>{t("templates-field-parent-layout")}</span>
-                  <select bind:value={parentDraft} disabled={busy}>
-                    <option value="">{t("templates-no-parent-layout")}</option>
-                    {#each layoutOptions.filter((layout) => layout.id !== selectedResource?.id) as layout (layout.id)}
-                      <option value={layout.name}>{layout.name} · {originLabel(layout)}</option>
-                    {/each}
-                  </select>
-                </label>
-                <button type="button" disabled={busy || parentDraft === (selectedResource.extends ?? "")} onclick={() => { void saveParent(selectedResource); }}>
+                <div class="ui-form-field">
+                  <span class="ui-form-label">{t("templates-field-parent-layout")}</span>
+                  <SelectControl value={parentDraft} options={[{ value: "", label: t("templates-no-parent-layout") }, ...layoutOptions.filter((layout) => layout.id !== selectedResource?.id).map((layout) => ({ value: layout.name, label: `${layout.name} · ${originLabel(layout)}` }))]} disabled={busy} ariaLabel={t("templates-field-parent-layout")} onchange={(value) => { parentDraft = value; }} />
+                </div>
+                <button class="ui-button compact" type="button" disabled={busy || parentDraft === (selectedResource.extends ?? "")} onclick={() => { void saveParent(selectedResource); }}>
                   <IconDeviceFloppy size={14} /> {t("templates-apply")}
                 </button>
               </div>
@@ -1141,8 +1113,8 @@
             </button>
             {#if selectedResource.editable}
               {#if selectedEntry.role !== "listing_item"}
-              <button type="button" disabled={busy} onclick={() => beginRename(selectedResource)}><IconEdit size={14} /> {t("templates-rename")}</button>
-              <button type="button" disabled={busy} onclick={() => beginDuplicate(selectedResource)}><IconCopy size={14} /> {t("templates-duplicate")}</button>
+              <button class="ui-button compact" type="button" disabled={busy} onclick={() => beginRename(selectedResource)}><IconEdit size={14} /> {t("templates-rename")}</button>
+              <button class="ui-button compact" type="button" disabled={busy} onclick={() => beginDuplicate(selectedResource)}><IconCopy size={14} /> {t("templates-duplicate")}</button>
               {/if}
               <button
                 class="ui-button danger"
@@ -1152,7 +1124,7 @@
                 onclick={() => { deleteConfirmationOpen = true; }}
               ><IconTrash size={14} /> {t("templates-delete")}</button>
             {:else}
-              <button type="button" disabled={busy} onclick={() => { void overrideResource(selectedResource); }}><IconCopy size={14} /> {t("templates-local-override")}</button>
+              <button class="ui-button compact" type="button" disabled={busy} onclick={() => { void overrideResource(selectedResource); }}><IconCopy size={14} /> {t("templates-local-override")}</button>
             {/if}
           </div>
 
@@ -1160,25 +1132,25 @@
             <section class="delete-confirmation">
               <div><strong>{t("templates-delete-question", { name: selectedResource.name })}</strong><span>{t("templates-delete-description")}</span></div>
               <div>
-                <button type="button" onclick={() => { deleteConfirmationOpen = false; }}>{t("templates-cancel")}</button>
+                <button class="ui-button compact" type="button" onclick={() => { deleteConfirmationOpen = false; }}>{t("templates-cancel")}</button>
                 <button class="ui-button danger" type="button" disabled={busy} onclick={() => { void removeResource(selectedEntry, selectedResource); }}><IconTrash size={14} /> {t("templates-confirm")}</button>
               </div>
             </section>
           {/if}
           {#if selectedResource.deleteBlockedDiagnostic && selectedResource.editable}
-            <p class="guard-message">{diagnosticText(selectedResource.deleteBlockedDiagnostic)}</p>
+            <InlineMessage message={diagnosticText(selectedResource.deleteBlockedDiagnostic)} tone="warning" />
           {/if}
         {:else}
           <section class="missing-resource">
             <IconAlertTriangle size={18} />
             <div><strong>{t("templates-missing-resource-title")}</strong><p>{t("templates-missing-resource-description")}</p></div>
-            <button type="button" onclick={() => beginCreateForEntry(selectedEntry)}><IconPlus size={14} /> {t("templates-create")}</button>
+            <button class="ui-button compact" type="button" onclick={() => beginCreateForEntry(selectedEntry)}><IconPlus size={14} /> {t("templates-create")}</button>
           </section>
         {/if}
 
-        {#if formError}<p class="form-error detail-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+        {#if formError}<InlineMessage message={formError} tone="error" />{/if}
       {:else}
-        <div class="workspace-state">{t("templates-select-role")}</div>
+        <EmptyState title={t("templates-select-role")} />
       {/if}
     </aside>
   </div>
@@ -1205,7 +1177,6 @@
   .detail-heading h2 { margin: 5px 0 4px; color: var(--text-strong); font-size: 20px; line-height: 1.15; }
   .detail-heading p { margin: 0; color: var(--wb-text-muted); font-size: 11px; line-height: 1.45; }
   .detail-heading code { display: block; overflow: hidden; color: var(--wb-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-  .detail-heading button, .detail-actions button, .control-section button, .parent-control button, .missing-resource button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 29px; padding: 0 8px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 11px; white-space: nowrap; }
   .contract-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 14px 0 0; }
   .contract-grid div { min-width: 0; padding: 8px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; background: var(--wb-surface-document); }
   .contract-grid dt { color: var(--wb-text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
@@ -1218,51 +1189,31 @@
   .semantic-contract code, .semantic-contract small { overflow: hidden; color: var(--wb-text-muted); font-size: 11px; line-height: 1.4; text-overflow: ellipsis; }
   .control-section, .resource-section { display: grid; gap: 8px; margin-top: 13px; padding: 10px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
   .control-section { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .control-section > div { grid-column: 1 / -1; }
+  .control-copy { grid-column: 1 / -1; }
   h3 { margin: 0 0 3px; color: var(--text-strong); font-size: 11px; text-transform: uppercase; }
   .control-section p { margin: 0; color: var(--wb-text-muted); font-size: 11px; line-height: 1.4; }
-  .control-section label, .parent-control label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; min-width: 0; }
-  .control-section label > span, .parent-control label > span { color: var(--wb-text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
-  select { min-width: 0; height: 29px; padding: 0 7px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-chrome); font-size: 11px; }
   .resource-heading { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
   .resource-heading > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
   .resource-heading code { overflow: hidden; color: var(--wb-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .resource-heading em { padding: 3px 5px; border-radius: 4px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); font-size: 11px; font-style: normal; }
   .parent-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; margin-top: 2px; }
   .detail-actions, .form-actions, .delete-confirmation > div:last-child { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
-  .detail-actions .primary, .form-actions .primary { color: #fff; border-color: var(--wb-accent); background: var(--wb-accent); }
-  .detail-actions .danger { margin-left: auto; color: var(--danger); }
+  .detail-actions .danger { margin-left: auto; }
   .template-form { display: grid; align-content: start; gap: 16px; }
   .form-fields { display: grid; gap: 12px; }
-  .form-fields label { display: grid; gap: 5px; }
-  .form-fields label > span, .source-summary > span { color: var(--wb-text-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; }
-  .form-fields input, .form-fields select { width: 100%; min-height: 32px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
-  .form-fields small { color: var(--wb-text-muted); font-size: 11px; line-height: 1.45; }
-  .form-fields .check-field { display: flex; align-items: center; gap: 7px; }
-  .form-fields .check-field input { width: auto; min-height: auto; }
-  .form-fields .check-field span { color: var(--wb-text-primary); font-weight: 500; text-transform: none; }
+  .source-summary > span { color: var(--wb-text-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; }
   .source-summary { display: grid; gap: 5px; padding: 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); background: var(--wb-surface-document); }
   .source-summary code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .form-actions { justify-content: flex-end; }
-  .form-actions button, .delete-confirmation button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 29px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
-  .form-error { display: flex; align-items: center; gap: 6px; margin: 0; padding: 8px; border-left: 3px solid var(--danger); color: var(--danger); background: var(--wb-surface-document); font-size: 11px; }
-  .detail-error { margin-top: 12px; }
   .missing-resource { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; margin-top: 13px; padding: 10px; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--wb-border-subtle)); border-radius: 7px; background: var(--wb-surface-document); }
   .missing-resource strong { color: var(--text-strong); font-size: 12px; }
   .missing-resource p { margin: 2px 0 0; color: var(--wb-text-muted); font-size: 11px; }
   .delete-confirmation { display: grid; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--wb-border-subtle)); border-radius: 7px; background: var(--wb-surface-document); }
   .delete-confirmation > div:first-child { display: grid; gap: 3px; }
   .delete-confirmation strong { color: var(--text-strong); font-size: 12px; }
-  .delete-confirmation span, .guard-message { color: var(--wb-text-muted); font-size: 11px; }
+  .delete-confirmation span { color: var(--wb-text-muted); font-size: 11px; }
   .delete-confirmation > div:last-child { justify-content: flex-end; margin: 0; }
-  .delete-confirmation .danger { color: var(--danger); }
-  .guard-message { margin: 8px 0 0; padding: 7px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; background: var(--wb-surface-document); }
-  .workspace-state { display: grid; min-height: 180px; place-items: center; gap: 7px; color: var(--wb-text-muted); font-size: 12px; text-align: center; }
-  .workspace-state.error { color: var(--danger); }
   .spin { animation: spin 1s linear infinite; }
-  button:not(:disabled) { cursor: pointer; }
-  button:disabled { opacity: .45; }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 1050px) { .workspace-toolbar { grid-template-columns: minmax(0, 1fr) 190px auto; } .technical-copy { display: none; } .template-card { grid-template-columns: 32px minmax(0, 1fr) auto; } }

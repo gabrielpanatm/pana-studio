@@ -76,6 +76,7 @@ type TemplateWorkbenchUiLease = {
   projectSessionEpoch: number;
   projectWorkspaceMutationEpoch: number;
   activeScannedPath: string | null;
+  bindToActiveDocument: boolean;
   requestSerial: number;
 };
 
@@ -83,6 +84,7 @@ function captureTemplateWorkbenchUiLease(
   host: ProjectTemplateWorkbenchHost,
   project: ProjectScan,
   templateFile: ProjectFile,
+  bindToActiveDocument: boolean,
 ): TemplateWorkbenchUiLease {
   const identity = createProjectPreviewRequestIdentity(
     host.sessionProjectRoot,
@@ -102,6 +104,7 @@ function captureTemplateWorkbenchUiLease(
     projectSessionEpoch: host.projectSessionEpoch,
     projectWorkspaceMutationEpoch: host.projectWorkspaceMutationEpoch,
     activeScannedPath: host.activeScannedPath,
+    bindToActiveDocument,
     requestSerial: host.templateWorkbenchRequestSerial,
   };
 }
@@ -119,8 +122,13 @@ function templateWorkbenchUiLeaseMatches(
     && host.projectSessionEpoch === lease.projectSessionEpoch
     && host.projectWorkspaceMutationEpoch === lease.projectWorkspaceMutationEpoch
     && host.templateWorkbenchRequestSerial === lease.requestSerial
-    && host.activeScannedPath === lease.activeScannedPath
-    && host.activeScannedPath === lease.templatePath;
+    && (
+      lease.bindToActiveDocument
+        ? host.activeScannedPath === lease.activeScannedPath
+          && host.activeScannedPath === lease.templatePath
+        : host.templateWorkbenchActive
+          && host.templateWorkbenchTarget === lease.templatePath
+    );
 }
 
 function normalizedTemplateContextPath(path: string | null | undefined) {
@@ -287,9 +295,15 @@ export async function updateTemplateWorkbenchContext(
     minimumWorkspaceRevision?: number;
     preferredRoute?: string | null;
     strict?: boolean;
+    bindToActiveDocument?: boolean;
   } = {},
 ) {
-  const lease = captureTemplateWorkbenchUiLease(host, project, templateFile);
+  const lease = captureTemplateWorkbenchUiLease(
+    host,
+    project,
+    templateFile,
+    options.bindToActiveDocument !== false,
+  );
   try {
     const workspace = host.projectWorkspaceSnapshot ?? await readProjectWorkspaceState();
     if (!templateWorkbenchUiLeaseMatches(host, lease)) return null;

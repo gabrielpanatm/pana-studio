@@ -41,24 +41,8 @@ pub struct ProjectTeraInsertItem {
     pub target: Option<String>,
     pub name: Option<String>,
     pub expression: Option<String>,
-    pub dynamic_binding: Option<ProjectDynamicFieldBinding>,
     #[serde(default)]
     pub dynamic_widget: Option<DynamicWidgetProperties>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectDynamicFieldBinding {
-    pub model_id: String,
-    pub field_id: String,
-    pub path: String,
-    pub scope: String,
-    pub item_path: Option<String>,
-    pub presentation: String,
-    pub prefix: String,
-    pub suffix: String,
-    pub fallback: String,
-    pub text: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -354,10 +338,6 @@ fn validate_tera_insert(
         return Err(format!(
             "Tera Insert Engine a primit kind necunoscut: {kind}."
         ));
-    }
-    if let Some(binding) = &intent.item.dynamic_binding {
-        validate_dynamic_field_binding(model, kind, binding)?;
-        validate_dynamic_field_anchor(model, anchor, intent.position, binding)?;
     }
     if let Some(widget) = &intent.item.dynamic_widget {
         if let DynamicWidgetProperties::DynamicField(field) = widget {
@@ -730,9 +710,6 @@ fn build_tera_insert_snippet(
     item: &ProjectTeraInsertItem,
 ) -> Result<String, String> {
     let kind = tera_item_kind(&item.kind);
-    if let Some(binding) = &item.dynamic_binding {
-        return build_dynamic_field_snippet(model, kind, binding);
-    }
     if let Some(properties) = &item.dynamic_widget {
         if kind != "dynamicWidget" {
             return Err(
@@ -1008,243 +985,6 @@ fn sanitize_tera_expression(value: &str, fallback: &str) -> Result<String, Strin
         return Err("Expresia Tera conține delimitere sau caractere nepermise.".to_string());
     }
     Ok(expression.to_string())
-}
-
-fn validate_dynamic_field_binding(
-    model: &ProjectModel,
-    item_kind: &str,
-    binding: &ProjectDynamicFieldBinding,
-) -> Result<(), String> {
-    let content_model = model
-        .source_graph
-        .content_models
-        .models
-        .iter()
-        .find(|candidate| candidate.id == binding.model_id)
-        .ok_or_else(|| {
-            format!(
-                "Binding-ul dinamic referă modelul inexistent „{}”.",
-                binding.model_id
-            )
-        })?;
-    let (field, canonical_path, canonical_item_path) =
-        find_dynamic_field(&content_model.fields, &binding.field_id, "", None).ok_or_else(
-            || {
-                format!(
-                    "Binding-ul dinamic referă câmpul inexistent „{}”.",
-                    binding.field_id
-                )
-            },
-        )?;
-    if canonical_path != binding.path {
-        return Err(format!(
-            "Calea binding-ului nu corespunde contractului Rust: {} != {}.",
-            binding.path, canonical_path
-        ));
-    }
-    for segment in binding.path.split('.') {
-        sanitize_identifier(segment, "field", "segment de cale")?;
-    }
-    if !matches!(binding.scope.as_str(), "page" | "item") {
-        return Err("Scope-ul câmpului dinamic trebuie să fie page sau item.".to_string());
-    }
-    if binding.scope == "item" {
-        let item_path = binding
-            .item_path
-            .as_deref()
-            .filter(|path| !path.trim().is_empty())
-            .ok_or_else(|| "Scope-ul item cere o cale relativă în repetor.".to_string())?;
-        for segment in item_path.split('.') {
-            sanitize_identifier(segment, "field", "segment de cale item")?;
-        }
-        if canonical_item_path.as_deref() != Some(item_path) {
-            return Err(format!(
-                "Calea item nu corespunde repetorului din contract: {} != {}.",
-                item_path,
-                canonical_item_path.as_deref().unwrap_or("fără repetor")
-            ));
-        }
-    } else if canonical_item_path.is_some() {
-        return Err(
-            "Un subcâmp al repetorului cere scope item și nu poate fi citit direct din pagină."
-                .to_string(),
-        );
-    }
-    let expected_kind = match binding.presentation.as_str() {
-        "text" | "image" | "link" | "button" => "teraVariable",
-        "list" => "for",
-        "condition" => "if",
-        other => return Err(format!("Prezentare dinamică necunoscută: {other}.")),
-    };
-    if item_kind != expected_kind {
-        return Err(format!(
-            "Prezentarea {} cere item kind {expected_kind}, nu {item_kind}.",
-            binding.presentation
-        ));
-    }
-    use crate::kernel::content_models::ContentFieldKind;
-    let compatible = match binding.presentation.as_str() {
-        "image" => field.kind == ContentFieldKind::Image,
-        "link" | "button" => field.kind == ContentFieldKind::Url,
-        "list" => field.kind == ContentFieldKind::Repeater,
-        "condition" => field.kind == ContentFieldKind::Boolean,
-        "text" => !matches!(
-            field.kind,
-            ContentFieldKind::Group | ContentFieldKind::Repeater
-        ),
-        _ => false,
-    };
-    if !compatible {
-        return Err(format!(
-            "Câmpul {} de tip {:?} nu este compatibil cu prezentarea {}.",
-            binding.path, field.kind, binding.presentation
-        ));
-    }
-    for (label, value) in [
-        ("prefix", binding.prefix.as_str()),
-        ("suffix", binding.suffix.as_str()),
-        ("fallback", binding.fallback.as_str()),
-        ("text", binding.text.as_str()),
-    ] {
-        if value.len() > 500 || value.contains('\0') {
-            return Err(format!(
-                "Valoarea {label} a binding-ului este prea lungă sau invalidă."
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn find_dynamic_field<'a>(
-    fields: &'a [crate::kernel::content_models::ContentFieldDefinition],
-    field_id: &str,
-    parent_path: &str,
-    item_parent: Option<&str>,
-) -> Option<(
-    &'a crate::kernel::content_models::ContentFieldDefinition,
-    String,
-    Option<String>,
-)> {
-    for field in fields {
-        let path = if parent_path.is_empty() {
-            field.key.clone()
-        } else {
-            format!("{parent_path}.{}", field.key)
-        };
-        let item_path = item_parent.map(|parent| {
-            if parent.is_empty() {
-                field.key.clone()
-            } else {
-                format!("{parent}.{}", field.key)
-            }
-        });
-        if field.id == field_id {
-            return Some((field, path, item_path));
-        }
-        let next_item_parent =
-            if field.kind == crate::kernel::content_models::ContentFieldKind::Repeater {
-                Some("")
-            } else {
-                item_path.as_deref()
-            };
-        if let Some(found) = find_dynamic_field(&field.fields, field_id, &path, next_item_parent) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn validate_dynamic_field_anchor(
-    model: &ProjectModel,
-    anchor: &SourceNode,
-    position: ProjectMovePosition,
-    binding: &ProjectDynamicFieldBinding,
-) -> Result<(), String> {
-    if binding.scope != "item" {
-        return Ok(());
-    }
-    let mut current_id = if position == ProjectMovePosition::Inside {
-        Some(anchor.id.as_str())
-    } else {
-        anchor.parent.as_deref()
-    };
-    let mut visited = BTreeSet::new();
-    while let Some(node_id) = current_id {
-        if !visited.insert(node_id.to_string()) {
-            break;
-        }
-        let Some(node) = model.source_graph.node_by_id(node_id) else {
-            break;
-        };
-        if node.kind == SourceNodeKind::For {
-            return Ok(());
-        }
-        current_id = node.parent.as_deref();
-    }
-    Err("Binding-ul cu scope item trebuie inserat în interiorul unei bucle Tera `for`.".to_string())
-}
-
-fn build_dynamic_field_snippet(
-    model: &ProjectModel,
-    item_kind: &str,
-    binding: &ProjectDynamicFieldBinding,
-) -> Result<String, String> {
-    validate_dynamic_field_binding(model, item_kind, binding)?;
-    let expression = if binding.scope == "item" {
-        format!("item.{}", binding.item_path.as_deref().unwrap_or_default())
-    } else {
-        format!("page.extra.{}", binding.path)
-    };
-    let value_expression = if binding.fallback.is_empty() {
-        expression.clone()
-    } else {
-        format!(
-            "{expression} | default(value=\"{}\")",
-            escape_tera_string(&binding.fallback)
-        )
-    };
-    let marker = format!(
-        "{{# pana:dynamic model={} field={} path={} scope={} presentation={} #}}",
-        binding.model_id, binding.field_id, binding.path, binding.scope, binding.presentation
-    );
-    let prefix = escape_html_text(&binding.prefix);
-    let suffix = escape_html_text(&binding.suffix);
-    let text = if binding.text.trim().is_empty() {
-        "Deschide".to_string()
-    } else {
-        escape_html_text(binding.text.trim())
-    };
-    let body = match binding.presentation.as_str() {
-        "text" => format!("{prefix}{{{{ {value_expression} }}}}{suffix}"),
-        "image" => {
-            format!("{prefix}<img src=\"{{{{ {value_expression} }}}}\" alt=\"{text}\">{suffix}")
-        }
-        "link" => format!("{prefix}<a href=\"{{{{ {value_expression} }}}}\">{text}</a>{suffix}"),
-        "button" => format!(
-            "{prefix}<a class=\"button\" href=\"{{{{ {value_expression} }}}}\">{text}</a>{suffix}"
-        ),
-        "list" => format!("{{% for item in {expression} %}}\n{{% endfor %}}"),
-        "condition" => format!("{{% if {expression} %}}\n{{% endif %}}"),
-        _ => unreachable!("validated presentation"),
-    };
-    Ok(format!("{marker}\n{body}"))
-}
-
-fn escape_tera_string(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-}
-
-fn escape_html_text(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }
 
 fn sanitize_tera_comment(value: &str) -> Result<String, String> {
@@ -1574,7 +1314,6 @@ mod tests {
                     target: Some("partials/card.html".to_string()),
                     name: None,
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -1623,7 +1362,6 @@ mod tests {
                 target: None,
                 name: None,
                 expression: Some("page.title".to_string()),
-                dynamic_binding: None,
                 dynamic_widget: None,
             },
         };
@@ -1681,7 +1419,6 @@ mod tests {
                         target: None,
                         name: None,
                         expression: Some(expression.to_string()),
-                        dynamic_binding: None,
                         dynamic_widget: None,
                     },
                 },
@@ -1703,141 +1440,6 @@ mod tests {
             second.patch.expect("second patch").contents,
             "{{ item.title }}\n{{ item.description }}\n"
         );
-    }
-
-    #[test]
-    fn dynamic_image_binding_is_rust_validated_and_reconstructible() {
-        let root = unique_test_dir();
-        let mut fixture = project_fixture(
-            root.clone(),
-            "<main><section class=\"hero\"></section>{% for item in page.extra.gallery %}<div class=\"item\"></div>{% endfor %}</main>\n",
-        );
-        fixture.source(".panastudio/project.toml", "schema_version = 1\n");
-        fixture.source(
-            ".panastudio/content-models/service.toml",
-            "schemaVersion = 1\nid = \"service\"\nlabel = \"Serviciu\"\n\n[[fields]]\nid = \"field_image\"\nkey = \"image\"\nlabel = \"Imagine\"\nkind = \"image\"\n\n[[fields]]\nid = \"field_gallery\"\nkey = \"gallery\"\nlabel = \"Galerie\"\nkind = \"repeater\"\n\n[[fields.fields]]\nid = \"field_gallery_image\"\nkey = \"image\"\nlabel = \"Imagine galerie\"\nkind = \"image\"\n",
-        );
-        let model = fixture.build_model().unwrap();
-        let section = model
-            .source_graph
-            .nodes
-            .iter()
-            .find(|node| node.label == "<section .hero>")
-            .unwrap();
-        let intent = ProjectTeraInsertIntent {
-            target_source_id: Some(section.id.clone()),
-            target_kind: Some("html".to_string()),
-            target_tag: Some("section".to_string()),
-            position: ProjectMovePosition::After,
-            item: ProjectTeraInsertItem {
-                kind: "teraVariable".to_string(),
-                label: Some("Imagine".to_string()),
-                target: None,
-                name: None,
-                expression: Some("frontendul nu este autoritate".to_string()),
-                dynamic_binding: Some(ProjectDynamicFieldBinding {
-                    model_id: "service".to_string(),
-                    field_id: "field_image".to_string(),
-                    path: "image".to_string(),
-                    scope: "page".to_string(),
-                    item_path: None,
-                    presentation: "image".to_string(),
-                    prefix: String::new(),
-                    suffix: String::new(),
-                    fallback: "/fallback.jpg".to_string(),
-                    text: "Fotografie serviciu".to_string(),
-                }),
-                dynamic_widget: None,
-            },
-        };
-        let plan =
-            plan_tera_insert_for_active_document(&model, &intent, Some("templates/index.html"));
-        assert!(plan.allowed, "{:?}", plan.diagnostic);
-        let contents = plan.patch.unwrap().contents;
-        assert!(contents.contains("pana:dynamic model=service field=field_image"));
-        assert!(contents.contains("page.extra.image | default(value=\"/fallback.jpg\")"));
-        assert!(contents.contains("alt=\"Fotografie serviciu\""));
-        assert!(!contents.contains("frontendul nu este autoritate"));
-
-        let mut invalid = intent;
-        invalid.item.dynamic_binding.as_mut().unwrap().path = "other".to_string();
-        let blocked =
-            plan_tera_insert_for_active_document(&model, &invalid, Some("templates/index.html"));
-        assert!(!blocked.allowed);
-        assert!(blocked
-            .diagnostic
-            .unwrap()
-            .contains("nu corespunde contractului Rust"));
-
-        let nested_binding = ProjectDynamicFieldBinding {
-            model_id: "service".to_string(),
-            field_id: "field_gallery_image".to_string(),
-            path: "gallery.image".to_string(),
-            scope: "item".to_string(),
-            item_path: Some("image".to_string()),
-            presentation: "image".to_string(),
-            prefix: String::new(),
-            suffix: String::new(),
-            fallback: String::new(),
-            text: "Imagine galerie".to_string(),
-        };
-        let outside_loop = plan_tera_insert_for_active_document(
-            &model,
-            &ProjectTeraInsertIntent {
-                target_source_id: Some(section.id.clone()),
-                target_kind: Some("html".to_string()),
-                target_tag: Some("section".to_string()),
-                position: ProjectMovePosition::After,
-                item: ProjectTeraInsertItem {
-                    kind: "teraVariable".to_string(),
-                    label: Some("Imagine galerie".to_string()),
-                    target: None,
-                    name: None,
-                    expression: None,
-                    dynamic_binding: Some(nested_binding.clone()),
-                    dynamic_widget: None,
-                },
-            },
-            Some("templates/index.html"),
-        );
-        assert!(!outside_loop.allowed);
-        assert!(outside_loop
-            .diagnostic
-            .unwrap()
-            .contains("interiorul unei bucle Tera"));
-
-        let loop_node = model
-            .source_graph
-            .nodes
-            .iter()
-            .find(|node| node.kind == SourceNodeKind::For)
-            .unwrap();
-        let inside_loop = plan_tera_insert_for_active_document(
-            &model,
-            &ProjectTeraInsertIntent {
-                target_source_id: Some(loop_node.id.clone()),
-                target_kind: Some("for".to_string()),
-                target_tag: None,
-                position: ProjectMovePosition::Inside,
-                item: ProjectTeraInsertItem {
-                    kind: "teraVariable".to_string(),
-                    label: Some("Imagine galerie".to_string()),
-                    target: None,
-                    name: None,
-                    expression: None,
-                    dynamic_binding: Some(nested_binding),
-                    dynamic_widget: None,
-                },
-            },
-            Some("templates/index.html"),
-        );
-        assert!(inside_loop.allowed, "{:?}", inside_loop.diagnostic);
-        assert!(inside_loop
-            .patch
-            .unwrap()
-            .contents
-            .contains("src=\"{{ item.image }}\""));
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -1870,7 +1472,6 @@ mod tests {
                 target: Some("partials/card.html".to_string()),
                 name: None,
                 expression: None,
-                dynamic_binding: None,
                 dynamic_widget: None,
             },
         };
@@ -1927,7 +1528,6 @@ mod tests {
                     target: None,
                     name: Some("content".to_string()),
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -1967,7 +1567,6 @@ mod tests {
                     target: Some("partials/card.html".to_string()),
                     name: None,
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -2010,7 +1609,6 @@ mod tests {
                     target: Some("partials/missing.html".to_string()),
                     name: None,
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -2053,7 +1651,6 @@ mod tests {
                     target: Some("macros.html".to_string()),
                     name: Some("macros".to_string()),
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -2096,7 +1693,6 @@ mod tests {
                     target: None,
                     name: Some("sidebar".to_string()),
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -2136,7 +1732,6 @@ mod tests {
                     target: None,
                     name: Some("card".to_string()),
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -2180,7 +1775,6 @@ mod tests {
                     target: Some("partials/card.html".to_string()),
                     name: None,
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -2220,7 +1814,6 @@ mod tests {
                     target: Some("macros.html".to_string()),
                     name: Some("card".to_string()),
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },
@@ -2266,7 +1859,6 @@ mod tests {
                     target: Some("macros.html".to_string()),
                     name: Some("card".to_string()),
                     expression: None,
-                    dynamic_binding: None,
                     dynamic_widget: None,
                 },
             },

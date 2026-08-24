@@ -35,6 +35,7 @@
     IconWorldWww,
     IconX,
   } from "@tabler/icons-svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { readInsertCatalog } from "$lib/blocks/io";
   import type {
     InsertCatalogCategory,
@@ -379,15 +380,11 @@
     </div>
 
     {#if activeCategory === "html" && presentedSections.length > 0}
-      <label class="html-category-filter">
+      <div class="html-category-filter">
         <IconLayoutGrid size={14} stroke={1.9} />
         <span class="sr-only">Categorie de elemente HTML</span>
-        <select bind:value={activeHtmlSection} aria-label="Categorie de elemente HTML">
-          {#each presentedSections as section (section.id)}
-            <option value={section.id}>{section.label} · {section.items.length}</option>
-          {/each}
-        </select>
-      </label>
+        <SelectControl size="toolbar" value={activeHtmlSection} options={presentedSections.map((section) => ({ value: section.id, label: `${section.label} · ${section.items.length}` }))} ariaLabel="Categorie de elemente HTML" onchange={(value) => { activeHtmlSection = value; }} />
+      </div>
     {/if}
   </div>
 
@@ -489,7 +486,7 @@
   .category-icon { display: inline-flex; align-items: center; justify-content: center; }
   .catalog-tabs button > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .html-category-filter { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 5px; min-height: 30px; padding: 0 7px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--material-control); color: var(--brand-strong); box-shadow: var(--shadow-control); }
-  .html-category-filter select { min-width: 0; width: 100%; height: 28px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-strong); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+  .html-category-filter :global(.select-control-root) { min-width: 0; width: 100%; }
   .html-category-filter:focus-within { border-color: color-mix(in srgb, var(--brand) 52%, var(--border)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 14%, transparent), var(--shadow-control); }
   .catalog-scroll { flex: 1 1 auto; min-height: 0; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-control); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; background: var(--material-inset); box-shadow: var(--shadow-inset); }
   .catalog-sections { display: grid; gap: 5px; }

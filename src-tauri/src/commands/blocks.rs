@@ -4,8 +4,7 @@ use tauri::State;
 use crate::{
     blocks::{
         inspect_native_block_slots, inspect_native_block_source, inspect_native_icon_source,
-        native_block_registry_snapshot, IconCatalogPage, IconCatalogSearchInput,
-        IconCatalogSummary, NativeBlockOptionState, NativeBlockRegistrySnapshot,
+        IconCatalogPage, IconCatalogSearchInput, IconCatalogSummary, NativeBlockOptionState,
         NativeBlockSlotState, NativeIconState,
     },
     commands::workspace_entries::require_bound_workspace,
@@ -21,11 +20,6 @@ use crate::{
     },
     state::AppState,
 };
-
-#[tauri::command]
-pub fn read_native_block_registry() -> NativeBlockRegistrySnapshot {
-    native_block_registry_snapshot()
-}
 
 #[tauri::command]
 pub fn read_icon_catalog() -> Result<IconCatalogSummary, String> {

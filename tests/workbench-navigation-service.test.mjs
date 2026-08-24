@@ -15,12 +15,14 @@ function dependencies({ documentSurface = "code", activeActivity = "editor" } = 
       documents: [{
         documentId: "document:site",
         relativePath: "sass/site.scss",
+        presentation: "code_only",
         surface: documentSurface,
       }],
     }],
   };
   const workbench = {
     snapshot,
+    activeDocumentPresentation: "code_only",
     isHydrated: () => true,
     async apply(intent) {
       calls.push(`activity:${intent.activity}`);
@@ -65,4 +67,12 @@ test("aceeași vedere nu ascunde o activitate Workbench nealiniată", async () =
 
   assert.equal(await service.setCenterView("code"), true);
   assert.deepEqual(calls, ["activity:editor", "surface:sass/site.scss:code"]);
+});
+
+test("vizualul cerut pentru un document code-only este normalizat la cod", async () => {
+  const { calls, shell, service } = dependencies();
+
+  assert.equal(await service.setCenterView("preview"), true);
+  assert.equal(shell.centerView, "code");
+  assert.deepEqual(calls, []);
 });

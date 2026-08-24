@@ -64,7 +64,7 @@ export class ProjectDerivedStateService {
       set scssVariables(variables) { d.analysis.scssVariables = variables; },
       get sessionProjectRoot() { return d.project.root; },
       loadScannedProjectFile: d.loadFile,
-      refreshSourceGraph: async (options) => { await d.previewRuntime.refreshSourceGraph(options); },
+      refreshSourceGraph: (options) => d.previewRuntime.refreshSourceGraph(options),
       requestPreviewRefresh: () => d.preview.requestRefresh("project-rescan"),
       requireProjectTransitionFrontendLease: (lease) => d.transition.require(lease),
       runWithProjectTransitionFrontendLease: (request, operation) => (

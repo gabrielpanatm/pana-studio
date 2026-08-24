@@ -1,6 +1,9 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { IconActivity, IconAlertTriangle, IconCircleCheck, IconRefresh } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import {
   readKernelObservabilityLog,
 } from "$lib/kernel/recovery-io";
@@ -133,28 +136,38 @@
         <span>{loading ? t("observability-loading") : summary.detail}</span>
       </div>
     </div>
-    <button type="button" disabled={loading} onclick={() => void refresh()} title={t("observability-refresh")}>
+    <button class="ui-icon-button mini" type="button" disabled={loading} onclick={() => void refresh()} title={t("observability-refresh")} aria-label={t("observability-refresh")}>
       <IconRefresh size={15} stroke={1.9} />
     </button>
   </header>
 
   <div class="filters">
-    <label><input type="checkbox" bind:checked={recoveryOnly} onchange={() => void refresh()} /> {t("observability-recovery-only")}</label>
-    <label><input type="checkbox" bind:checked={includeArchives} onchange={() => void refresh()} /> {t("observability-include-archives")}</label>
+    <CheckboxControl compact label={t("observability-recovery-only")} bind:checked={recoveryOnly} onchange={() => void refresh()} />
+    <CheckboxControl compact label={t("observability-include-archives")} bind:checked={includeArchives} onchange={(checked) => { if (!checked && sourceFilter === "archives") sourceFilter = "all"; void refresh(); }} />
     {#each levels as level}
-      <label><input type="checkbox" checked={selectedLevels.includes(level)} onchange={() => toggleLevel(level)} /> {kernelLogLevelLabel(level)}</label>
+      <CheckboxControl compact label={kernelLogLevelLabel(level)} checked={selectedLevels.includes(level)} onchange={() => toggleLevel(level)} />
     {/each}
-    <select bind:value={sourceFilter} onchange={() => void refresh()}>
-      <option value="all">{t("observability-source-all")}</option>
-      <option value="active">{t("observability-source-active")}</option>
-      <option value="archives" disabled={!includeArchives}>{t("observability-source-archives")}</option>
-    </select>
-    <select bind:value={eventLimit} onchange={() => void refresh()}>
-      <option value={40}>40</option><option value={80}>80</option><option value={120}>120</option><option value={200}>200</option>
-    </select>
+    <SelectControl
+      size="toolbar"
+      value={sourceFilter}
+      options={[
+        { value: "all", label: t("observability-source-all") },
+        { value: "active", label: t("observability-source-active") },
+        ...(includeArchives ? [{ value: "archives", label: t("observability-source-archives") }] : []),
+      ]}
+      ariaLabel={t("observability-source-all")}
+      onchange={(value) => { sourceFilter = value as KernelObservabilityLogSourceFilter; void refresh(); }}
+    />
+    <SelectControl
+      size="toolbar"
+      value={String(eventLimit)}
+      options={["40", "80", "120", "200"]}
+      ariaLabel="Limită evenimente"
+      onchange={(value) => { eventLimit = Number(value); void refresh(); }}
+    />
   </div>
 
-  {#if loadError}<p class="error" role="alert">{loadError}</p>{/if}
+  {#if loadError}<InlineMessage tone="error" message={loadError} />{/if}
 
   {#if snapshot}
     <div class={`health ${snapshot.health.status}`}>
@@ -201,8 +214,8 @@
   .path,
   article p,
   article small { color: var(--text-muted); font-size: 12px; }
-  button { width: 36px; height: 34px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
   .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--text-muted); font-size: 12px; }
+  .filters :global(.select-control-root) { width: 132px; }
   .health { gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
   .health span { margin-left: auto; }
   .path { margin: 0; }
@@ -220,5 +233,4 @@
   dl div { min-width: 0; padding: 5px; background: var(--surface-3); }
   dt { color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
   dd { margin: 2px 0 0; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-  .error { margin: 0; color: #ef4444; font-size: 12px; }
 </style>

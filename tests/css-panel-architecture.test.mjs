@@ -14,7 +14,13 @@ test("CSS contracts and IPC have one domain-owned frontend path", () => {
   assert.match(contracts, /export type CssRuleContext/);
   assert.doesNotMatch(contracts, /export type \{/);
   assert.match(mutationContract, /export type CssMutationAuthorityReceipt/);
+  assert.match(mutationContract, /export type CssMutationCommandOutcome/);
+  assert.match(mutationContract, /kind: "applied" \| "noop"/);
+  assert.match(mutationContract, /kind: "superseded"/);
+  assert.match(mutationContract, /kind: "retryableStale"/);
+  assert.match(mutationContract, /kind: "rejected"/);
   assert.match(cssIo, /export async function resolveCssInspectorContext/);
+  assert.match(cssIo, /invokeInspectorCssMutation/);
   assert.equal(existsSync(new URL("../src/lib/types.ts", import.meta.url)), false);
   assert.doesNotMatch(cssIo, /\bsetCssRule\b|\bcleanupPageCssContract\b|"set_css_rule"|"cleanup_page_css_contract"/);
 });
@@ -86,11 +92,13 @@ test("CSS inspector context is resolved atomically by Rust without the legacy ma
   const production = [rust, registry, io, inspector, pane].join("\n");
 
   assert.match(rust, /pub fn resolve_css_inspector_context/);
-  assert.match(rust, /with_selection_target/);
+  assert.match(rust, /require_selection_target/);
+  assert.match(rust, /CssInspectorContextCommandOutcome/);
   assert.match(rust, /workspace_revision != expected_workspace_revision/);
   assert.match(rust, /CssInspectorContextState::Ambiguous/);
   assert.match(rust, /collect_current_project_style_sources/);
-  assert.match(coordinator, /pub fn with_selection_target/);
+  assert.match(coordinator, /pub fn require_selection_target/);
+  assert.match(coordinator, /SelectionTargetFailureKind/);
   assert.match(registry, /resolve_css_inspector_context/);
   assert.match(permission, /allow-resolve-css-inspector-context/);
   assert.match(io, /export async function resolveCssInspectorContext/);
@@ -126,10 +134,14 @@ test("CSS receipt projects exact FileBuffer snapshots into CodeMirror state", ()
 });
 
 test("toggle-ul activ emite delete intent, iar un no-op recitește adevărul canonic", () => {
-  const segmented = source("src/lib/components/inspector/controls/SegmentedControl.svelte");
+  const segmented = source("src/lib/components/ui/SegmentedControl.svelte");
   const controller = source("src/lib/state/inspector-css-controller.ts");
 
   assert.match(segmented, /toggleable && value === nextValue \? "" : nextValue/);
+  assert.equal(
+    existsSync(new URL("../src/lib/components/inspector/controls/SegmentedControl.svelte", import.meta.url)),
+    false,
+  );
   assert.match(
     controller,
     /authority\.status === "noop"[\s\S]*host\.notifyCssSourceChanged\(\)/,
@@ -200,28 +212,39 @@ test("CSS refresh and class switching keep the previous complete projection unti
   const pane = source("src/lib/components/inspector/panes/CssPane.svelte");
   const classSwitch = reader.slice(
     reader.indexOf("async selectClass"),
-    reader.indexOf("captureCurrentSelection"),
+    reader.indexOf("\n  captureCurrentSelection()"),
   );
 
   assert.match(reader, /this\.state\.hasStableProjection\(expectedSelection\)/);
   assert.match(state, /this\.loading = !retainProjection/);
   assert.match(state, /get presentedSelector\(\)/);
   assert.match(state, /get projectionTransitioning\(\)/);
-  assert.match(pane, /inert=\{projectionTransitioning\}/);
+  assert.match(pane, /class="css-context" inert=\{!editingReady \|\| projectionTransitioning\}/);
+  assert.match(state, /get hasEditableTarget\(\)/);
   assert.match(classSwitch, /const retainProjection = this\.state\.hasStableProjection/);
+  assert.match(reader, /private classSelectionSerial = 0/);
   assert.match(
     classSwitch,
     /if \(resolution\.state === "ambiguous" \|\| !resolution\.target\) \{\s*this\.applyResolution/,
   );
-  assert.doesNotMatch(
-    classSwitch.slice(
-      classSwitch.indexOf("const allowed = await this.dependencies.changeCodeTarget"),
-      classSwitch.indexOf("return allowed"),
-    ),
-    /applyResolution/,
+  assert.match(
+    classSwitch,
+    /const currentSelection = this\.captureCurrentSelection\(\);[\s\S]*sameCssSemanticSelection\(expectedSelection, currentSelection\)[\s\S]*this\.state\.syncPresentation\(selector,[\s\S]*this\.applyResolution\(resolution, currentSelection\)/,
   );
   assert.match(reader, /cssInspectorSubjectKey\(expectedSelection\)/);
   assert.match(inspector, /selectionSummary=\{selectionSummary\}/);
+  assert.match(
+    inspector,
+    /const activeCssTargetFile = \$derived\(presentedCssFocus\?\.file \?\? targetCssFile\)/,
+  );
+  assert.equal(
+    (inspector.match(/targetCssFile: activeCssTargetFile/g) ?? []).length,
+    2,
+  );
+  assert.match(
+    inspector,
+    /function selectCssVariant[\s\S]*!activeCssTargetFile[\s\S]*file: activeCssTargetFile/,
+  );
 });
 
 test("CSS reads are latest-selection-wins and stale completions stay silent", () => {
@@ -262,7 +285,7 @@ test("CSS focus promotes the current Canvas revision before sending a Rust selec
   const navigation = source("src/lib/editor/source-navigation-service.ts");
   const classIntent = reader.slice(
     reader.indexOf("async selectClass"),
-    reader.indexOf("captureCurrentSelection"),
+    reader.indexOf("\n  captureCurrentSelection()"),
   );
   const focusIntent = navigation.slice(
     navigation.indexOf("async selectCssFocus("),
@@ -279,6 +302,9 @@ test("CSS focus promotes the current Canvas revision before sending a Rust selec
   assert.match(focusIntent, /selectionSession\.refreshNavigationSnapshot/);
   assert.match(focusIntent, /stableAnchorMatches/);
   assert.match(focusIntent, /expectedSelectionRevision = currentSelection\.selectionRevision/);
+  assert.match(focusIntent, /intentSequence = \+\+this\.cssFocusIntentSequence/);
+  assert.match(focusIntent, /expectedSelection,/);
+  assert.doesNotMatch(focusIntent, /focus\.file === target\.file[\s\S]*return true/);
 });
 
 test("structured compound editors preserve unsupported values in raw mode", () => {

@@ -69,9 +69,9 @@
   }
 </script>
 
-<div class="tfo-field" bind:this={root} onfocusout={handleFocusOut}>
+<div class="tfo-field ui-control-group compact" class:disabled bind:this={root} onfocusout={handleFocusOut}>
   {#if prefix || label}
-    <span class="tfo-prefix">
+    <span class="tfo-prefix ui-control-affix ui-control-prefix code">
       {#if prefix}
         {@render prefix()}
       {:else}
@@ -81,7 +81,7 @@
   {/if}
 
   <input
-    class="tfo-input"
+    class="tfo-input ui-control-input code"
     type="text"
     value={draftValue}
     {placeholder}
@@ -112,57 +112,3 @@
 {#if showOpts && filtered.length}
   <OptionsPopover anchor={root} options={filtered} onselect={selectOpt} />
 {/if}
-
-<style>
-  .tfo-field {
-    position: relative;
-    display: flex;
-    align-items: center;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    overflow: visible;
-    background: var(--surface-8);
-    min-width: 0;
-  }
-
-  .tfo-field:focus-within {
-    border-color: var(--brand);
-  }
-
-  .tfo-prefix {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 5px;
-    border-right: 1px solid var(--border-4);
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 24px;
-    white-space: nowrap;
-    background: var(--surface-4);
-    user-select: none;
-    min-width: 24px;
-    height: 24px;
-    flex-shrink: 0;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  }
-
-  .tfo-input {
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    padding: 0 6px;
-    border: none;
-    color: var(--text);
-    font-size: 12px;
-    background: transparent;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-    outline: none;
-  }
-
-  .tfo-input:disabled {
-    cursor: not-allowed;
-    opacity: .48;
-  }
-</style>

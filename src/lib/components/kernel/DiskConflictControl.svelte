@@ -150,8 +150,9 @@
 
     <button
       type="button"
-      class="disk-refresh"
+      class="ui-icon-button toolbar"
       title={t("project-kernel-disk-refresh")}
+      aria-label={t("project-kernel-disk-refresh")}
       onclick={() => void refreshDiskConflicts("manual")}
       disabled={loading}
     >
@@ -305,25 +306,6 @@
     color: var(--text-muted);
     font-size: 12px;
     line-height: 1.45;
-  }
-
-  .disk-refresh {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 38px;
-    min-height: 38px;
-    padding: 0;
-    border: 1px solid var(--border-3);
-    border-radius: 8px;
-    color: var(--text);
-    background: var(--surface-2);
-    cursor: pointer;
-  }
-
-  .disk-refresh:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
   }
 
   .disk-note,

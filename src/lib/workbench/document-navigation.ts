@@ -14,6 +14,7 @@ import type {
   WorkbenchSurface,
 } from "$lib/workbench/contracts";
 import { errorMessage } from "$lib/util";
+import { activeWorkbenchDocument } from "$lib/workbench/document-presentation";
 
 export type WorkbenchDocumentNavigationCommands = {
   currentSnapshot: () => WorkbenchSnapshot | null;
@@ -123,11 +124,17 @@ export class WorkbenchDocumentNavigationService {
         this.pendingActivation = null;
         const intentStartedAt = monotonicNow();
         try {
-          await this.commands.applyIntent({
+          const receipt = await this.commands.applyIntent({
             kind: "activate_document",
             documentId: request.document.documentId,
             groupId: request.groupId,
           });
+          const activated = activeWorkbenchDocument(receipt.snapshot);
+          if (!activated) {
+            throw new Error("Workbench nu a publicat documentul activ confirmat de Rust.");
+          }
+          request.groupId = receipt.snapshot.activeGroupId;
+          request.document = activated;
         } catch (error) {
           this.failActivation(request, error, monotonicNow() - intentStartedAt);
           continue;
@@ -282,15 +289,12 @@ export class WorkbenchDocumentNavigationService {
       });
       const intentMs = monotonicNow() - intentStartedAt;
       if (!wasActive) return;
-      const nextGroup = receipt.snapshot.groups.find((group) => group.groupId === groupId);
-      const nextDocument = nextGroup?.documents.find(
-        (candidate) => candidate.documentId === nextGroup.activeDocumentId,
-      );
+      const nextDocument = activeWorkbenchDocument(receipt.snapshot);
       if (nextDocument && serial !== null) {
         this.commands.beginDocumentActivation?.(serial, nextDocument);
         await this.finishActivation({
           serial,
-          groupId,
+          groupId: receipt.snapshot.activeGroupId,
           document: nextDocument,
           startedAt,
           resolve: () => {},

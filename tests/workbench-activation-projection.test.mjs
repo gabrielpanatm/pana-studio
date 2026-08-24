@@ -7,7 +7,7 @@ import {
 
 function snapshot(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectRoot: "/tmp/project",
     projectSessionId: "project-session",
     runtimeSessionId: "runtime-session",
@@ -32,6 +32,7 @@ function snapshot(overrides = {}) {
             documentId: "document:config.toml",
             relativePath: "config.toml",
             title: "config.toml",
+            presentation: "code_only",
             surface: "code",
             pinned: false,
           },
@@ -39,6 +40,7 @@ function snapshot(overrides = {}) {
             documentId: "document:templates/index.html",
             relativePath: "templates/index.html",
             title: "index.html",
+            presentation: "html",
             surface: "visual",
             pinned: false,
           },
@@ -96,6 +98,7 @@ test("orice diferență structurală refuză patch-ul localizat fără efecte pa
     (next) => { next.activeActivity = "templates"; },
     (next) => { next.canvasViewport.zoomPercent = 90; },
     (next) => { next.groups[0].documents[1].surface = "code"; },
+    (next) => { next.groups[0].documents[1].presentation = "code_only"; },
     (next) => { next.groups[1].activeDocumentId = "foreign"; },
     (next) => { next.selectedProjectEntry.relativePath = "foreign.html"; },
   ]) {

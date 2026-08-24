@@ -93,7 +93,7 @@ test("contractul acoperă tipurile, nesting, attach/detach și replace/migrate",
   assert.match(plan, /RenameModel/);
   assert.match(plan, /affected_keys/);
   assert.match(plan, /blocked:\s*!blockers\.is_empty\(\)/);
-  assert.match(templates, /stage_rename_dynamic_marker_model/);
+  assert.doesNotMatch(templates, /dynamic_marker|pana:dynamic/);
   assert.match(templates, /stage_replace_model_values/);
   assert.match(templates, /stage_remove_model_values/);
   assert.match(templates, /stage_rename_template_references/);
@@ -133,22 +133,4 @@ test("editorul de conținut separă Setări, SEO și Câmpuri personalizate", ()
   assert.match(recursive, /field\.kind === "repeater"/);
   assert.match(recursive, /Adaugă element/);
   assert.doesNotMatch(custom, /JSON\.parse|textarea\.json/);
-});
-
-test("Blocuri oferă binding-uri dinamice tipizate și context single real", () => {
-  const blocks = source("../src/lib/components/creation/BlocksWorkspace.svelte");
-  const controller = source("../src/lib/state/tera-actions-controller.ts");
-  const engine = source("../src-tauri/src/project_model/tera_insert_engine.rs");
-
-  assert.match(blocks, /"dynamic_fields"/);
-  for (const presentation of ["text", "image", "link", "button", "list", "condition"]) {
-    assert.match(blocks, new RegExp(`"${presentation}"`));
-  }
-  assert.match(blocks, /dynamicBinding:\s*dynamicBinding/);
-  assert.match(blocks, /Conținut de previzualizare/);
-  assert.match(blocks, /updateTemplateWorkbenchContext/);
-  assert.match(controller, /dynamicBinding:\s*request\.item\.dynamicBinding/);
-  assert.match(engine, /validate_dynamic_field_binding/);
-  assert.match(engine, /pana:dynamic model=/);
-  assert.match(engine, /page\.extra/);
 });

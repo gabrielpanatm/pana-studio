@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import {
-    IconAlertTriangle,
     IconArrowBackUp,
     IconBrowser,
     IconBrush,
@@ -20,6 +19,9 @@
     IconTypography,
   } from "@tabler/icons-svelte";
   import ColorInput from "$lib/components/inspector/controls/ColorInput.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import {
     applyThemeStyleDraft,
@@ -350,11 +352,9 @@
     aria-labelledby="design-tab-global-styles"
   >
     {#if loading && !catalog}
-      <div class="workspace-state">{t("theme-style-loading")}</div>
+      <EmptyState title={t("theme-style-loading")} compact />
     {:else if error}
-      <div class="workspace-state error" role="alert">
-        <IconAlertTriangle size={16} /> {error}
-      </div>
+      <EmptyState title={error} tone="error" compact />
     {:else}
       {#each visibleCategories as section (section.id)}
         <section class="style-category" aria-label={section.label}>
@@ -406,7 +406,7 @@
           </div>
         </section>
       {:else}
-        <div class="workspace-state">{t("theme-style-empty")}</div>
+        <EmptyState title={t("theme-style-empty")} compact />
       {/each}
     {/if}
   </div>
@@ -419,7 +419,7 @@
           <h2>{selected.label}</h2>
           <p>{t("theme-style-edit-description")}</p>
         </div>
-        <button type="button" aria-label={t("theme-style-cancel-edit")} disabled={applying} onclick={cancelEdit}>
+        <button class="ui-icon-button compact" type="button" aria-label={t("theme-style-cancel-edit")} disabled={applying} onclick={cancelEdit}>
           <IconArrowBackUp size={15} />
         </button>
       </header>
@@ -446,26 +446,22 @@
                 oncommit={(value) => setDraftValue(property.id, value)}
               />
             {:else if property.control === "choice"}
-              <select
+              <SelectControl
                 value={draft[property.id] ?? ""}
-                onchange={(event) => setDraftValue(property.id, event.currentTarget.value)}
-              >
-                {#if property.canClear}
-                  <option value="">{t("theme-style-inherited")} · {property.effectiveValue ?? t("theme-style-default-value")}</option>
-                {/if}
-                {#each property.options as option (option.value)}
-                  <option value={option.value}>{option.label}</option>
-                {/each}
-              </select>
+                options={[...(property.canClear ? [{ value: "", label: `${t("theme-style-inherited")} · ${property.effectiveValue ?? t("theme-style-default-value")}` }] : []), ...property.options]}
+                ariaLabel={property.label}
+                onchange={(value) => setDraftValue(property.id, value)}
+              />
             {:else}
               <div class="text-control">
                 <input
+                  class="ui-input compact"
                   value={draft[property.id] ?? ""}
                   placeholder={property.canClear ? `${t("theme-style-inherited")} · ${property.effectiveValue ?? "—"}` : ""}
                   oninput={(event) => setDraftValue(property.id, event.currentTarget.value)}
                 />
                 {#if property.canClear && draft[property.id]}
-                  <button type="button" onclick={() => clearProperty(property.id)}>{t("theme-style-inherit")}</button>
+                  <button class="ui-button compact" type="button" onclick={() => clearProperty(property.id)}>{t("theme-style-inherit")}</button>
                 {/if}
               </div>
             {/if}
@@ -473,10 +469,10 @@
         {/each}
       </div>
 
-      {#if previewError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {previewError}</p>{/if}
-      {#if applyError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {applyError}</p>{/if}
+      {#if previewError}<InlineMessage message={previewError} tone="error" />{/if}
+      {#if applyError}<InlineMessage message={applyError} tone="error" />{/if}
       <div class="edit-actions">
-        <button type="button" disabled={applying} onclick={cancelEdit}>{t("theme-style-cancel")}</button>
+        <button class="ui-button" type="button" disabled={applying} onclick={cancelEdit}>{t("theme-style-cancel")}</button>
         <button
           class="ui-button primary"
           type="button"
@@ -509,7 +505,7 @@
       </dl>
 
       {#if selected.diagnostic}
-        <p class="form-error" role="alert"><IconAlertTriangle size={14} /> {t("theme-style-invalid-source")}</p>
+        <InlineMessage message={t("theme-style-invalid-source")} tone="error" />
       {/if}
       <div class="source-card"><span>{t("theme-style-semantic-source")}</span><code>{selected.sourcePath}</code></div>
       <div class="detail-actions">
@@ -521,7 +517,7 @@
         </button>
       </div>
     {:else}
-      <div class="workspace-state">{t("theme-style-select")}</div>
+      <EmptyState title={t("theme-style-select")} compact />
     {/if}
   </aside>
 </div>
@@ -547,7 +543,6 @@
   .detail-heading { justify-content: space-between; gap: 14px; }
   .detail-heading h2, .style-detail > h2 { margin: 5px 0 0; color: var(--text-strong); font-size: 19px; }
   .detail-heading p, .style-detail > p { margin: 5px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.45; }
-  .detail-heading > button { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; color: var(--wb-text-primary); background: var(--wb-surface-chrome); }
   .detail-kicker { color: var(--wb-accent-strong); font-size: 11px; font-weight: 700; letter-spacing: .035em; text-transform: uppercase; }
   .specimen { display: grid; place-items: center; min-height: 132px; margin: 15px 0; padding: 18px; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: 8px; background: linear-gradient(135deg, var(--wb-surface-chrome), var(--wb-surface-document)); }
   .specimen ul { justify-self: stretch; }
@@ -562,7 +557,6 @@
   .property-field { display: grid; gap: 5px; }
   .property-label { justify-content: space-between; gap: 8px; color: var(--wb-text-primary); font-size: 11px; font-weight: 650; }
   .property-label small { color: var(--wb-text-muted); font-size: 11px; font-weight: 500; }
-  .property-field > select, .text-control > input { width: 100%; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
   .text-control { min-width: 0; }
   .text-control > input { border-radius: 5px 0 0 5px; }
   .text-control > button { flex: 0 0 auto; height: 30px; padding: 0 8px; border: 1px solid var(--wb-border-subtle); border-left: 0; border-radius: 0 5px 5px 0; color: var(--wb-accent-strong); background: var(--wb-surface-chrome); font-size: 11px; }
@@ -577,12 +571,9 @@
   .source-card code { overflow-wrap: anywhere; font-size: 11px; }
   .detail-actions, .edit-actions { gap: 7px; margin-top: 12px; }
   .edit-actions { justify-content: flex-end; position: sticky; bottom: -16px; padding: 10px 0 0; background: var(--wb-surface-document); }
-  .detail-actions button, .edit-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 29px; padding: 0 10px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; color: var(--wb-text-primary); background: var(--wb-surface-chrome); font-size: 11px; font-weight: 650; }
-  .detail-actions .primary-action, .edit-actions .primary { border-color: var(--wb-accent); color: #fff; background: var(--wb-accent); }
-  .form-error, .workspace-state { display: flex; align-items: center; gap: 6px; color: var(--wb-text-muted); font-size: 12px; }
-  .form-error { margin: 10px 0 0; color: var(--danger-strong, #b42318); }
-  .workspace-state { justify-content: center; min-height: 120px; padding: 20px; text-align: center; }
-  .workspace-state.error { color: var(--danger-strong, #b42318); }
+  .detail-actions :global(.ui-button), .edit-actions :global(.ui-button) { min-height: 29px; font-size: 11px; }
+  .style-target-list > :global(.ui-empty-state), .style-detail > :global(.ui-empty-state) { min-height: 120px; }
+  .style-detail > :global(.ui-message) { margin-top: 10px; }
 
   @media (max-width: 980px) {
     .theme-styles-body { grid-template-columns: minmax(300px, .9fr) minmax(300px, 1fr); }

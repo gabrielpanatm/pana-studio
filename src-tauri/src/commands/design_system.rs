@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::{
     commands::css::{
         execute_css_workspace_mutation_with_metadata, with_bound_css_file_buffer_revision,
-        CssMutationCommandReceipt,
+        CssMutationCommandReceipt, CssWorkspaceMutationMetadata,
     },
     commands::workspace_entries::{
         current_workspace_identity, finish_mutation, mutation_metadata, require_bound_workspace,
@@ -124,9 +124,12 @@ pub fn apply_theme_style_draft(
         &app,
         &state,
         &identity,
-        Some(expected_workspace_revision),
-        "design_system.theme_styles",
-        None,
+        CssWorkspaceMutationMetadata::new(
+            Some(expected_workspace_revision),
+            None,
+            "design_system.theme_styles",
+            None,
+        ),
         |_project_root, _zola_root, store, _project_model| {
             let (source_path, source, _source_origin) = resolve_theme_style_source(store)?;
             let (updated, target) =

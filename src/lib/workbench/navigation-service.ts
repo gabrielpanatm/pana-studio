@@ -32,6 +32,9 @@ export class WorkbenchNavigationService {
 
   async setCenterView(view: CenterView) {
     const { shell, workbench, project, documents, source, status } = this.dependencies;
+    if (view === "preview" && workbench.activeDocumentPresentation === "code_only") {
+      view = "code";
+    }
     const targetActivity: WorkbenchActivity = view === "kernel" ? "audit" : "editor";
     if (centerViewAlreadyCanonical({
       view,

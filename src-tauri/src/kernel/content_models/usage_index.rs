@@ -10,10 +10,7 @@ use crate::{
     source_graph::SourceGraph,
 };
 
-use super::{
-    catalog::{ContentModelAssignment, ContentModelCatalog, ContentModelPageBinding},
-    validation::field_path_by_id,
-};
+use super::catalog::{ContentModelAssignment, ContentModelCatalog, ContentModelPageBinding};
 
 pub(super) fn build_template_usages(
     source_texts: &HashMap<String, String>,
@@ -96,7 +93,6 @@ fn project_template_usages(
             }
         }
     }
-    usages.extend(dynamic_marker_usages(source, &template.file, models));
     usages.extend(
         crate::kernel::dynamic_widgets::project_dynamic_field_usages(
             source,
@@ -260,54 +256,6 @@ fn template_files_for_binding_scope(
         }
     }
     Some(files)
-}
-
-fn dynamic_marker_usages(
-    source: &str,
-    template_file: &str,
-    models: &[ContentModelDefinition],
-) -> Vec<CustomFieldTemplateUsage> {
-    let mut usages = Vec::new();
-    let mut cursor = 0;
-    const START: &str = "{# pana:dynamic ";
-    while let Some(found) = source[cursor..].find(START) {
-        let offset = cursor + found;
-        let body_start = offset + START.len();
-        let Some(end) = source[body_start..].find("#}") else {
-            break;
-        };
-        let expression = &source[offset..body_start + end + 2];
-        let attributes = source[body_start..body_start + end]
-            .split_ascii_whitespace()
-            .filter_map(|part| part.split_once('='))
-            .collect::<HashMap<_, _>>();
-        let (Some(model_id), Some(field_id), Some(path)) = (
-            attributes.get("model"),
-            attributes.get("field"),
-            attributes.get("path"),
-        ) else {
-            cursor = body_start + end + 2;
-            continue;
-        };
-        if attributes.get("scope").copied() == Some("item") {
-            if let Some(model) = models.iter().find(|model| model.id == *model_id) {
-                if field_path_by_id(&model.fields, field_id)
-                    .is_some_and(|canonical| canonical.join(".") == *path)
-                {
-                    usages.push(CustomFieldTemplateUsage {
-                        model_id: (*model_id).to_string(),
-                        field_id: (*field_id).to_string(),
-                        field_key: (*path).to_string(),
-                        template_file: template_file.to_string(),
-                        expression: expression.to_string(),
-                        offset,
-                    });
-                }
-            }
-        }
-        cursor = body_start + end + 2;
-    }
-    usages
 }
 
 fn flatten_field_paths(

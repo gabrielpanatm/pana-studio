@@ -10,6 +10,33 @@
   var lastPublishedAt = 0;
   var observer = null;
 
+  function isMotionPreview() {
+    return document.documentElement.hasAttribute("data-pana-motion-preview");
+  }
+
+  function motionNavigationTarget(target) {
+    return target instanceof Element
+      ? target.closest("a[href], area[href]")
+      : null;
+  }
+
+  function preventMotionNavigation(event) {
+    if (motionNavigationTarget(event.target)) event.preventDefault();
+  }
+
+  function preventMotionFormSubmission(event) {
+    event.preventDefault();
+  }
+
+  function installMotionInputPolicy() {
+    if (!isMotionPreview()) return;
+    // Motion needs real wheel, hover, pointer and click events to exercise
+    // authored triggers. Only their navigational default actions are inert.
+    document.addEventListener("click", preventMotionNavigation, true);
+    document.addEventListener("auxclick", preventMotionNavigation, true);
+    document.addEventListener("submit", preventMotionFormSubmission, true);
+  }
+
   function previewRevision() {
     return document.documentElement.getAttribute("data-pana-preview-revision") || "";
   }
@@ -100,6 +127,8 @@
       });
     });
   }
+
+  installMotionInputPolicy();
 
   window.addEventListener("pagehide", function () {
     if (observer) observer.disconnect();

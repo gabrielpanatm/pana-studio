@@ -13,6 +13,9 @@
     IconX,
   } from "@tabler/icons-svelte";
   import PageCustomFieldsPanel from "$lib/components/content/PageCustomFieldsPanel.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import MarkdownEditor from "$lib/components/markdown/MarkdownEditor.svelte";
   import PageTaxonomyAssignments from "$lib/components/content/PageTaxonomyAssignments.svelte";
   import ProjectPageSettingsTab from "$lib/components/project/ProjectPageSettingsTab.svelte";
@@ -407,10 +410,10 @@
       {:else if metadataLoading && loadedMetadataPath !== editingPagePath}
         <div class="settings-diagnostic"><span>{t("content-loading-frontmatter")}</span></div>
       {:else if editingPage}
-        <div class="page-settings-tabs" role="tablist" aria-label="Setările paginii">
-          <button type="button" role="tab" class:active={pageSettingsView === "settings"} aria-selected={pageSettingsView === "settings"} onclick={() => { pageSettingsView = "settings"; }}><IconSettings size={13} /> Setări</button>
-          <button type="button" role="tab" class:active={pageSettingsView === "seo"} aria-selected={pageSettingsView === "seo"} onclick={() => { pageSettingsView = "seo"; }}><IconSearch size={13} /> SEO</button>
-          <button type="button" role="tab" class:active={pageSettingsView === "custom_fields"} aria-selected={pageSettingsView === "custom_fields"} onclick={() => { pageSettingsView = "custom_fields"; }}><IconTags size={13} /> Câmpuri</button>
+        <div class="ui-tabs compact page-settings-tabs" role="tablist" aria-label="Setările paginii">
+          <button class="ui-tab" type="button" role="tab" class:active={pageSettingsView === "settings"} aria-selected={pageSettingsView === "settings"} onclick={() => { pageSettingsView = "settings"; }}><IconSettings size={13} /> Setări</button>
+          <button class="ui-tab" type="button" role="tab" class:active={pageSettingsView === "seo"} aria-selected={pageSettingsView === "seo"} onclick={() => { pageSettingsView = "seo"; }}><IconSearch size={13} /> SEO</button>
+          <button class="ui-tab" type="button" role="tab" class:active={pageSettingsView === "custom_fields"} aria-selected={pageSettingsView === "custom_fields"} onclick={() => { pageSettingsView = "custom_fields"; }}><IconTags size={13} /> Câmpuri</button>
         </div>
         <div class="metadata-editor">
           {#if pageSettingsView === "settings" || pageSettingsView === "seo"}
@@ -471,19 +474,13 @@
       {/each}
     </div>
     <div class="toolbar-query-group with-filter">
-      <label class="toolbar-filter">
+      <div class="toolbar-filter">
         <span class="sr-only">{t("content-collection-label")}</span>
-        <select
-          class="ui-field toolbar"
-          bind:value={sectionFilter}
-          aria-label={t("content-collection-label")}
-        >
-          <option value="all">{t("content-all-collections")}</option>
-          {#each sections as section (section)}
-            <option value={section}>{sectionLabel(section)}</option>
-          {/each}
-        </select>
-      </label>
+        <SelectControl size="toolbar" value={sectionFilter} options={[
+          { value: "all", label: t("content-all-collections") },
+          ...sections.map((section) => ({ value: section, label: sectionLabel(section) })),
+        ]} ariaLabel={t("content-collection-label")} onchange={(value) => { sectionFilter = value; }} />
+      </div>
       <label class="search-field">
         <span class="sr-only">{t("content-search-label")}</span>
         <IconSearch size={14} stroke={1.9} />
@@ -527,15 +524,11 @@
             <code>{page.resolvedTemplate ?? page.frontmatterTemplate ?? t("content-template-default")}</code>
           </button>
         {:else}
-          <div class="empty-state">
-            <IconSearch size={25} stroke={1.5} />
-            <strong>{pages.length === 0
+          <EmptyState title={pages.length === 0
               ? t("content-empty-index-title")
-              : t("content-empty-filter-title")}</strong>
-            <span>{pages.length === 0
+              : t("content-empty-filter-title")} description={pages.length === 0
               ? t("content-empty-index-description")
-              : t("content-empty-filter-description")}</span>
-          </div>
+              : t("content-empty-filter-description")} />
         {/each}
       </div>
     </div>
@@ -547,41 +540,39 @@
           <button class="ui-icon-button ui-close-button" type="button" aria-label={t("content-cancel-create")} disabled={creating} onclick={resetPanel}><IconX size={14} /></button>
         </header>
         <form onsubmit={(event) => { event.preventDefault(); void createPage(); }}>
-          <label>
-            <span>{t("content-page-title")}</span>
+          <label class="ui-form-field">
+            <span class="ui-form-label">{t("content-page-title")}</span>
             <input
+              class="ui-input"
               value={titleDraft}
               oninput={(event) => updateTitle(event.currentTarget.value)}
               placeholder={t("content-title-placeholder")}
               disabled={creating}
             />
           </label>
-          <label>
-            <span>{t("content-url-slug")}</span>
+          <label class="ui-form-field">
+            <span class="ui-form-label">{t("content-url-slug")}</span>
             <input
+              class="ui-input"
               value={slugDraft}
               oninput={(event) => { slugTouched = true; slugDraft = event.currentTarget.value; }}
               placeholder={t("content-slug-placeholder")}
               disabled={creating}
             />
-            <small>{t("content-file-result", {
+            <small class="ui-form-help">{t("content-file-result", {
               file: slugifyPageTitle(slugDraft || titleDraft) || "slug",
             })}</small>
           </label>
-          <label>
-            <span>{t("content-section")}</span>
-            <select bind:value={sectionDraft} disabled={creating}>
-              {#each sections as section (section)}
-                <option value={section}>{sectionLabel(section)}</option>
-              {/each}
-            </select>
-            <small>{t("content-file-location", {
+          <div class="ui-form-field">
+            <span class="ui-form-label">{t("content-section")}</span>
+            <SelectControl size="default" value={sectionDraft} options={sections.map((section) => ({ value: section, label: sectionLabel(section) }))} disabled={creating} ariaLabel={t("content-section")} onchange={(value) => { sectionDraft = value; }} />
+            <small class="ui-form-help">{t("content-file-location", {
               path: `content/${sectionDraft ? `${sectionDraft}/` : ""}`,
             })}</small>
-          </label>
-          {#if createError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {createError}</p>{/if}
+          </div>
+          {#if createError}<InlineMessage message={createError} tone="error" />{/if}
           <div class="form-actions">
-            <button type="button" onclick={resetPanel} disabled={creating}>{t("content-cancel")}</button>
+            <button class="ui-button compact" type="button" onclick={resetPanel} disabled={creating}>{t("content-cancel")}</button>
             <button class="ui-button primary" type="submit" disabled={creating || !titleDraft.trim()}>
               <IconPlus size={14} /> {creating ? t("content-creating") : t("content-create-session")}
             </button>
@@ -621,7 +612,7 @@
           {t("content-view-public")} <IconExternalLink size={13} />
         </button>
       {:else}
-        <div class="empty-state"><strong>{t("content-select-entry")}</strong><span>{t("content-select-description")}</span></div>
+        <EmptyState title={t("content-select-entry")} description={t("content-select-description")} />
       {/if}
     </aside>
   </div>
@@ -629,11 +620,10 @@
 {/if}
 
 <style>
-  .page-main, .detail-header, .route, .quality-card strong, .detail-actions, .primary-action, .secondary-action, .form-error, .form-actions, .form-actions button { display: flex; align-items: center; }
+  .page-main, .detail-header, .route, .quality-card strong, .detail-actions, .primary-action, .secondary-action, .form-actions { display: flex; align-items: center; }
   .workspace-header > dl div.warning { border-color: color-mix(in srgb, var(--wb-warning) 45%, var(--wb-border-subtle)); }
   dt, .detail-kicker { color: var(--wb-text-muted); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
   dd { margin: 3px 0 0; color: var(--text-strong); font-size: 15px; font-weight: 650; }
-  form input, form select { height: 28px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--material-inset); box-shadow: var(--shadow-inset); font-size: 12px; }
   .workspace-body { display: grid; grid-template-columns: minmax(390px, 1fr) minmax(300px, .58fr); min-width: 0; min-height: 0; }
   .content-list { display: grid; grid-template-rows: 28px minmax(0, 1fr); min-width: 0; min-height: 0; border-right: 1px solid var(--wb-border-subtle); }
   .column-head, .page-list > button { display: grid; grid-template-columns: minmax(180px, 1fr) 78px minmax(110px, .7fr); gap: 9px; align-items: center; }
@@ -661,22 +651,14 @@
   .detail-header span { color: var(--wb-accent-strong); font-size: 12px; font-weight: 800; text-transform: uppercase; }
   .detail-header h2 { margin: 0; color: var(--text-strong); font-size: 19px; }
   .detail-header p { margin: 2px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.45; }
-  .detail-header button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-muted); background: var(--wb-surface-document); }
   form { display: grid; gap: 11px; padding-top: 14px; }
-  form label { display: grid; gap: 5px; color: var(--wb-text-muted); font-size: 12px; font-weight: 700; }
-  form input, form select { width: 100%; height: 34px; padding: 0 8px; }
-  form small { margin: 0; color: var(--wb-text-muted); font-size: 12px; font-weight: 500; line-height: 1.4; }
-  .form-error { align-items: flex-start; gap: 5px; margin: 9px 0 0; padding: 8px; border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--wb-border-subtle)); border-radius: 6px; color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--wb-surface-document)); font-size: 12px; }
   .form-actions { justify-content: flex-end; gap: 7px; }
-  .form-actions button, .primary-action, .secondary-action { justify-content: center; gap: 5px; min-height: 32px; padding: 0 10px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; font-weight: 600; }
-  .form-actions .primary, .primary-action { border-color: var(--wb-accent); color: #fff; background: var(--wb-accent); }
+  .primary-action, .secondary-action { justify-content: center; }
   .detail-actions { align-items: stretch; gap: 7px; margin-top: 10px; }
   .detail-actions .primary-action, .detail-actions .secondary-action { flex: 1; }
   .detail-panel > .secondary-action { width: 100%; margin-top: 7px; }
   .metadata-editor { min-width: 0; margin-top: 10px; }
-  .page-settings-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 3px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--material-inset); }
-  .page-settings-tabs button { display: flex; min-width: 0; min-height: 28px; align-items: center; justify-content: center; gap: 4px; padding: 0 5px; border: 1px solid transparent; border-radius: 5px; color: var(--wb-text-muted); background: transparent; font-size: 11px; font-weight: 700; }
-  .page-settings-tabs button.active { border-color: var(--wb-border-subtle); color: var(--wb-accent-strong); background: var(--wb-surface-document); box-shadow: var(--shadow-control); }
+  .page-settings-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .metadata-editor :global(.page-settings-panel) { padding: 0; border: 0; background: transparent; }
   .metadata-editor :global(.page-file-chip) { background: var(--wb-surface-document); }
   .metadata-editor :global(.metadata-group) { border-color: var(--wb-border-subtle); background: var(--wb-surface-document); }
@@ -689,11 +671,6 @@
   .editor-diagnostic strong, .settings-diagnostic strong { color: var(--text-strong); }
   .editor-diagnostic span, .settings-diagnostic span { max-width: 560px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
   .settings-diagnostic { height: auto; min-height: 180px; }
-  .empty-state { display: flex; min-height: 180px; align-items: center; justify-content: center; flex-direction: column; gap: 6px; padding: 22px; color: var(--wb-text-muted); text-align: center; font-size: 12px; }
-  .empty-state strong { color: var(--text-strong); font-size: 12px; }
-  button:not(:disabled) { cursor: pointer; }
-  button:disabled { cursor: default; opacity: .55; }
-  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   @media (max-width: 900px) { .workspace-body { grid-template-columns: 1fr; } .detail-panel { display: none; } .content-list { border-right: 0; } .content-page-workspace { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 1fr) minmax(220px, auto); overflow: auto; } .content-settings-panel { max-height: 440px; } }
 </style>

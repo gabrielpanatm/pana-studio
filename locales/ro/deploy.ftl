@@ -1,21 +1,16 @@
 deploy-config-load-error = Eroare la încărcarea configurației: { $error }
 deploy-config-saving = Se salvează configurația…
-deploy-config-saved = Setările proiectului au fost salvate.
 deploy-config-error = Eroare de configurare: { $error }
 deploy-config-dirty-status = Setări modificate — folosește Salvează configurația.
 deploy-build-running-status = Se construiește proiectul cu Zola…
 deploy-build-complete = Construirea Zola s-a încheiat.
 deploy-build-error = Eroare la construire: { $error }
-deploy-cancel-no-session = Operația nu poate fi anulată fără identitatea sesiunii proiectului.
 deploy-cancel-log = Anulare solicitată pentru { $kind } ({ $operation }).
 deploy-cancel-requested = Anularea operației de publicare a fost solicitată.
 deploy-cancel-failed = Anularea publicării a eșuat: { $error }
 deploy-open-folder = Deschide un dosar pentru configurarea proiectului.
 deploy-config-loading = Se încarcă configurația…
-deploy-unsaved = Modificări nesalvate
-deploy-synchronized = Configurație sincronizată
 deploy-save-config = Salvează configurația
-deploy-save-before-build = Salvează configurația înainte de construire
 deploy-build-title = Construiește proiectul cu Zola
 deploy-building = Se construiește…
 deploy-build = Construiește
@@ -58,4 +53,3 @@ deploy-search-date = Dată
 deploy-search-path = Cale
 deploy-search-content = Conținut
 deploy-complete-placeholder = gol = complet
-deploy-build-zola = Construire Zola

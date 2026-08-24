@@ -58,9 +58,6 @@ function teraPaletteItemValue(value: unknown): TeraPaletteItem | null {
     target: typeof data.target === "string" ? data.target : undefined,
     name: typeof data.name === "string" ? data.name : undefined,
     expression: typeof data.expression === "string" ? data.expression : undefined,
-    dynamicBinding: typeof data.dynamicBinding === "object" && data.dynamicBinding !== null
-      ? data.dynamicBinding as TeraPaletteItem["dynamicBinding"]
-      : undefined,
     dynamicWidget: typeof data.dynamicWidget === "object" && data.dynamicWidget !== null
       ? data.dynamicWidget as TeraPaletteItem["dynamicWidget"]
       : undefined,

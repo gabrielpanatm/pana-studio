@@ -79,3 +79,35 @@ test("coada per sesiune păstrează o singură cerere pending și propagă topol
   assert.equal(host.scannedProject.workspaceRevision, 4);
   assert.equal(scanCalls, 2);
 });
+
+test("o citire SourceGraph înlocuită de una mai nouă este superseded, nu degradată", async () => {
+  let monitoringStarts = 0;
+  const host = {
+    sessionProjectRoot: "/project",
+    kernelProjectSessionId: "session:runtime",
+    projectWorkspaceSnapshot: { revision: 5 },
+    scannedProject: null,
+    diskState: {},
+    activeScannedPath: null,
+    scssVariables: [],
+    async refreshSourceGraph() {
+      return false;
+    },
+    startExternalDiskMonitoring() {
+      monitoringStarts += 1;
+    },
+  };
+
+  const outcome = await reconcileWorkspaceDerivedState(host, {
+    expectedProjectRoot: "/project",
+    expectedSessionId: "session:runtime",
+    expectedWorkspaceRevision: 5,
+    topologyChanged: false,
+    refreshSourceGraph: true,
+    refreshScss: false,
+  });
+
+  assert.equal(outcome.sourceGraph, "superseded");
+  assert.deepEqual(outcome.warnings, []);
+  assert.equal(monitoringStarts, 1);
+});

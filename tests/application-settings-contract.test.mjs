@@ -18,11 +18,11 @@ test("Setările sunt o suprafață globală, nu o activitate a proiectului", () 
   assert.match(types, /ApplicationSurface = "workbench" \| "settings"/);
   assert.doesNotMatch(
     types.slice(types.indexOf("export type WorkbenchActivity"), types.indexOf("export type WorkbenchSurface")),
-    /settings/,
+    /\| "settings"/,
   );
-  assert.doesNotMatch(
+  assert.match(
     rustWorkbench.slice(rustWorkbench.indexOf("pub enum WorkbenchActivity"), rustWorkbench.indexOf("pub enum WorkbenchSurface")),
-    /Settings/,
+    /ProjectSettings/,
   );
   assert.match(center, /retainedAuxiliarySurface === "settings"[\s\S]*<SettingsWorkspace/);
   assert.match(
@@ -31,9 +31,9 @@ test("Setările sunt o suprafață globală, nu o activitate a proiectului", () 
   );
   assert.match(startup, /onclick=\{openApplicationSettings\}/);
   assert.doesNotMatch(startup, /AppState|app\./);
-  assert.match(rail, /settingsActive/);
-  assert.match(rail, /aria-current=\{settingsActive \? "page"/);
-  assert.doesNotMatch(rail, /settingsOpen|toggleSettings/);
+  assert.match(rail, /applicationSettingsActive/);
+  assert.match(rail, /technicalActivities[\s\S]*project_settings/);
+  assert.doesNotMatch(rail, /openSettings|toggleSettings/);
 });
 
 test("vechiul panou suprapus este eliminat, iar pagina nu conține configurări ale site-ului", () => {

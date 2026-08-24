@@ -265,12 +265,18 @@ impl SourceChangeSet {
     /// it is about to reconcile. This is deliberately stronger than checking
     /// lengths: the untouched spans must also be byte-for-byte identical.
     pub(crate) fn require_sources(&self, before: &str, after: &str) -> Result<(), String> {
-        if self.base_revision != source_text_revision(before)
-            || self.result_revision != source_text_revision(after)
-        {
+        let actual_base_revision = source_text_revision(before);
+        let actual_result_revision = source_text_revision(after);
+        if self.base_revision != actual_base_revision {
             return Err(format!(
-                "SourceChangeSet a refuzat revizii stale pentru {}.",
-                self.file
+                "SourceChangeSet a refuzat revizia de bază stale pentru {} (așteptată {}, actuală {}).",
+                self.file, self.base_revision, actual_base_revision
+            ));
+        }
+        if self.result_revision != actual_result_revision {
+            return Err(format!(
+                "SourceChangeSet a refuzat revizia rezultatului stale pentru {} (așteptată {}, actuală {}).",
+                self.file, self.result_revision, actual_result_revision
             ));
         }
 

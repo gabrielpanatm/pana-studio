@@ -20,8 +20,21 @@ import type {
   ProjectFile,
   ProjectScan,
 } from "$lib/project/lifecycle-contract";
+import {
+  coordinateTemplateWorkbenchProjection,
+  type ProjectWorkspacePreviewProjectionOutcome,
+} from "$lib/kernel/project-workspace-preview-coordinator";
 import type { ProjectBootstrapInitialSurface } from "$lib/project/lifecycle-contract";
 import { t } from "$lib/i18n/runtime.svelte";
+
+type TemplateWorkbenchUpdateOptions = {
+  deferPreviewRefresh?: boolean;
+  expectedWorkspaceRevision?: number;
+  minimumWorkspaceRevision?: number;
+  preferredRoute?: string | null;
+  strict?: boolean;
+  bindToActiveDocument?: boolean;
+};
 
 export type TemplateWorkbenchServiceDependencies = Readonly<{
   project: ProjectSessionState;
@@ -29,6 +42,9 @@ export type TemplateWorkbenchServiceDependencies = Readonly<{
   preview: PreviewWorkspaceState;
   selection: SelectionWorkspaceState;
   status: GlobalStatusState;
+  joinProjection?: (
+    workspaceRevision: number,
+  ) => Promise<ProjectWorkspacePreviewProjectionOutcome> | null;
 }>;
 
 /** Owns the canonical Template Workbench context and its Canvas route. */
@@ -91,17 +107,82 @@ export class TemplateWorkbenchService {
     };
   }
 
-  update(
+  async update(
     project: ProjectScan,
     templateFile: ProjectFile,
     preferredPagePath: string | null = null,
-    options: {
-      deferPreviewRefresh?: boolean;
-      expectedWorkspaceRevision?: number;
-      minimumWorkspaceRevision?: number;
-      preferredRoute?: string | null;
-      strict?: boolean;
-    } = {},
+    options: TemplateWorkbenchUpdateOptions = {},
+  ) {
+    const revision = this.dependencies.project.workspace?.revision;
+    if (revision !== undefined) {
+      if (await this.reuseCanonicalPresentation(
+        templateFile,
+        revision,
+        preferredPagePath,
+        options.preferredRoute,
+      )) {
+        return this.selectedPage(project);
+      }
+      const joined = this.dependencies.joinProjection?.(revision) ?? null;
+      if (joined) {
+        const outcome = await joined;
+        if (
+          (outcome.status === "published" || outcome.status === "already_current")
+          && await this.reuseCanonicalPresentation(
+            templateFile,
+            revision,
+            preferredPagePath,
+            options.preferredRoute,
+          )
+        ) {
+          return this.selectedPage(project);
+        }
+      }
+    }
+    return coordinateTemplateWorkbenchProjection(() => this.updateUncoordinated(
+      project,
+      templateFile,
+      preferredPagePath,
+      options,
+    ));
+  }
+
+  private async reuseCanonicalPresentation(
+    templateFile: ProjectFile,
+    revision: number,
+    preferredPagePath: string | null,
+    preferredRoute: string | null | undefined,
+  ) {
+    const { preview } = this.dependencies;
+    const identity = preview.activeIdentity;
+    if (
+      !identity
+      || !this.projectionMatchesRequest(
+        templateFile,
+        revision,
+        preferredPagePath,
+        preferredRoute,
+      )
+      || !preview.canReuseCanonicalWorkbenchSurface(identity, preview.src)
+    ) return false;
+    try {
+      // The canonical document may be unchanged while activeScannedPath moved
+      // through a CSS source. Rebind Rust navigation to the newly active
+      // template before Canvas Interaction is allowed to reuse the surface.
+      await this.synchronizeRoute(preview.src, identity);
+      return true;
+    } catch {
+      // A retained identity without a confirmed navigation projection is not
+      // reusable. Fall through to the authoritative Workbench reconciliation.
+      return false;
+    }
+  }
+
+  private updateUncoordinated(
+    project: ProjectScan,
+    templateFile: ProjectFile,
+    preferredPagePath: string | null,
+    options: TemplateWorkbenchUpdateOptions,
   ) {
     return updateTemplateWorkbenchContext(
       this.host(),
@@ -110,6 +191,33 @@ export class TemplateWorkbenchService {
       preferredPagePath,
       options,
     );
+  }
+
+  private projectionMatchesRequest(
+    templateFile: ProjectFile,
+    revision: number,
+    preferredPagePath: string | null,
+    preferredRoute: string | null | undefined,
+  ) {
+    const { project, documents, preview } = this.dependencies;
+    const normalized = (value: string | null | undefined) => (
+      value?.trim().replaceAll("\\", "/").replace(/^\.\/+/, "") ?? ""
+    );
+    return documents.templateActive
+      && documents.templateTarget === templateFile.relativePath
+      && documents.templatePlan?.activeTemplate.file === templateFile.relativePath
+      && normalized(documents.templatePreferredPagePath) === normalized(preferredPagePath)
+      && normalized(documents.templatePreferredRoute) === normalized(preferredRoute)
+      && preview.activeIdentity?.projectRoot === project.root
+      && preview.activeIdentity?.runtimeSessionId === project.runtimeSessionId
+      && preview.activeIdentity?.workspaceRevision === revision;
+  }
+
+  private selectedPage(project: ProjectScan) {
+    const selectedPath = this.dependencies.documents.templatePlan?.selectedContext?.pageFile;
+    return selectedPath
+      ? project.files.find((file) => file.role === "page" && file.relativePath === selectedPath) ?? null
+      : null;
   }
 
   synchronizeRoute(previewSrc: string, expectedIdentity?: CanvasProjectionIdentity) {
@@ -138,10 +246,10 @@ export class TemplateWorkbenchService {
         (file) => file.relativePath === target && file.role === "template",
       ) ?? null
       : null;
-    if (!project.project || !templateFile || documents.activeScannedPath !== target) {
+    if (!project.project || !templateFile) {
       throw new Error(t("workbench-template-context-missing"));
     }
-    await this.update(
+    await this.updateUncoordinated(
       project.project,
       templateFile,
       documents.templatePreferredPagePath,
@@ -150,6 +258,7 @@ export class TemplateWorkbenchService {
         minimumWorkspaceRevision,
         preferredRoute: documents.templatePreferredRoute,
         strict: true,
+        bindToActiveDocument: false,
       },
     );
     return documents.templateActive

@@ -5,6 +5,7 @@ import {
   exitTemplateWorkbench,
   updateTemplateWorkbenchContext,
 } from "$lib/state/project-template-workbench-controller";
+import { TemplateWorkbenchService } from "$lib/project/template-workbench-service";
 import { loadScannedProjectFile } from "$lib/state/project-document-controller";
 
 if (!globalThis.window) globalThis.window = globalThis;
@@ -880,6 +881,183 @@ test("a late Workbench result has zero UI effects after the selected source chan
   assert.equal(host.templateWorkbenchTarget, null);
   assert.equal(host.previewSrc, "http://127.0.0.1:41000/");
   assert.deepEqual(statuses, []);
+});
+
+test("a background Workbench projection remains valid while the active document is SCSS", async () => {
+  const { host, template } = workbenchHost();
+  host.templateWorkbenchActive = true;
+  host.templateWorkbenchTarget = template.relativePath;
+  host.activePreviewPath = template.relativePath;
+  host.activeScannedPath = "sass/css-framework/_componente.scss";
+  host.projectWorkspaceSnapshot = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    revision: 9,
+  };
+  host.scannedProject.files.push(styleFile(host.activeScannedPath));
+  mockIPC((command, payload) => {
+    if (command === "read_project_workspace_state") {
+      return {
+        projectRoot: "/project-a",
+        runtimeSessionId: "session-a:runtime-1",
+        revision: 9,
+      };
+    }
+    assert.equal(command, "project_template_workbench_preview");
+    const projected = receipt(payload.input);
+    return {
+      ...projected,
+      canvasProjection: { ...projected.canvasProjection, phase: "prepared" },
+    };
+  });
+
+  await updateTemplateWorkbenchContext(host, host.scannedProject, template, null, {
+    bindToActiveDocument: false,
+    expectedWorkspaceRevision: 9,
+    strict: true,
+  });
+
+  assert.equal(host.activeScannedPath, "sass/css-framework/_componente.scss");
+  assert.equal(host.templateWorkbenchActive, true);
+  assert.equal(host.templateWorkbenchTarget, template.relativePath);
+  assert.equal(host.templateWorkbenchPlan.activeTemplate.file, template.relativePath);
+  assert.equal(host.activeCanvasIdentity.workspaceRevision, 9);
+});
+
+test("reactivating an exact canonical template refreshes navigation without reprojecting it", async () => {
+  const template = templateFile("templates/index.html");
+  const project = {
+    root: "/project-a",
+    files: [template],
+  };
+  const canonical = receipt({
+    expectedProjectRoot: "/project-a",
+    expectedSessionId: "session-a:runtime-1",
+    expectedWorkspaceRevision: 11,
+    templatePath: template.relativePath,
+  });
+  let joinCalls = 0;
+  let navigationRefreshes = 0;
+  mockIPC((command) => {
+    throw new Error(`Nu trebuia emis IPC Template pentru contextul canonic: ${command}`);
+  });
+  const service = new TemplateWorkbenchService({
+    project: {
+      root: "/project-a",
+      runtimeSessionId: "session-a:runtime-1",
+      workspace: { revision: 11 },
+      project,
+    },
+    documents: {
+      templateActive: true,
+      templateTarget: template.relativePath,
+      templatePlan: canonical.plan,
+      templatePreferredPagePath: null,
+      templatePreferredRoute: null,
+    },
+    preview: {
+      activeIdentity: canonical.canvasProjection.identity,
+      activeUrl: canonical.previewUrl,
+      src: canonical.previewUrl,
+      canReuseCanonicalWorkbenchSurface(identity, url) {
+        return identity === canonical.canvasProjection.identity && url === canonical.previewUrl;
+      },
+    },
+    selection: {
+      session: {
+        async refreshNavigationSnapshot(identity, url, options) {
+          navigationRefreshes += 1;
+          assert.equal(identity, canonical.canvasProjection.identity);
+          assert.equal(url, canonical.previewUrl);
+          assert.equal(options.strict, true);
+        },
+      },
+    },
+    status: {},
+    joinProjection() {
+      joinCalls += 1;
+      return null;
+    },
+  });
+
+  const selected = await service.update(project, template);
+
+  assert.equal(selected, null);
+  assert.equal(joinCalls, 0);
+  assert.equal(navigationRefreshes, 1);
+});
+
+test("canonical metadata without a reusable Canvas surface falls back to Workbench reconciliation", async () => {
+  const template = templateFile("templates/index.html");
+  const projectScan = { root: "/project-a", files: [template] };
+  const canonical = receipt({
+    expectedProjectRoot: "/project-a",
+    expectedSessionId: "session-a:runtime-1",
+    expectedWorkspaceRevision: 12,
+    templatePath: template.relativePath,
+  });
+  let projections = 0;
+  let refreshes = 0;
+  let navigationRefreshes = 0;
+  mockIPC((command, payload) => {
+    assert.equal(command, "project_template_workbench_preview");
+    projections += 1;
+    return receipt(payload.input);
+  });
+  const project = {
+    root: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    epoch: 1,
+    workspaceMutationEpoch: 0,
+    workspace: {
+      projectRoot: "/project-a",
+      runtimeSessionId: "session-a:runtime-1",
+      revision: 12,
+    },
+    project: projectScan,
+    lifecycle: undefined,
+  };
+  const documents = {
+    activeScannedPath: template.relativePath,
+    activePreviewPath: template.relativePath,
+    browserPreviewRoute: canonical.route,
+    templateActive: true,
+    templateTarget: template.relativePath,
+    templatePlan: canonical.plan,
+    templatePreferredPagePath: null,
+    templatePreferredRoute: null,
+    templateRequestSerial: 0,
+    templateReturnPreviewPath: null,
+    templateReuseToken: null,
+    templatePublicationStatus: "materialized",
+  };
+  const preview = {
+    activeIdentity: canonical.canvasProjection.identity,
+    activeUrl: canonical.previewUrl,
+    src: canonical.previewUrl,
+    documentMarkup: null,
+    canReuseCanonicalWorkbenchSurface() { return false; },
+    async reconcileWorkbenchDocument() { return true; },
+    async refreshDocument() { refreshes += 1; return true; },
+  };
+  const service = new TemplateWorkbenchService({
+    project,
+    documents,
+    preview,
+    selection: {
+      session: {
+        async refreshNavigationSnapshot() { navigationRefreshes += 1; },
+      },
+    },
+    status: { set() {} },
+  });
+
+  await service.update(projectScan, template);
+
+  assert.equal(projections, 1);
+  assert.equal(refreshes, 1);
+  assert.equal(navigationRefreshes, 1);
+  assert.equal(documents.templateRequestSerial, 1);
 });
 
 test("a staged Workbench revision is reconciled in place before it becomes canonical", async () => {

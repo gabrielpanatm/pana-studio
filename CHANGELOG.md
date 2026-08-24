@@ -5,6 +5,41 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-08-24
+
+### Added
+
+- meniu de aplicație integrat în toolbar-ul principal, setări de proiect Zola
+  dedicate și politici explicite pentru suprafețele HTML și non-HTML;
+- controale globale reutilizabile pentru formulare, selectoare, checkbox-uri,
+  switch-uri, mesaje, stări goale și acțiuni compacte, plus fonturile locale
+  Inter, Urbanist și JetBrains Mono;
+- coordonator tranzacțional pentru sesiunile de editare CSS și teste de regresie
+  pentru autoritate, reconciliere, selecție și schimbarea documentelor.
+
+### Changed
+
+- activitatea separată Blocuri a fost eliminată; blocurile native se inserează
+  exclusiv din catalogul „Adaugă element” în Canvas;
+- documentele HTML păstrează Straturi, Vizual și Cod, iar sursele non-HTML
+  deschid direct Fișiere și oferă numai editorul de cod;
+- bara nativă afișează proiectul curent, acțiunile tehnice sunt grupate în partea
+  inferioară a activităților, iar controalele Inspectorului folosesc același
+  limbaj vizual global;
+- inserarea Tera/HTML și proiecțiile Workbench folosesc reviziile confirmate de
+  Rust, fără motoare paralele sau fallback-uri legacy.
+
+### Fixed
+
+- editările CSS live nu mai pornesc selecții concurente, nu mai emit receipt-uri
+  de sesiune invalide și nu mai afișează erori tranzitorii la schimbarea tabului;
+- mutările și inserările structurale HTML/blocuri reconciliază exact modelul,
+  Canvas-ul, Straturile și revizia ProjectWorkspace;
+- proiectele nou deschise restaurează Canvas-ul, selecția și navigația semantică,
+  iar schimbările între documente nu mai lasă preview-ul inactiv;
+- greutățile și culorile bazate pe variabile SCSS sunt rezolvate corect, iar
+  controalele compacte, scroll-ul Motion și setările proiectului rămân stabile.
+
 ## [0.1.8] - 2026-08-23
 
 ### Added

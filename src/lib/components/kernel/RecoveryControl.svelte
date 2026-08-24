@@ -189,7 +189,7 @@
         <span>{loading ? t("project-recovery-scanning") : summary.detail}</span>
       </div>
     </div>
-    <button type="button" title={t("project-recovery-refresh")} disabled={loading || busyId !== null} onclick={() => void refresh()}>
+    <button class="ui-icon-button toolbar" type="button" title={t("project-recovery-refresh")} aria-label={t("project-recovery-refresh")} disabled={loading || busyId !== null} onclick={() => void refresh()}>
       <IconRefresh size={15} stroke={1.9} />
     </button>
   </header>
@@ -269,7 +269,6 @@
   .scan-meta,
   .families span,
   .families small { color: var(--text-muted); font-size: 12px; }
-  .toolbar button { width: 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
   .scan-meta { display: flex; flex-wrap: wrap; gap: 12px; }
   .families { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
   .families article { display: grid; gap: 4px; padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }

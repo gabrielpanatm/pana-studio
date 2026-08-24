@@ -7,19 +7,27 @@ function document() {
     documentId: "document:index",
     relativePath: "templates/index.html",
     title: "index.html",
+    presentation: "html",
     surface: "visual",
     pinned: true,
   };
 }
 
-function otherDocument(relativePath, surface = "code") {
+function otherDocument(relativePath, surface = "code", presentation = "code_only") {
   return {
     documentId: `document:${relativePath}`,
     relativePath,
     title: relativePath.split("/").at(-1),
+    presentation,
     surface,
     pinned: true,
   };
+}
+
+function activationReceipt(selected) {
+  const next = snapshot("primary", selected.documentId);
+  next.groups[0].documents = [selected];
+  return { snapshot: next };
 }
 
 function deferred() {
@@ -104,6 +112,34 @@ test("activarea din alt grup păstrează fluxul canonic de document", async () =
   assert.deepEqual(loadOptions, [{ syncWorkbench: false }]);
 });
 
+test("receipt-ul Rust înlocuiește suprafața stale înainte de încărcare", async () => {
+  const calls = [];
+  const requested = otherDocument("sass/site.scss", "visual", "html");
+  const normalized = otherDocument("sass/site.scss", "code", "code_only");
+  const service = new WorkbenchDocumentNavigationService({
+    currentSnapshot: () => snapshot("secondary"),
+    async resolveProjectFile(relativePath) {
+      calls.push(`resolve:${relativePath}`);
+      return { relativePath, role: "style" };
+    },
+    async loadProjectFile(file) { calls.push(`load:${file.relativePath}`); },
+    async applyIntent() {
+      calls.push("intent");
+      return activationReceipt(normalized);
+    },
+    async setCenterView(view) { calls.push(`surface:${view}`); },
+  }, { set() {} });
+
+  await service.activate("secondary", requested);
+
+  assert.deepEqual(calls, [
+    "intent",
+    "resolve:sass/site.scss",
+    "load:sass/site.scss",
+    "surface:code",
+  ]);
+});
+
 test("activările sincrone sunt coalescate și numai ultimul document ajunge în Rust", async () => {
   const calls = [];
   const first = otherDocument("sass/first.scss");
@@ -116,7 +152,10 @@ test("activările sincrone sunt coalescate și numai ultimul document ajunge în
       return { relativePath, role: "style" };
     },
     async loadProjectFile(file) { calls.push(`load:${file.relativePath}`); },
-    async applyIntent(intent) { calls.push(`intent:${intent.documentId}`); return {}; },
+    async applyIntent(intent) {
+      calls.push(`intent:${intent.documentId}`);
+      return activationReceipt(intent.documentId === latest.documentId ? latest : first);
+    },
     async setCenterView(view) { calls.push(`surface:${view}`); },
     beginDocumentActivation(serial, selected) {
       activation = { serial, path: selected.relativePath, phase: "applying" };
@@ -157,7 +196,7 @@ test("un receipt de activare întârziat nu mai pornește încărcarea documentu
     async applyIntent(intent) {
       calls.push(`intent:${intent.documentId}`);
       intents += 1;
-      return intents === 1 ? firstIntent.promise : {};
+      return intents === 1 ? firstIntent.promise : activationReceipt(latest);
     },
     async setCenterView(view) { calls.push(`surface:${view}`); },
   }, { set() {} });
@@ -165,7 +204,7 @@ test("un receipt de activare întârziat nu mai pornește încărcarea documentu
   const stale = service.activate("primary", first);
   await nextTurn();
   const current = service.activate("primary", latest);
-  firstIntent.resolve({});
+  firstIntent.resolve(activationReceipt(first));
   await Promise.all([stale, current]);
 
   assert.deepEqual(calls, [
@@ -180,7 +219,7 @@ test("un receipt de activare întârziat nu mai pornește încărcarea documentu
 test("o încărcare stale deja pornită nu mai poate schimba suprafața finală", async () => {
   const calls = [];
   const firstLoad = deferred();
-  const first = otherDocument("templates/first.html", "visual");
+  const first = otherDocument("templates/first.html", "visual", "html");
   const latest = otherDocument("sass/latest.scss", "code");
   const service = new WorkbenchDocumentNavigationService({
     currentSnapshot: () => snapshot("secondary"),
@@ -195,7 +234,10 @@ test("o încărcare stale deja pornită nu mai poate schimba suprafața finală"
       calls.push(`load:${file.relativePath}`);
       if (file.relativePath === first.relativePath) await firstLoad.promise;
     },
-    async applyIntent(intent) { calls.push(`intent:${intent.documentId}`); return {}; },
+    async applyIntent(intent) {
+      calls.push(`intent:${intent.documentId}`);
+      return activationReceipt(intent.documentId === latest.documentId ? latest : first);
+    },
     async setCenterView(view) { calls.push(`surface:${view}`); },
     currentTemplateCacheOutcome: () => "reused",
   }, { set() {} });

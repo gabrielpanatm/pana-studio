@@ -202,7 +202,7 @@ export function createApplicationComposition({
         activeRelativePath: documents.activeScannedPath,
       }),
       refreshWorkbench: () => workbench.refresh(),
-      acceptWorkbench: (snapshot) => { workbench.snapshot = snapshot; },
+      acceptWorkbench: (snapshot) => { workbench.acceptSnapshot(snapshot); },
       loadProjectFile: (file, options) => projectDocuments.load(file, options),
       settleMutation: (mutation, options) => workspaceAuthority.settle(mutation, options),
       setStatus: (text, kind) => globalStatus.set(text, kind),
@@ -230,12 +230,32 @@ export function createApplicationComposition({
         project: projectSession.project,
         activeRelativePath: documents.activeScannedPath,
         centerView: shell.centerView,
-        canvasSurfaceResumeRequired: previewSurface.resumeRequired,
-        canvasSurfaceMounted: previewWorkspace.hasMountedSurface(),
       }),
       flushDrafts: (reason) => flushWorkspaceMutationInputs(reason),
       loadProjectFile: (file, options) => projectDocuments.load(file, options),
       setCenterView: (view) => { shell.centerView = view; },
+      projectActiveDocument: (document, previous) => {
+        if (!document) return;
+        const changed = document.documentId !== previous?.documentId
+          || document.presentation !== previous?.presentation
+          || document.surface !== previous?.surface;
+        if (!changed) return;
+        shell.centerView = document.presentation === "code_only"
+          ? "code"
+          : document.surface === "code"
+            ? "code"
+            : "preview";
+        if (
+          document.presentation === "code_only"
+          && (
+            document.documentId !== previous?.documentId
+            || previous?.presentation !== "code_only"
+          )
+        ) {
+          editorSelection.clear({ clearCanvasOverlay: true });
+          selectionWorkspace.session.reset();
+        }
+      },
       synchronizeTerminalPane: (open) => terminal.synchronizePaneOpen(open),
       clearStatus: (id) => globalStatus.clear(id),
       escalateStatus: (request) => globalStatus.escalate(request),
@@ -275,7 +295,6 @@ export function createApplicationComposition({
         browserPreviewRoute: documents.browserPreviewRoute,
         previewSrc: previewWorkspace.src,
         workspace: projectSession.workspace,
-        targetCssFile: cssAuthoring.targetFile,
         sourceGraph: analysis.sourceGraph,
       }),
       applySelectionState: (observation) => editorSelection.apply(observation),
@@ -328,7 +347,7 @@ export function createApplicationComposition({
         activeScannedPath: documents.activeScannedPath,
         activeVersionPreview: versionPreview.active,
       }),
-      setStatus: (text, kind) => globalStatus.set(text, kind),
+      setStatus: (text, kind, options) => globalStatus.set(text, kind, options),
       clearStatus: (id) => globalStatus.clear(id),
       reportCanvasDegraded: async (projectRoot, runtimeSessionId, diagnostic) => {
         const lifecycle = await reportProjectCapabilityDegraded(
@@ -380,6 +399,7 @@ export function createApplicationComposition({
       preview: previewWorkspace,
       selection: selectionWorkspace,
       status: globalStatus,
+      joinProjection: (revision) => workspaceAuthority?.joinProjection(revision) ?? null,
     });
     workspaceAuthority = new WorkspaceAuthorityService({
       session: {

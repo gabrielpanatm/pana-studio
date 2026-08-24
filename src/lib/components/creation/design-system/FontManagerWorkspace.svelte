@@ -64,15 +64,15 @@
 </script>
 
 {#snippet list()}
-  {#if state.error}<div class="workspace-state error" role="alert">{state.error}</div>
+  {#if state.error}<div class="ui-empty-state error" role="alert">{state.error}</div>
   {:else if controller.graph}
     <section class="font-role-overview" aria-label={t("design-font-roles-label")}><header><strong>{t("design-semantic-use")}</strong><small>{t("design-authoritative-scss")}</small></header><div>{#each controller.roles as role (role.id)}<span class:missing={!role.installed} title={role.diagnostic ?? role.value ?? ""}><small>{role.label}</small><strong>{role.family ?? t("design-role-missing", { variable: role.variableName })}</strong></span>{/each}</div></section>
     {#each controller.visibleFonts as family (family.id)}
       <button type="button" class="font-row ui-entity-selectable" data-ui-selected={controller.selectedFont?.id === family.id ? "true" : undefined} aria-pressed={controller.selectedFont?.id === family.id} onclick={() => controller.selectFont(family.id)}>
         <span class="resource-icon"><IconTypography size={16} stroke={1.8} /></span><div><strong>{family.family}</strong><small>{family.directories.join(", ") || family.faces[0]?.url || "—"}</small></div><span>{t("design-files-count", { count: family.files.length })}</span><span class="font-registration" class:missing={!family.registration.registered} title={family.registration.registered ? t("design-font-registered-in", { stylesheets: family.registration.stylesheets.join(", ") }) : t("design-font-unregistered-help")}>{family.delivery === "system" ? t("design-delivery-system") : family.origin === "bundled" ? t("design-origin-bundled") : family.origin === "local" ? t("design-origin-local") : family.origin === "theme" ? t("design-origin-theme") : t("design-origin-external")} · {family.registration.registered ? family.registration.managed ? t("design-font-managed") : t("design-font-registered") : t("design-font-unregistered")}</span>
       </button>
-    {:else}<div class="workspace-state">{t("design-empty-fonts")}</div>{/each}
-  {:else}<div class="workspace-state">{t("design-loading-fonts")}</div>{/if}
+    {:else}<div class="ui-empty-state">{t("design-empty-fonts")}</div>{/each}
+  {:else}<div class="ui-empty-state">{t("design-loading-fonts")}</div>{/if}
 {/snippet}
 
 {#snippet detail()}

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import {
+  CssMutationTransientError,
   createCssRequestIdentity,
   cssRequestIdentityMatches,
   getScssVariables,
@@ -77,6 +78,15 @@ function mutation(identity, overrides = {}) {
   };
 }
 
+function inspectorMutation(identity, overrides = {}) {
+  const receipt = mutation(identity, overrides);
+  return {
+    kind: receipt.authority.status === "noop" ? "noop" : "applied",
+    interactionId: null,
+    receipt,
+  };
+}
+
 test("CSS read receipt from another runtime is rejected", async () => {
   const identity = createCssRequestIdentity(projectRoot, runtimeA);
   mockIPC((command, args) => {
@@ -123,7 +133,7 @@ test("CSS mutation is staged in the captured ProjectWorkspace session", async ()
 
 test("CSS mutation rejects stale and internally inconsistent authority", async () => {
   const identity = createCssRequestIdentity(projectRoot, runtimeA);
-  mockIPC((_command, _args) => mutation(identity, { sessionId: runtimeB }));
+  mockIPC((_command, _args) => inspectorMutation(identity, { sessionId: runtimeB }));
   await assert.rejects(
     setCssRuleAtViewport({
       relativePath: "sass/site.scss",
@@ -164,7 +174,7 @@ test("Inspector CSS mutation forwards the captured semantic selection identity",
   mockIPC((command, args) => {
     assert.equal(command, "set_css_rule_at_viewport");
     assert.deepEqual(args.expectedSelection, expectedSelection);
-    return mutation(identity);
+    return inspectorMutation(identity);
   });
 
   await setCssRuleAtViewport({
@@ -174,6 +184,31 @@ test("Inspector CSS mutation forwards the captured semantic selection identity",
     viewport: "desktop",
     expectedSelection,
   }, identity);
+});
+
+test("Inspector CSS mutation exposes superseded coordination as a typed transient outcome", async () => {
+  const identity = createCssRequestIdentity(projectRoot, runtimeA);
+  mockIPC((_command, args) => ({
+    kind: "superseded",
+    interactionId: args.interactionId,
+    reason: "selection_anchor_superseded",
+    message: "selection changed",
+  }));
+
+  await assert.rejects(
+    setCssRuleAtViewport({
+      relativePath: "sass/site.scss",
+      selector: ".hero",
+      properties: { color: "red" },
+      viewport: "desktop",
+      interactionId: "css-edit:42",
+    }, identity),
+    (error) => (
+      error instanceof CssMutationTransientError
+      && error.outcome.kind === "superseded"
+      && error.outcome.reason === "selection_anchor_superseded"
+    ),
+  );
 });
 
 test("CSS inspector resolution is bound to one workspace and semantic selection revision", async () => {
@@ -248,10 +283,13 @@ test("CSS inspector resolution is bound to one workspace and semantic selection 
       identity,
     });
     return {
-      projectRoot,
-      runtimeSessionId: runtimeA,
-      workspaceRevision: 4,
-      payload: {
+      kind: "applied",
+      interactionId: null,
+      receipt: {
+        projectRoot,
+        runtimeSessionId: runtimeA,
+        workspaceRevision: 4,
+        payload: {
         schemaVersion: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
         selectionRevision: 17,
         selector: ".hero",
@@ -260,6 +298,7 @@ test("CSS inspector resolution is bound to one workspace and semantic selection 
         target,
         ruleContext,
         candidates: [{ file: "sass/site.scss", ruleContext }],
+        },
       },
     };
   });
@@ -276,10 +315,13 @@ test("CSS inspector resolution is bound to one workspace and semantic selection 
 
   clearMocks();
   mockIPC(() => ({
-    projectRoot,
-    runtimeSessionId: runtimeA,
-    workspaceRevision: 4,
-    payload: {
+    kind: "applied",
+    interactionId: null,
+    receipt: {
+      projectRoot,
+      runtimeSessionId: runtimeA,
+      workspaceRevision: 4,
+      payload: {
       schemaVersion: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
       selectionRevision: 18,
       selector: ".hero",
@@ -288,6 +330,7 @@ test("CSS inspector resolution is bound to one workspace and semantic selection 
       target,
       ruleContext,
       candidates: [{ file: "sass/site.scss", ruleContext }],
+      },
     },
   }));
   await assert.rejects(

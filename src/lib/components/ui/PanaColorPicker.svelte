@@ -6,6 +6,7 @@
   import { onMount, tick } from "svelte";
   import Color from "colorjs.io";
   import { IconColorPicker, IconCopy, IconX } from "@tabler/icons-svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { registerEditFlushHandler } from "$lib/session/edit-flush-registry";
   import { t } from "$lib/i18n/runtime.svelte";
   import {
@@ -62,6 +63,8 @@
   let format = $state<PickerFormat>("hex");
   let draggingArea = false;
   let session: ColorPickerEditSession | null = null;
+  let previewFrame: number | null = null;
+  let pendingPreviewValue: string | null = null;
   let canUseEyeDropper = $state(false);
 
   const safeValue = $derived(isPickerColorValue(value) ? value.trim() : "#000000");
@@ -109,6 +112,7 @@
     document.addEventListener("scroll", reposition, true);
 
     return () => {
+      discardPendingPreview();
       window.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("resize", reposition);
@@ -210,6 +214,7 @@
   function closePicker(shouldCommit: boolean) {
     if (!isOpen) return;
     if (shouldCommit) commitLatest();
+    else discardPendingPreview();
     isOpen = false;
     panelReady = false;
     draggingArea = false;
@@ -219,6 +224,7 @@
 
   function cancelPicker() {
     if (!isOpen) return;
+    discardPendingPreview();
     const restoredValue = session?.cancel() ?? safeValue;
     syncFromValue(restoredValue);
     oncancel?.(restoredValue);
@@ -258,10 +264,38 @@
 
   function previewCurrent() {
     if (!session) session = new ColorPickerEditSession(safeValue);
-    oninput?.(session.preview(serializedValue));
+    pendingPreviewValue = session.preview(serializedValue);
+    if (previewFrame !== null) return;
+    previewFrame = requestAnimationFrame(() => {
+      previewFrame = null;
+      emitPendingPreview();
+    });
+  }
+
+  function emitPendingPreview() {
+    const next = pendingPreviewValue;
+    pendingPreviewValue = null;
+    if (next !== null) oninput?.(next);
+  }
+
+  function flushPendingPreview() {
+    if (previewFrame !== null) {
+      cancelAnimationFrame(previewFrame);
+      previewFrame = null;
+    }
+    emitPendingPreview();
+  }
+
+  function discardPendingPreview() {
+    if (previewFrame !== null) {
+      cancelAnimationFrame(previewFrame);
+      previewFrame = null;
+    }
+    pendingPreviewValue = null;
   }
 
   function commitLatest() {
+    flushPendingPreview();
     const committed = session?.commit();
     if (committed !== null && committed !== undefined) oncommit?.(committed);
   }
@@ -331,8 +365,8 @@
     previewCurrent();
   }
 
-  function handleFormatChange(event: Event) {
-    format = (event.currentTarget as HTMLSelectElement).value as PickerFormat;
+  function handleFormatChange(value: string) {
+    format = value as PickerFormat;
     previewCurrent();
   }
 
@@ -391,7 +425,7 @@
   >
     <div class="popover-header">
       <strong>{t("inspector-color-title")}</strong>
-      <button class="ui-icon-button ui-close-button icon-button close-button" type="button" aria-label={t("inspector-close")} onclick={() => closePicker(true)}>
+      <button class="ui-icon-button ui-close-button" type="button" aria-label={t("inspector-close")} onclick={() => closePicker(true)}>
         <IconX size={16} stroke={1.9} />
       </button>
     </div>
@@ -484,20 +518,20 @@
     </div>
 
     <div class="value-row">
-      <select value={format} aria-label={t("inspector-color-format")} onchange={handleFormatChange}>
-        <option value="hex">HEX</option>
-        <option value="rgb">RGB</option>
-        <option value="hsl">HSL</option>
-        <option value="oklch">OKLCH</option>
-        <option value="display-p3">P3</option>
-      </select>
-      <input class="color-value" aria-label={t("inspector-color-value")} value={serializedValue} readonly />
+      <SelectControl size="toolbar" value={format} options={[
+        { value: "hex", label: "HEX" },
+        { value: "rgb", label: "RGB" },
+        { value: "hsl", label: "HSL" },
+        { value: "oklch", label: "OKLCH" },
+        { value: "display-p3", label: "P3" },
+      ]} ariaLabel={t("inspector-color-format")} onchange={handleFormatChange} />
+      <input class="ui-input compact color-value" aria-label={t("inspector-color-value")} value={serializedValue} readonly />
       {#if canUseEyeDropper}
-        <button class="icon-button" type="button" aria-label={t("inspector-color-pick-screen")} title={t("inspector-color-pick-screen-short")} onclick={pickFromScreen}>
+        <button class="ui-icon-button compact" type="button" aria-label={t("inspector-color-pick-screen")} title={t("inspector-color-pick-screen-short")} onclick={pickFromScreen}>
           <IconColorPicker size={14} stroke={1.9} />
         </button>
       {/if}
-      <button class="icon-button" type="button" aria-label={t("inspector-color-copy-value")} title={t("inspector-copy")} onclick={copyValue}>
+      <button class="ui-icon-button compact" type="button" aria-label={t("inspector-color-copy-value")} title={t("inspector-copy")} onclick={copyValue}>
         <IconCopy size={14} stroke={1.9} />
       </button>
     </div>
@@ -531,7 +565,7 @@
   }
 
   .picker-trigger:focus-visible,
-  .color-popover :is(button, input, select):focus-visible,
+  .color-popover :is(button, input):focus-visible,
   .color-area:focus-visible {
     outline: 2px solid var(--focus-ring, var(--brand));
     outline-offset: 1px;
@@ -575,7 +609,7 @@
     background: var(--surface-1);
     color: var(--text);
     box-shadow: var(--shadow-float, var(--shadow));
-    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-ui);
     font-size: 12px;
     visibility: hidden;
   }
@@ -595,36 +629,6 @@
   .popover-header strong {
     font-size: 12px;
     font-weight: 650;
-  }
-
-  .icon-button {
-    display: inline-grid;
-    flex: 0 0 28px;
-    width: 28px;
-    height: 28px;
-    place-items: center;
-    padding: 0;
-    border: 1px solid var(--border-3);
-    border-radius: var(--radius-control, 4px);
-    background: var(--surface-4);
-    color: var(--text-muted);
-    font: inherit;
-    cursor: pointer;
-  }
-
-  .icon-button:hover {
-    border-color: var(--border-4);
-    background: var(--control-hover);
-    color: var(--text);
-  }
-
-  .close-button {
-    width: 24px;
-    height: 24px;
-    flex-basis: 24px;
-    border-color: transparent;
-    background: transparent;
-    font-size: 18px;
   }
 
   .color-area {
@@ -764,8 +768,7 @@
   }
 
   .channel-grid input,
-  .color-value,
-  .value-row select {
+  .color-value {
     min-width: 0;
     height: 28px;
     border: 0;
@@ -787,8 +790,7 @@
   }
 
   .channel-grid input:focus,
-  .color-value:focus,
-  .value-row select:focus {
+  .color-value:focus {
     outline: 0;
   }
 
@@ -799,7 +801,6 @@
     margin-top: 10px;
   }
 
-  .value-row select,
   .color-value {
     box-sizing: border-box;
     height: 30px;
@@ -808,9 +809,7 @@
     background: var(--surface-2);
   }
 
-  .value-row select {
-    padding: 0 7px;
-  }
+  .value-row :global(.select-control-root) { width: 68px; }
 
   .color-value {
     padding: 0 8px;

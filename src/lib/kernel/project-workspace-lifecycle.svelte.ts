@@ -97,23 +97,33 @@ export class ProjectWorkspaceLifecycle {
         };
       },
 
-      // Restore Rust-owned Workbench navigation for the live ProjectSession.
+      // Mirror Rust-owned Workbench navigation only when bootstrap has not
+      // already hydrated the exact live ProjectSession. Document activation
+      // belongs to bootstrap and must not be replayed while Canvas confirms
+      // its initial projection.
       () => {
         const projectRoot = project.root;
         const sessionId = project.runtimeSessionId;
         if (!projectRoot || !sessionId) {
-          workbench.snapshot = null;
+          workbench.reset();
           return;
         }
+        if (workbench.isHydrated(sessionId)) return;
         let cancelled = false;
         const timer = window.setTimeout(() => {
-          void workbench.restore().catch((error) => {
+          if (
+            cancelled
+            || project.root !== projectRoot
+            || project.runtimeSessionId !== sessionId
+            || workbench.isHydrated(sessionId)
+          ) return;
+          void workbench.refresh().catch((error) => {
             if (cancelled) return;
-            workbench.snapshot = null;
+            workbench.acceptSnapshot(null);
             escalateStatus({
-              id: "workbench.restore",
+              id: "workbench.refresh",
               level: "warning",
-              title: t("workbench-restore-failed-title"),
+              title: t("workbench-refresh-failed-title"),
               message: error instanceof Error ? error.message : String(error),
             });
           });

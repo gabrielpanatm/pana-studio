@@ -13,7 +13,7 @@
   import InspectorSection from "../InspectorSection.svelte";
   import PropInput from "../controls/PropInput.svelte";
   import ColorInput from "../controls/ColorInput.svelte";
-  import SegmentedControl from "../controls/SegmentedControl.svelte";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
 
   let {
@@ -81,12 +81,13 @@
     property="border-color"
     value={getValue("border-color")}
     suggestions={variablesForProperty("border-color", scssVariables)}
+    resolutionVariables={scssVariables}
     {...edit.continuous("border-color")}
   />
 
   <div class="sub-header">
     <span class="row-label">{t("inspector-border-radius")}</span>
-    <button type="button" class="expand-btn" title={t("inspector-border-individual-corners")} onclick={() => (expandRadius = !expandRadius)}>
+    <button type="button" class="expand-btn ui-icon-button mini" class:active={expandRadius} aria-pressed={expandRadius} title={t("inspector-border-individual-corners")} onclick={() => (expandRadius = !expandRadius)}>
       <IconBorderRadius size={12} stroke={1.7} />
     </button>
   </div>
@@ -120,7 +121,7 @@
     </PropInput>
   {/if}
 
-  <div class="sub-header" style="margin-top:4px">
+  <div class="sub-header">
     <span class="row-label">{t("inspector-border-outline")}</span>
   </div>
   <PropInput label="O" value={getValue("outline")} placeholder="—" {...edit.continuous("outline")} />
@@ -132,6 +133,7 @@
     property="outline-color"
     value={getValue("outline-color")}
     suggestions={variablesForProperty("outline-color", scssVariables)}
+    resolutionVariables={scssVariables}
     {...edit.continuous("outline-color")}
   />
 </InspectorSection>
@@ -143,11 +145,4 @@
   min-width: 0; }
   .sub-header { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
   .conflict-note { color: var(--text-muted); font-size: 12px; line-height: 1.3; }
-  .expand-btn {
-    display: flex; align-items: center; justify-content: center;
-    width: 20px; height: 20px; padding: 0;
-    border: 1px solid var(--border-4); border-radius: 4px;
-    background: var(--surface-4); cursor: pointer; color: var(--text-muted);
-  }
-  .expand-btn:hover { border-color: var(--brand); color: var(--brand); }
 </style>

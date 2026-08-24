@@ -1,5 +1,6 @@
 import {
   CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+  type CssInspectorContextCommandOutcome,
   type CssInspectorContextResolution,
   type CssRuleContext,
   type CssViewport,
@@ -18,6 +19,7 @@ import {
   type ThemeStyleTargetSnapshot,
 } from "$lib/css/design-system-contract";
 import type {
+  CssMutationCommandOutcome,
   CssMutationCommandReceipt,
   PageCssWriteResult,
   ReusableCssWriteResult,
@@ -33,6 +35,46 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 
 export type CssRequestIdentity = FileBufferRequestIdentity;
+
+export class CssInspectorTransientReadError extends Error {
+  readonly outcome: Extract<CssInspectorContextCommandOutcome, {
+    kind: "superseded" | "retryableStale";
+  }>;
+
+  constructor(outcome: Extract<CssInspectorContextCommandOutcome, {
+    kind: "superseded" | "retryableStale";
+  }>) {
+    super(outcome.message);
+    this.name = "CssInspectorTransientReadError";
+    this.outcome = outcome;
+  }
+}
+
+export function isCssInspectorTransientReadError(
+  value: unknown,
+): value is CssInspectorTransientReadError {
+  return value instanceof CssInspectorTransientReadError;
+}
+
+export class CssMutationTransientError extends Error {
+  readonly outcome: Extract<CssMutationCommandOutcome<unknown>, {
+    kind: "superseded" | "retryableStale";
+  }>;
+
+  constructor(outcome: Extract<CssMutationCommandOutcome<unknown>, {
+    kind: "superseded" | "retryableStale";
+  }>) {
+    super(outcome.message);
+    this.name = "CssMutationTransientError";
+    this.outcome = outcome;
+  }
+}
+
+export function isCssMutationTransientError(
+  value: unknown,
+): value is CssMutationTransientError {
+  return value instanceof CssMutationTransientError;
+}
 
 export function createCssRequestIdentity(
   projectRoot: string,
@@ -107,6 +149,14 @@ async function invokeBoundCssMutation<T>(
 ): Promise<CssMutationCommandReceipt<T>> {
   requireCssIdentity(identity);
   const receipt = await invoke<CssMutationCommandReceipt<T>>(command, { ...args, identity });
+  return validateCssMutationReceipt(command, identity, receipt);
+}
+
+function validateCssMutationReceipt<T>(
+  command: string,
+  identity: CssRequestIdentity,
+  receipt: CssMutationCommandReceipt<T>,
+): CssMutationCommandReceipt<T> {
   if (
     receipt.projectRoot !== identity.expectedProjectRoot
     || receipt.runtimeSessionId !== identity.expectedSessionId
@@ -203,6 +253,33 @@ async function invokeBoundCssMutation<T>(
     ) {
       throw new Error(t("io-css-authority-file-buffer-mismatch", { command }));
     }
+  }
+  return receipt;
+}
+
+async function invokeInspectorCssMutation<T>(
+  command: string,
+  args: Record<string, unknown>,
+  identity: CssRequestIdentity,
+): Promise<CssMutationCommandReceipt<T>> {
+  requireCssIdentity(identity);
+  const outcome = await invoke<CssMutationCommandOutcome<T>>(command, { ...args, identity });
+  const expectedInteractionId = typeof args.interactionId === "string"
+    ? args.interactionId
+    : null;
+  if (outcome.interactionId !== expectedInteractionId) {
+    throw new Error(t("io-css-authority-receipt-invalid", { command }));
+  }
+  if (outcome.kind === "superseded" || outcome.kind === "retryableStale") {
+    throw new CssMutationTransientError(outcome);
+  }
+  if (outcome.kind === "rejected") throw new Error(outcome.message);
+  const receipt = validateCssMutationReceipt(command, identity, outcome.receipt);
+  if (
+    (outcome.kind === "noop" && receipt.authority.status !== "noop")
+    || (outcome.kind === "applied" && receipt.authority.status !== "staged")
+  ) {
+    throw new Error(t("io-css-authority-status-invalid", { command }));
   }
   return receipt;
 }
@@ -401,13 +478,28 @@ export async function resolveCssInspectorContext(options: {
   fallbackFile: string | null;
   expectedWorkspaceRevision: number;
   expectedSelection: SelectionMutationIdentity;
+  interactionId?: string | null;
 }, identity: CssRequestIdentity): Promise<CssInspectorContextResolution> {
-  const resolution = await invokeBoundCss<CssInspectorContextResolution>(
+  requireCssIdentity(identity);
+  const outcome = await invoke<CssInspectorContextCommandOutcome>(
     "resolve_css_inspector_context",
-    options,
-    identity,
-    options.expectedWorkspaceRevision,
+    { ...options, identity },
   );
+  if (outcome.kind !== "applied") {
+    if (outcome.kind === "rejected") {
+      throw new Error(`[${outcome.reason}] ${outcome.message}`);
+    }
+    throw new CssInspectorTransientReadError(outcome);
+  }
+  const receipt = outcome.receipt;
+  if (
+    receipt.projectRoot !== identity.expectedProjectRoot
+    || receipt.runtimeSessionId !== identity.expectedSessionId
+    || receipt.workspaceRevision !== options.expectedWorkspaceRevision
+  ) {
+    throw new Error("[css_inspector_invalid_authority] Rust a returnat o autoritate CSS străină.");
+  }
+  const resolution = receipt.payload;
   const expectedRevision = options.expectedSelection.selectionRevision;
   if (
     resolution.schemaVersion !== CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION
@@ -466,8 +558,9 @@ export function setCssRuleAtViewport(options: {
   properties: Partial<Record<keyof EditableStyles | string, string>>;
   viewport: CssViewport;
   expectedSelection?: SelectionMutationIdentity | null;
+  interactionId?: string | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<void>> {
-  return invokeBoundCssMutation<void>("set_css_rule_at_viewport", options, identity);
+  return invokeInspectorCssMutation<void>("set_css_rule_at_viewport", options, identity);
 }
 
 export function setPageCssRuleAtViewport(options: {
@@ -477,8 +570,13 @@ export function setPageCssRuleAtViewport(options: {
   properties: Partial<Record<keyof EditableStyles | string, string>>;
   viewport: CssViewport;
   expectedSelection?: SelectionMutationIdentity | null;
+  interactionId?: string | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<PageCssWriteResult>> {
-  return invokeBoundCssMutation<PageCssWriteResult>("set_page_css_rule_at_viewport", options, identity);
+  return invokeInspectorCssMutation<PageCssWriteResult>(
+    "set_page_css_rule_at_viewport",
+    options,
+    identity,
+  );
 }
 
 export function setReusableCssRuleAtViewport(options: {
@@ -488,8 +586,9 @@ export function setReusableCssRuleAtViewport(options: {
   properties: Partial<Record<keyof EditableStyles | string, string>>;
   viewport: CssViewport;
   expectedSelection?: SelectionMutationIdentity | null;
+  interactionId?: string | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<ReusableCssWriteResult>> {
-  return invokeBoundCssMutation<ReusableCssWriteResult>(
+  return invokeInspectorCssMutation<ReusableCssWriteResult>(
     "set_reusable_css_rule_at_viewport",
     options,
     identity,

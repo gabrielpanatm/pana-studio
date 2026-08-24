@@ -20,7 +20,9 @@
     type CssInspectorMutationStatus,
   } from "$lib/inspector/css-inspector-mutation-queue";
   import { CssInspectorState } from "$lib/inspector/css-inspector-state.svelte";
+  import { CssEditSessionCoordinator } from "$lib/inspector/css-edit-session-coordinator";
   import { registerEditFlushHandler } from "$lib/session/edit-flush-registry";
+  import type { GlobalStatusPublishOptions } from "$lib/status/global-status";
 
   let {
     selectionSummary = null,
@@ -77,13 +79,18 @@
       liveEpoch: number | null,
     ) => void | Promise<void>;
     onInspectorLivePropertiesRejected?: (liveEpoch: number) => void;
-    onStatusUpdate?: (text: string, kind: string) => void;
+    onStatusUpdate?: (
+      text: string,
+      kind: string,
+      options?: GlobalStatusPublishOptions,
+    ) => void;
     onPendingChange?: (area: InspectorPendingArea, pending: boolean) => void;
     onCssCodeTargetChange?: (target: {
       selector: string;
       file: string;
       property?: string | null;
       expectedSelectionRevision?: number | null;
+      expectedSelection?: import("$lib/preview/contracts").SelectionMutationIdentity | null;
     }) => boolean | Promise<boolean>;
     getOpenCssRuleContext?: (
       file: string,
@@ -94,30 +101,74 @@
     onGridOverlayChange?: (enabled: boolean) => void;
   } = $props();
 
+  const presentedCssFocus = $derived.by(() => {
+    const focus = presentedSelectionSnapshot?.focus;
+    return focus?.kind === "cssRule" || focus?.kind === "cssProperty"
+      ? focus
+      : null;
+  });
+  const activeCssTargetFile = $derived(presentedCssFocus?.file ?? targetCssFile);
+  const presentedFocusSelector = $derived(presentedCssFocus?.selector ?? null);
+
   function reportReaderStatus(status: CssInspectorReaderStatus) {
     if (status.kind === "readFailed") {
-      onStatusUpdate?.(t("inspector-css-read-failed", status), "error");
+      onStatusUpdate?.(t("inspector-css-read-failed", status), "error", {
+        source: "css-inspector",
+        code: "css-inspector.read-failed",
+        dedupeKey: "css-inspector:read",
+        resolutionKey: "css-inspector:read",
+      });
     } else {
-      onStatusUpdate?.(t("inspector-css-target-failed", status), "error");
+      onStatusUpdate?.(t("inspector-css-target-failed", status), "error", {
+        source: "css-inspector",
+        code: "css-inspector.target-failed",
+        dedupeKey: "css-inspector:target",
+        resolutionKey: "css-inspector:target",
+      });
     }
   }
 
   function reportMutationStatus(status: CssInspectorMutationStatus) {
+    const options = status.interactionId
+      ? editSession.statusOptions(
+        status.interactionId,
+        status.kind === "previewChanged" ? "preview"
+          : status.kind === "saved" || status.kind === "editCancelled" ? "saved"
+            : "error",
+      )
+      : {
+        source: "css-inspector",
+        code: "css-inspector.target-unavailable",
+        dedupeKey: "css-inspector:target",
+        resolutionKey: "css-inspector:target",
+      } satisfies GlobalStatusPublishOptions;
     if (status.kind === "saved") {
-      onStatusUpdate?.(t("inspector-css-session-saved", status), "unsaved");
+      onStatusUpdate?.(t("inspector-css-session-saved", status), "unsaved", options);
     } else if (status.kind === "liveFailed") {
-      onStatusUpdate?.(t("inspector-css-live-failed", status), "error");
+      onStatusUpdate?.(t("inspector-css-live-failed", status), "error", options);
     } else if (status.kind === "mutationFailed") {
-      onStatusUpdate?.(t("inspector-css-mutation-failed", status), "error");
+      onStatusUpdate?.(t("inspector-css-mutation-failed", status), "error", options);
     } else if (status.kind === "previewChanged") {
-      onStatusUpdate?.(t("inspector-css-preview-changed", status), "unsaved");
+      onStatusUpdate?.(t("inspector-css-preview-changed", status), "unsaved", options);
+    } else if (status.kind === "targetUnavailable") {
+      onStatusUpdate?.(
+        t("inspector-css-edit-unavailable", { property: status.property }),
+        "error",
+        options,
+      );
     } else {
-      onStatusUpdate?.(t("inspector-css-edit-cancelled", status), "idle");
+      onStatusUpdate?.(
+        t("inspector-css-edit-cancelled", { property: status.property }),
+        "idle",
+        options,
+      );
     }
   }
 
   const inspectorState = new CssInspectorState();
+  const editSession = new CssEditSessionCoordinator();
   const reader = new CssInspectorReader(inspectorState, {
+    editSession,
     getOpenContext: (file, selector, viewport) =>
       getOpenCssRuleContext?.(file, selector, viewport) ?? null,
     changeCodeTarget: (target) => onCssCodeTargetChange?.(target) ?? false,
@@ -128,10 +179,15 @@
     },
   });
   const mutationQueue = new CssInspectorMutationQueue({
+    editSession,
     state: inspectorState,
-    context: () => ({ projectRoot, runtimeSessionId, targetCssFile, previewDevice }),
+    context: () => ({
+      projectRoot,
+      runtimeSessionId,
+      targetCssFile: activeCssTargetFile,
+      previewDevice,
+    }),
     captureSelection: () => reader.captureCurrentSelection(),
-    changeCodeTarget: (target) => onCssCodeTargetChange?.(target) ?? false,
     applyLiveProperties: (selector, properties, viewport) =>
       onLivePropertiesChange?.(selector, properties, viewport),
     projectCommittedMutation: (authority, liveEpoch) =>
@@ -155,14 +211,10 @@
   ));
 
   $effect(() => {
-    const focus = presentedSelectionSnapshot?.focus;
-    const presentedFocusSelector = focus?.kind === "cssRule" || focus?.kind === "cssProperty"
-      ? focus.selector
-      : null;
     const input = {
       projectRoot,
       runtimeSessionId,
-      targetCssFile,
+      targetCssFile: activeCssTargetFile,
       cssSourceRevision,
       activeRenderedTemplatePath,
       previewDevice,
@@ -188,10 +240,11 @@
   }
 
   function selectCssVariant(suffix: string) {
-    if (!inspectorState.selectedClass || !targetCssFile) return;
+    if (!inspectorState.selectedClass || !activeCssTargetFile) return;
     void onCssCodeTargetChange?.({
       selector: `.${inspectorState.selectedClass}${suffix}`,
-      file: targetCssFile,
+      file: activeCssTargetFile,
+      expectedSelection: reader.captureCurrentSelection(),
     });
   }
 </script>
@@ -216,6 +269,7 @@
   customSuffix={inspectorState.presentedSelectorState?.customSuffix ?? inspectorState.customSuffix}
   usingCustom={inspectorState.presentedSelectorState?.usingCustom ?? inspectorState.usingCustom}
   projectionTransitioning={inspectorState.projectionTransitioning}
+  editingReady={inspectorState.hasEditableTarget}
   cssPropertyEdit={inspectorState.propertyEdit}
   {gridOverlayEnabled}
   {onGridOverlayChange}

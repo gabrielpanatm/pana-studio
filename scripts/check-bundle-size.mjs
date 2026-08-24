@@ -36,8 +36,11 @@ export const lazyFeatureGraphDefinitions = Object.freeze([
   Object.freeze({
     feature: "version-control",
     entryName: "VersionControlWorkspace",
-    maximumBytes: 70_000,
-    maximumGzipBytes: 20_000,
+    // The versioning surface owns the shared accessible SelectControl graph.
+    // Keep a narrow release-build margin while still preventing that feature
+    // from absorbing unrelated workspace code.
+    maximumBytes: 82_000,
+    maximumGzipBytes: 23_000,
   }),
   Object.freeze({
     feature: "audit",

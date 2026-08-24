@@ -106,7 +106,7 @@ test("the selection card is a pure accessible renderer of the Rust snapshot", ()
   assert.match(classIntent, /cssCoordinator\?\.selectClass\(className\)/);
   const cssClassIntent = cssReader.slice(
     cssReader.indexOf("async selectClass"),
-    cssReader.indexOf("captureCurrentSelection"),
+    cssReader.indexOf("\n  captureCurrentSelection()"),
   );
   assert.match(cssClassIntent, /expectedSelectionRevision/);
   assert.match(cssClassIntent, /const resolution = await this\.resolve/);
@@ -116,7 +116,10 @@ test("the selection card is a pure accessible renderer of the Rust snapshot", ()
   assert.match(cssClassIntent, /kind: "targetFailed"/);
   assert.match(cssClassIntent, /this\.dependencies\.changeCodeTarget\?\./);
   assert.match(cssClassIntent, /return "blocked"/);
-  assert.match(cssClassIntent, /return allowed \? "allowed" : "blocked"/);
+  assert.match(
+    cssClassIntent,
+    /this\.applyResolution\(resolution, currentSelection\);\s*return "allowed"/,
+  );
   const session = source("../src/lib/state/editor-selection-session.svelte.ts");
   assert.match(application, /inspectorSelectionSummary:\s*selectionWorkspace\.session\.inspectorSummary/);
   assert.match(session, /inspectorSummary = \$state<InspectorSelectionSummarySnapshot \| null>/);

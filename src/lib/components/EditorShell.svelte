@@ -26,6 +26,7 @@
     WorkbenchSplit,
     WorkbenchSurface,
   } from "$lib/workbench/contracts";
+  import { activeWorkbenchDocument } from "$lib/workbench/document-presentation";
   import type { InteractivePreviewDomNode } from "$lib/preview/interactive";
   import type {
     MotionPreviewMode,
@@ -106,11 +107,13 @@
   $: formattedSourceSize = sourceMetrics
     ? formatSourceSize(sourceMetrics.utf8Bytes, $localeRevision)
     : "";
+  $: activeDocument = activeWorkbenchDocument(workbenchSnapshot);
+  $: visualPresentationAvailable = activeDocument?.presentation === "html";
   $: workbenchSplit = workbenchSnapshot?.split ?? "none";
-  $: splitActive = workbenchSplit !== "none";
+  $: splitActive = visualPresentationAvailable && workbenchSplit !== "none";
   $: splitRatioBasisPoints = workbenchSnapshot?.splitRatioBasisPoints ?? 5_000;
-  $: showPreview = splitActive || centerView === "preview";
-  $: showSource = splitActive || centerView === "code";
+  $: showPreview = visualPresentationAvailable && (splitActive || centerView === "preview");
+  $: showSource = !visualPresentationAvailable || splitActive || centerView === "code";
   $: canvasViewport = {
     mode: previewCanvasMode,
     preset: previewCanvasPreset,
@@ -570,7 +573,7 @@
     padding: 0 3px;
     border-bottom: 1px solid color-mix(in srgb, var(--wb-text-muted, var(--text-muted)) 32%, transparent);
     color: var(--wb-text-muted, var(--text-muted));
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     pointer-events: none;
   }
@@ -685,7 +688,7 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     color: var(--wb-text-primary, var(--text));
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 
@@ -705,7 +708,7 @@
     border: 1px solid var(--border-4);
     border-right-width: 0;
     color: var(--text-muted);
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;

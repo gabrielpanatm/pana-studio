@@ -762,7 +762,7 @@
             && !row.node.capabilities.canEnterBoundary}
             <button
               type="button"
-              class="relation-action"
+              class="relation-action ui-icon-button mini"
               title={row.node.relation.targetDocumentPath}
               onclick={(event) => {
                 event.stopPropagation();
@@ -794,7 +794,7 @@
           {#if canDelete(row.node)}
             <button
               type="button"
-              class="delete-action"
+              class="delete-action ui-icon-button mini danger"
               title={row.node.kind === "boundary"
                 ? t("project-navigation-delete-tera")
                 : t("project-navigation-delete-element")}
@@ -922,8 +922,6 @@
   }
 
   .scope-action,
-  .relation-action,
-  .delete-action,
   .disclosure {
     display: inline-flex;
     align-items: center;
@@ -1149,19 +1147,6 @@
     font-size: var(--font-meta);
   }
 
-  .relation-action {
-    width: 23px;
-    height: 23px;
-    padding: 0;
-    border-radius: 6px;
-    color: var(--text-muted);
-  }
-
-  .relation-action:hover {
-    color: var(--brand-strong);
-    background: var(--material-control-selected);
-  }
-
   .readonly-mark {
     display: inline-flex;
     flex: 0 0 auto;
@@ -1170,20 +1155,9 @@
   }
 
   .delete-action {
-    width: 20px;
-    min-width: 20px;
-    height: 20px;
-    min-height: 20px;
-    flex: 0 0 20px;
-    padding: 0;
-    border-radius: 5px;
-    color: color-mix(in srgb, var(--danger) 82%, var(--text-muted));
     opacity: 0;
     pointer-events: none;
-    transition:
-      opacity 80ms ease,
-      color 80ms ease,
-      background 80ms ease;
+    transition: opacity 80ms ease;
   }
 
   .navigation-row:hover .delete-action,
@@ -1192,13 +1166,6 @@
   .navigation-row:focus-within .delete-action {
     opacity: 1;
     pointer-events: auto;
-  }
-
-  .delete-action:hover,
-  .delete-action:focus-visible {
-    color: var(--danger);
-    background: color-mix(in srgb, var(--danger) 12%, var(--material-control));
-    outline: none;
   }
 
   .tree-state {

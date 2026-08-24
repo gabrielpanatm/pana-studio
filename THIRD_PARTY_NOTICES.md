@@ -57,6 +57,21 @@ surselor, amprentele SHA-256 și data inventarului (`2026-08-14`) sunt păstrate
 Google Fonts și numele familiilor aparțin titularilor lor. Includerea lor nu
 implică afilierea sau aprobarea Pană Studio de către Google.
 
+## Fonturile interfeței
+
+Inter, Urbanist și JetBrains Mono sunt incluse ca fișiere WOFF2 variabile în
+bundle-ul aplicației, prin pachetele Fontsource corespunzătoare. Pană Studio
+folosește fișierele nemodificate și nu depinde de fonturi instalate local sau de
+un serviciu web extern.
+
+- Inter — interfața generală;
+- Urbanist — titlurile interfeței;
+- JetBrains Mono — editorul de cod și valorile tehnice;
+- licența tuturor celor trei familii: SIL Open Font License 1.1.
+
+Textele complete ale licențelor sunt preluate din pachetele distribuite și
+incluse de generator în `src-tauri/resources/licenses/THIRD_PARTY_LICENSES.txt`.
+
 ## Dependențe JavaScript și Rust
 
 Inventarul pachetelor rezolvate din `package-lock.json` și `Cargo.lock`, împreună

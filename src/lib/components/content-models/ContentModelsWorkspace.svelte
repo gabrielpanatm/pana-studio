@@ -1,10 +1,8 @@
 <script lang="ts">
   import {
-    IconAlertTriangle,
     IconArrowDown,
     IconArrowUp,
     IconBraces,
-    IconCheck,
     IconForms,
     IconLink,
     IconPlus,
@@ -13,6 +11,12 @@
     IconTrash,
     IconX,
   } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
+  import TextAreaControl from "$lib/components/ui/TextAreaControl.svelte";
+  import TextFieldControl from "$lib/components/ui/TextFieldControl.svelte";
   import {
   applyContentModelMutation,
   planContentModelMutation,
@@ -669,7 +673,7 @@
   <div class="workspace-body">
     <div class="model-list" role="listbox" aria-label="Modele de conținut">
       {#if loading && !catalog}
-        <div class="empty">Se citește catalogul autoritativ…</div>
+        <EmptyState title="Se citește catalogul autoritativ…" />
       {:else}
         {#each visibleModels as model (model.id)}
           <button
@@ -684,7 +688,7 @@
             <span><strong>{model.label}</strong><small>{model.id} · {countFields(model.fields)} câmpuri</small></span>
           </button>
         {:else}
-          <div class="empty">Nu există modele. Creează primul contract de conținut.</div>
+          <EmptyState title="Nu există modele" description="Creează primul contract de conținut." />
         {/each}
       {/if}
     </div>
@@ -695,38 +699,43 @@
       role="tabpanel"
       aria-labelledby={`content-models-tab-${activeView}`}
     >
-      {#if error}<div class="banner error" role="alert"><IconAlertTriangle size={15} /> {error}</div>{/if}
-      {#if notice}<div class="banner success"><IconCheck size={15} /> {notice}</div>{/if}
+      {#if error}<InlineMessage message={error} tone="error" />{/if}
+      {#if notice}<InlineMessage message={notice} tone="success" />{/if}
       {#if mode === "create" || mode === "model"}
-        <form onsubmit={saveModel}>
-          <header><div><span>{mode === "create" ? "Model nou" : "Editare model"}</span><h2>{mode === "create" ? "Contract de conținut" : selectedModel?.label}</h2></div><button type="button" onclick={() => { mode = "info"; }}><IconX size={14} /></button></header>
-          <label><span>ID stabil</span><input bind:value={modelIdDraft} placeholder="serviciu" disabled={busy} required pattern="[A-Za-z0-9_-]+" /><small>La redenumire, Rust migrează atomic fișierul, assignments și binding-urile dinamice.</small></label>
-          <label><span>Nume</span><input bind:value={modelLabelDraft} placeholder="Serviciu" disabled={busy} required /></label>
-          <label><span>Descriere</span><textarea bind:value={modelDescriptionDraft} placeholder="Ex.: Câmpurile folosite pentru paginile individuale ale serviciilor." disabled={busy}></textarea></label>
-          <footer><button type="button" onclick={() => { mode = "info"; }} disabled={busy}>Renunță</button><button class="primary" type="submit" disabled={busy || !modelLabelDraft.trim() || mode === "create" && !modelIdDraft.trim()}>Salvează</button></footer>
+        <form class="ui-card ui-form" onsubmit={saveModel}>
+          <header><div><span>{mode === "create" ? "Model nou" : "Editare model"}</span><h2>{mode === "create" ? "Contract de conținut" : selectedModel?.label}</h2></div><button class="ui-icon-button compact ui-close-button" type="button" aria-label="Închide formularul" onclick={() => { mode = "info"; }}><IconX size={14} /></button></header>
+          <TextFieldControl label="ID stabil" description="La redenumire, Rust migrează atomic fișierul, assignments și binding-urile dinamice." bind:value={modelIdDraft} placeholder="serviciu" disabled={busy} required pattern="[A-Za-z0-9_-]+" />
+          <TextFieldControl label="Nume" bind:value={modelLabelDraft} placeholder="Serviciu" disabled={busy} required />
+          <TextAreaControl label="Descriere" bind:value={modelDescriptionDraft} placeholder="Ex.: Câmpurile folosite pentru paginile individuale ale serviciilor." disabled={busy} />
+          <footer><button class="ui-button compact" type="button" onclick={() => { mode = "info"; }} disabled={busy}>Renunță</button><button class="ui-button primary compact" type="submit" disabled={busy || !modelLabelDraft.trim() || mode === "create" && !modelIdDraft.trim()}>Salvează</button></footer>
         </form>
       {:else if mode === "field" && selectedModel}
-        <form onsubmit={saveField}>
-          <header><div><span>{selectedField ? "Editare câmp" : "Câmp nou"}</span><h2>{selectedModel.label}</h2></div><button type="button" onclick={() => { mode = "info"; }}><IconX size={14} /></button></header>
-          <label>
-            <span>Container</span>
-            <select bind:value={fieldParentIdDraft} disabled={busy || Boolean(selectedField)}>
-              <option value={null}>Nivel principal (`extra`)</option>
-              {#each fieldContainers as entry (entry.field.id)}
-                <option value={entry.field.id}>{"— ".repeat(entry.depth + 1)}{entry.field.label} · extra.{entry.path}</option>
-              {/each}
-            </select>
-            {#if selectedField}<small>Containerul unui câmp existent rămâne stabil; mutarea cere migrare explicită.</small>{/if}
-          </label>
-          <div class="field-grid"><label><span>Cheie în `extra`</span><input bind:value={fieldKeyDraft} placeholder={FIELD_EXAMPLES[fieldKindDraft].key} disabled={busy} required pattern="[A-Za-z0-9_-]+" /></label><label><span>Etichetă</span><input bind:value={fieldLabelDraft} placeholder={FIELD_EXAMPLES[fieldKindDraft].label} disabled={busy} required /></label></div>
-          <div class="field-grid"><label><span>Tip</span><select bind:value={fieldKindDraft} disabled={busy}>{#each FIELD_KINDS as kind (kind.value)}<option value={kind.value}>{kind.label}</option>{/each}</select></label><label class="check"><input type="checkbox" bind:checked={fieldRequiredDraft} disabled={busy} /> Obligatoriu</label></div>
-          <label><span>Ajutor pentru editor</span><textarea bind:value={fieldHelpDraft} placeholder={FIELD_EXAMPLES[fieldKindDraft].help} disabled={busy}></textarea></label>
-          <label><span>Valoare implicită</span>{#if fieldKindDraft === "boolean"}<select bind:value={fieldDefaultDraft} disabled={busy}><option value="">Fără valoare implicită</option><option value="true">Da</option><option value="false">Nu</option></select>{:else}<textarea class:code={["group", "repeater"].includes(fieldKindDraft)} bind:value={fieldDefaultDraft} rows={["group", "repeater"].includes(fieldKindDraft) ? 5 : 2} placeholder={FIELD_EXAMPLES[fieldKindDraft].defaultValue} disabled={busy}></textarea>{/if}</label>
-          {#if fieldKindDraft === "select"}<label><span>Opțiuni</span><textarea bind:value={fieldChoicesDraft} placeholder={'standard|Standard\npremium|Premium'} disabled={busy}></textarea><small>Câte o opțiune pe rând, în formatul valoare|Etichetă.</small></label>{/if}
-          {#if fieldKindDraft === "number"}<div class="field-grid"><label><span>Minim</span><input type="number" bind:value={fieldMinimumDraft} placeholder="Ex.: 0" disabled={busy} /></label><label><span>Maxim</span><input type="number" bind:value={fieldMaximumDraft} placeholder="Ex.: 1000" disabled={busy} /></label></div>{/if}
-          {#if ["text", "textarea", "markdown", "url"].includes(fieldKindDraft)}<label><span>Validare (pattern)</span><input bind:value={fieldPatternDraft} placeholder={FIELD_EXAMPLES[fieldKindDraft].pattern} disabled={busy} /><small>Expresie regulată opțională; exemplul indică formatul acceptat.</small></label>{/if}
+        <form class="ui-card ui-form" onsubmit={saveField}>
+          <header><div><span>{selectedField ? "Editare câmp" : "Câmp nou"}</span><h2>{selectedModel.label}</h2></div><button class="ui-icon-button compact ui-close-button" type="button" aria-label="Închide formularul" onclick={() => { mode = "info"; }}><IconX size={14} /></button></header>
+          <div class="ui-form-field">
+            <span class="ui-form-label">Container</span>
+            <SelectControl
+              value={fieldParentIdDraft ?? ""}
+              options={[{ value: "", label: "Nivel principal (`extra`)" }, ...fieldContainers.map((entry) => ({ value: entry.field.id, label: `${"— ".repeat(entry.depth + 1)}${entry.field.label} · extra.${entry.path}` }))]}
+              disabled={busy || Boolean(selectedField)}
+              ariaLabel="Containerul câmpului"
+              onchange={(value) => { fieldParentIdDraft = value || null; }}
+            />
+            {#if selectedField}<small class="ui-form-help">Containerul unui câmp existent rămâne stabil; mutarea cere migrare explicită.</small>{/if}
+          </div>
+          <div class="field-grid"><TextFieldControl label="Cheie în `extra`" bind:value={fieldKeyDraft} placeholder={FIELD_EXAMPLES[fieldKindDraft].key} disabled={busy} required pattern="[A-Za-z0-9_-]+" /><TextFieldControl label="Etichetă" bind:value={fieldLabelDraft} placeholder={FIELD_EXAMPLES[fieldKindDraft].label} disabled={busy} required /></div>
+          <div class="field-grid"><div class="ui-form-field"><span class="ui-form-label">Tip</span><SelectControl value={fieldKindDraft} options={FIELD_KINDS} disabled={busy} ariaLabel="Tipul câmpului" onchange={(value) => { fieldKindDraft = value as ContentFieldKind; }} /></div><CheckboxControl label="Obligatoriu" bind:checked={fieldRequiredDraft} disabled={busy} /></div>
+          <TextAreaControl label="Ajutor pentru editor" bind:value={fieldHelpDraft} placeholder={FIELD_EXAMPLES[fieldKindDraft].help} disabled={busy} />
+          {#if fieldKindDraft === "boolean"}
+            <div class="ui-form-field"><span class="ui-form-label">Valoare implicită</span><SelectControl value={fieldDefaultDraft} options={[{ value: "", label: "Fără valoare implicită" }, { value: "true", label: "Da" }, { value: "false", label: "Nu" }]} disabled={busy} ariaLabel="Valoare implicită" onchange={(value) => { fieldDefaultDraft = value; }} /></div>
+          {:else}
+            <TextAreaControl label="Valoare implicită" bind:value={fieldDefaultDraft} rows={["group", "repeater"].includes(fieldKindDraft) ? 5 : 2} code={["group", "repeater"].includes(fieldKindDraft)} spellcheck={!["group", "repeater"].includes(fieldKindDraft)} placeholder={FIELD_EXAMPLES[fieldKindDraft].defaultValue} disabled={busy} />
+          {/if}
+          {#if fieldKindDraft === "select"}<TextAreaControl label="Opțiuni" description="Câte o opțiune pe rând, în formatul valoare|Etichetă." bind:value={fieldChoicesDraft} placeholder={'standard|Standard\npremium|Premium'} disabled={busy} />{/if}
+          {#if fieldKindDraft === "number"}<div class="field-grid"><TextFieldControl label="Minim" type="number" bind:value={fieldMinimumDraft} placeholder="Ex.: 0" disabled={busy} /><TextFieldControl label="Maxim" type="number" bind:value={fieldMaximumDraft} placeholder="Ex.: 1000" disabled={busy} /></div>{/if}
+          {#if ["text", "textarea", "markdown", "url"].includes(fieldKindDraft)}<TextFieldControl label="Validare (pattern)" description="Expresie regulată opțională; exemplul indică formatul acceptat." bind:value={fieldPatternDraft} placeholder={FIELD_EXAMPLES[fieldKindDraft].pattern} disabled={busy} />{/if}
           {#if ["group", "repeater"].includes(fieldKindDraft)}<p class="note">După salvare poți adăuga subcâmpuri direct în acest container. ID-urile și căile lor rămân stabile.</p>{/if}
-          <footer><button type="button" onclick={() => { mode = "info"; }} disabled={busy}>Renunță</button><button class="primary" type="submit" disabled={busy || !fieldKeyDraft.trim() || !fieldLabelDraft.trim()}>Salvează câmpul</button></footer>
+          <footer><button class="ui-button compact" type="button" onclick={() => { mode = "info"; }} disabled={busy}>Renunță</button><button class="ui-button primary compact" type="submit" disabled={busy || !fieldKeyDraft.trim() || !fieldLabelDraft.trim()}>Salvează câmpul</button></footer>
         </form>
       {:else if activeView === "validation"}
         <div class="detail-heading validation-heading">
@@ -752,45 +761,45 @@
                 {#if diagnostic.file}<code>{diagnostic.file}</code>{/if}
               </div>
             {:else}
-              <div class="empty compact">Catalogul nu raportează probleme.</div>
+              <EmptyState compact title="Catalogul nu raportează probleme." />
             {/each}
           </div>
         </section>
       {:else if selectedModel}
-        <div class="detail-heading"><div><span>Contract schema {selectedModel.schemaVersion}</span><h2>{selectedModel.label}</h2><p>{selectedModel.description || "Fără descriere."}</p><code>{selectedModel.file}</code></div><div><button type="button" onclick={beginEditModel}>Editează</button><button class="danger" type="button" disabled={busy} onclick={() => { void deleteModel(); }}><IconTrash size={14} /> Șterge</button></div></div>
+        <div class="detail-heading"><div><span>Contract schema {selectedModel.schemaVersion}</span><h2>{selectedModel.label}</h2><p>{selectedModel.description || "Fără descriere."}</p><code>{selectedModel.file}</code></div><div><button class="ui-button compact" type="button" onclick={beginEditModel}>Editează</button><button class="ui-button danger compact" type="button" disabled={busy} onclick={() => { void deleteModel(); }}><IconTrash size={14} /> Șterge</button></div></div>
 
         {#if activeView === "fields"}
         <section class="contract-section">
-          <header><div><h3>Câmpuri</h3><p>Ordinea contractului devine ordinea formularului de completare.</p></div><button class="primary" type="button" onclick={() => beginField()}><IconPlus size={14} /> Adaugă</button></header>
+          <header><div><h3>Câmpuri</h3><p>Ordinea contractului devine ordinea formularului de completare.</p></div><button class="ui-button primary compact" type="button" onclick={() => beginField()}><IconPlus size={14} /> Adaugă</button></header>
           <div class="field-list">
             {#each schemaFields as entry (entry.field.id)}
               <article style={`--field-depth: ${entry.depth}`}>
                 <button class="field-main" type="button" onclick={() => beginField(entry)}><i>{entry.index + 1}</i><span><strong>{entry.field.label}</strong><small><code>extra.{entry.path}</code> · {FIELD_KINDS.find((kind) => kind.value === entry.field.kind)?.label}{entry.field.required ? " · obligatoriu" : ""}</small></span></button>
                 <div>
-                  {#if entry.field.kind === "group" || entry.field.kind === "repeater"}<button type="button" disabled={busy} aria-label="Adaugă subcâmp" title="Adaugă subcâmp" onclick={() => beginField(null, entry.field.id)}><IconPlus size={13} /></button>{/if}
-                  <button type="button" disabled={entry.index === 0 || busy} aria-label="Mută în sus" onclick={() => { void moveField(entry, -1); }}><IconArrowUp size={13} /></button><button type="button" disabled={entry.index === entry.siblingCount - 1 || busy} aria-label="Mută în jos" onclick={() => { void moveField(entry, 1); }}><IconArrowDown size={13} /></button><button class="danger" type="button" disabled={busy} aria-label="Șterge câmpul" onclick={() => { void removeField(entry); }}><IconTrash size={13} /></button>
+                  {#if entry.field.kind === "group" || entry.field.kind === "repeater"}<button class="ui-icon-button mini" type="button" disabled={busy} aria-label="Adaugă subcâmp" title="Adaugă subcâmp" onclick={() => beginField(null, entry.field.id)}><IconPlus size={13} /></button>{/if}
+                  <button class="ui-icon-button mini" type="button" disabled={entry.index === 0 || busy} aria-label="Mută în sus" onclick={() => { void moveField(entry, -1); }}><IconArrowUp size={13} /></button><button class="ui-icon-button mini" type="button" disabled={entry.index === entry.siblingCount - 1 || busy} aria-label="Mută în jos" onclick={() => { void moveField(entry, 1); }}><IconArrowDown size={13} /></button><button class="ui-icon-button mini danger" type="button" disabled={busy} aria-label="Șterge câmpul" onclick={() => { void removeField(entry); }}><IconTrash size={13} /></button>
                 </div>
               </article>
-            {:else}<div class="empty compact">Modelul nu definește încă niciun câmp.</div>{/each}
+            {:else}<EmptyState compact title="Modelul nu definește încă niciun câmp." />{/each}
           </div>
         </section>
 
         {:else if activeView === "sections"}
         <section class="contract-section">
           <header><div><h3>Atașări la secțiuni</h3><p>Cel mai specific contract moștenit de o pagină este autoritativ.</p></div></header>
-          <div class="attach-row"><select bind:value={sectionDraft} disabled={busy}><option value="">Alege secțiunea…</option>{#each sections as section (section.file)}<option value={section.file}>{section.title} · {section.file}{catalog?.assignments.some((assignment) => assignment.sectionPath === section.file) ? " · are model" : ""}</option>{/each}</select><button class="primary" type="button" disabled={!sectionDraft || busy} onclick={() => { void attachModel(); }}><IconLink size={14} /> {sectionDraftAssignment ? "Înlocuiește" : "Atașează"}</button></div>
+          <div class="attach-row"><SelectControl value={sectionDraft} options={sections.map((section) => ({ value: section.file, label: `${section.title} · ${section.file}${catalog?.assignments.some((assignment) => assignment.sectionPath === section.file) ? " · are model" : ""}` }))} placeholder="Alege secțiunea…" disabled={busy} ariaLabel="Secțiunea de atașat" onchange={(value) => { sectionDraft = value; }} /><button class="ui-button primary compact" type="button" disabled={!sectionDraft || busy} onclick={() => { void attachModel(); }}><IconLink size={14} /> {sectionDraftAssignment ? "Înlocuiește" : "Atașează"}</button></div>
           {#if sectionDraftAssignment && sectionDraftAssignment.modelId !== selectedModel.id}<p class="note">Secțiunea folosește modelul {sectionDraftAssignment.modelId}. Înlocuirea migrează automat câmpurile-rădăcină cu aceeași cheie și același tip; Rust afișează planul distructiv înainte de aplicare.</p>{/if}
-          <div class="assignment-list">{#each selectedAssignments as assignment (assignment.sectionPath)}<article><span><strong>{assignment.sectionPath}</strong><small>{catalog?.pageBindings.filter((binding) => binding.sectionPath === assignment.sectionPath).length ?? 0} pagini proiectate</small></span><button class="danger" type="button" disabled={busy} onclick={() => { void detachModel(assignment.sectionPath); }}><IconX size={14} /> Detașează</button></article>{:else}<div class="empty compact">Modelul nu este atașat niciunei secțiuni.</div>{/each}</div>
+          <div class="assignment-list">{#each selectedAssignments as assignment (assignment.sectionPath)}<article><span><strong>{assignment.sectionPath}</strong><small>{catalog?.pageBindings.filter((binding) => binding.sectionPath === assignment.sectionPath).length ?? 0} pagini proiectate</small></span><button class="ui-button danger compact" type="button" disabled={busy} onclick={() => { void detachModel(assignment.sectionPath); }}><IconX size={14} /> Detașează</button></article>{:else}<EmptyState compact title="Modelul nu este atașat niciunei secțiuni." />{/each}</div>
         </section>
 
         {:else if activeView === "usages"}
         <section class="contract-section">
           <header><div><h3>Consumatori Tera</h3><p>Aceste legături blochează ștergerea sau detașarea distructivă.</p></div></header>
-          <div class="usage-list">{#each selectedUsages as usage (`${usage.templateFile}:${usage.offset}:${usage.fieldId}`)}<button type="button" onclick={() => { void openWorkspaceSource(usage.templateFile); }}><code>{usage.expression}</code><span>{usage.templateFile}</span></button>{:else}<div class="empty compact">Nicio expresie Tera nu consumă câmpurile modelului.</div>{/each}</div>
+          <div class="usage-list">{#each selectedUsages as usage (`${usage.templateFile}:${usage.offset}:${usage.fieldId}`)}<button class="ui-button quiet usage-link" type="button" onclick={() => { void openWorkspaceSource(usage.templateFile); }}><code>{usage.expression}</code><span>{usage.templateFile}</span></button>{:else}<EmptyState compact title="Nicio expresie Tera nu consumă câmpurile modelului." />{/each}</div>
         </section>
         {/if}
       {:else}
-        <div class="empty">Selectează sau creează un model de conținut.</div>
+        <EmptyState title="Selectează sau creează un model de conținut." />
       {/if}
     </div>
 
@@ -801,9 +810,6 @@
   .workspace-body { display: grid; grid-template-columns: minmax(230px, .42fr) minmax(460px, 1fr); min-width: 0; min-height: 0; }
   .view-tabs button span { min-width: 17px; padding: 1px 4px; border-radius: 9px; background: var(--wb-surface-document); font-size: 11px; text-align: center; }
   .contract-section p, .detail-heading p { margin: 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.45; }
-  .banner { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 7px 9px; border: 1px solid; border-radius: 7px; font-size: 12px; }
-  .banner.error { border-color: color-mix(in srgb, var(--danger) 35%, transparent); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--wb-surface-document)); }
-  .banner.success { border-color: color-mix(in srgb, var(--success) 35%, transparent); color: var(--success); background: color-mix(in srgb, var(--success) 8%, var(--wb-surface-document)); }
   .model-list { min-width: 0; min-height: 0; overflow: auto; padding: 8px; background: var(--wb-surface-document); }
   .model-list { border-right: 1px solid var(--wb-border-subtle); }
   .model-list > button { display: flex; width: 100%; align-items: center; gap: 8px; padding: 8px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-primary); background: transparent; text-align: left; }
@@ -819,14 +825,9 @@
   .detail-heading h2 { margin: 3px 0; color: var(--text-strong); font-size: 21px; }
   .detail-heading > div + div { display: flex; gap: 6px; }
   .detail-heading code { display: inline-block; margin-top: 7px; color: var(--wb-accent-strong); font-size: 11px; }
-  button, input, select, textarea { font: inherit; } button:not(:disabled) { cursor: pointer; }
-  button { border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); }
-  button.primary, .ui-button.primary { border-color: var(--wb-accent); color: #fff; background: var(--wb-accent); }
-  button.danger { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
   .contract-section { margin-top: 14px; padding: 12px; border: 1px solid var(--wb-border-subtle); border-radius: 9px; background: var(--wb-surface-chrome); }
   .contract-section > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
   .contract-section h3 { margin: 0 0 2px; color: var(--text-strong); font-size: 14px; }
-  .contract-section header > button { display: flex; align-items: center; gap: 4px; min-height: 29px; padding: 0 8px; }
   .contract-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; }
   .contract-grid div { min-width: 0; padding: 8px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; background: var(--wb-surface-document); }
   .contract-grid dt { color: var(--wb-text-muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
@@ -836,18 +837,18 @@
   .field-list article { margin-left: calc(var(--field-depth, 0) * 18px); }
   .field-main { display: flex; min-width: 0; flex: 1; align-items: center; gap: 7px; padding: 3px; border: 0; text-align: left; }
   .field-main i { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 5px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); font-size: 11px; font-style: normal; font-weight: 800; }
-  .field-list article > div { display: flex; gap: 3px; } .field-list article > div button { display: grid; width: 25px; height: 25px; padding: 0; place-items: center; }
-  .assignment-list article { justify-content: space-between; padding: 8px; } .assignment-list article > button { display: flex; align-items: center; gap: 4px; padding: 5px 7px; }
-  .attach-row { display: flex; gap: 6px; margin-bottom: 7px; } .attach-row select { min-width: 0; flex: 1; } .attach-row button { display: flex; align-items: center; gap: 4px; padding: 0 9px; }
-  .usage-list button { display: grid; gap: 2px; padding: 7px; text-align: left; } .usage-list code { color: var(--wb-accent-strong); } .usage-list span { color: var(--wb-text-muted); font-size: 11px; }
-  form { display: grid; gap: 11px; max-width: 720px; margin: 0 auto; padding: 14px; border: 1px solid var(--wb-border-subtle); border-radius: 10px; background: var(--wb-surface-chrome); }
-  form header { display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--wb-border-subtle); } form header span { color: var(--wb-accent-strong); font-size: 11px; font-weight: 800; text-transform: uppercase; } form h2 { margin: 2px 0 0; color: var(--text-strong); font-size: 18px; } form header button { width: 27px; height: 27px; }
-  form label { display: grid; gap: 4px; color: var(--wb-text-muted); font-size: 11px; font-weight: 700; } form input, form select, form textarea, .attach-row select { min-height: 32px; padding: 6px 8px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--material-inset); } form textarea { min-height: 74px; resize: vertical; } form small { font-weight: 400; }
-  form textarea.code { font-family: "JetBrains Mono", monospace; font-size: 11px; }
-  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; } label.check { display: flex; align-items: center; align-self: end; min-height: 32px; flex-direction: row; } label.check input { min-height: auto; }
-  form footer { display: flex; justify-content: flex-end; gap: 6px; padding-top: 8px; border-top: 1px solid var(--wb-border-subtle); } form footer button { min-height: 31px; padding: 0 10px; }
+  .field-list article > div { display: flex; gap: 3px; }
+  .assignment-list article { justify-content: space-between; padding: 8px; }
+  .attach-row { display: flex; gap: 6px; margin-bottom: 7px; }
+  .attach-row :global(.select-control-root) { min-width: 0; flex: 1; }
+  .usage-link { display: grid; gap: 2px; justify-content: stretch; padding: 7px; text-align: left; }
+  .usage-list code { color: var(--wb-accent-strong); } .usage-list span { color: var(--wb-text-muted); font-size: 11px; }
+  form { display: grid; gap: 11px; max-width: 720px; margin: 0 auto; }
+  form header { display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--wb-border-subtle); } form header span { color: var(--wb-accent-strong); font-size: 11px; font-weight: 800; text-transform: uppercase; } form h2 { margin: 2px 0 0; color: var(--text-strong); font-size: 18px; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .field-grid :global(.ui-checkbox) { align-self: end; min-height: 32px; }
+  form footer { display: flex; justify-content: flex-end; gap: 6px; padding-top: 8px; border-top: 1px solid var(--wb-border-subtle); }
   .note { padding: 8px; border-left: 3px solid var(--wb-accent); color: var(--wb-text-muted); background: var(--wb-accent-soft); font-size: 11px; }
-  .empty { display: grid; min-height: 160px; place-items: center; padding: 18px; color: var(--wb-text-muted); font-size: 12px; text-align: center; } .empty.compact { min-height: 56px; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   @media (max-width: 1050px) { .workspace-body { grid-template-columns: 220px minmax(440px, 1fr); } }
   @media (max-width: 900px) { .workspace-body { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 230px) minmax(0, 1fr); } .model-list { border-right: 0; border-bottom: 1px solid var(--wb-border-subtle); } .workspace-header dl { display: none; } }

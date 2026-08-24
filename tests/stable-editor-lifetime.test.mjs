@@ -80,7 +80,6 @@ test("workspace-urile non-Editor sunt chunk-uri lazy încărcate la prima activa
     ["settings", "$lib/components/settings/SettingsWorkspace.svelte"],
     ["templates", "$lib/components/templates/TemplatesWorkspace.svelte"],
     ["components", "$lib/components/creation/ComponentsWorkspace.svelte"],
-    ["blocks", "$lib/components/creation/BlocksWorkspace.svelte"],
     ["design_system", "$lib/components/creation/DesignSystemWorkspace.svelte"],
     ["assets", "$lib/components/creation/AssetsWorkspace.svelte"],
     ["content", "$lib/components/content/ContentWorkspace.svelte"],

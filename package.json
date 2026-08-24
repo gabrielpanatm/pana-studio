@@ -1,6 +1,6 @@
 {
   "name": "pana-studio",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Editor vizual desktop open-source pentru site-uri Zola.",
   "author": "Gabriel Pană",
   "license": "EUPL-1.2-or-later",
@@ -64,6 +64,9 @@
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.41.1",
     "@fluent/bundle": "^0.19.1",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/urbanist": "^5.3.0",
     "@tabler/icons-svelte": "^3.41.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.0",

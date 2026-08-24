@@ -46,8 +46,12 @@ import type {
   ProjectWorkspacePreviewProjectionOptions,
   ProjectWorkspacePreviewProjectionOutcome,
 } from "$lib/kernel/project-workspace-preview-coordinator";
+import { projectWorkspacePreviewStatusKey } from "$lib/kernel/project-workspace-preview-coordinator";
 import type { PreviewRefreshReason } from "$lib/preview/controlled";
-import type { GlobalStatusKind } from "$lib/status/global-status";
+import type {
+  GlobalStatusKind,
+  GlobalStatusPublishOptions,
+} from "$lib/status/global-status";
 import type { CanvasPatch } from "$lib/preview/contracts";
 import type {
   ProjectFile,
@@ -76,7 +80,11 @@ export type PreviewWorkspaceDependencies = {
   controlled: () => ControlledPreviewWorkspaceState;
   motion: MotionWorkspaceState;
   context: () => PreviewWorkspaceContext;
-  setStatus: (text: string, kind: GlobalStatusKind) => void;
+  setStatus: (
+    text: string,
+    kind: GlobalStatusKind,
+    options?: GlobalStatusPublishOptions,
+  ) => void;
   clearStatus: (id: string) => void;
   reportCanvasDegraded: (
     projectRoot: string,
@@ -505,6 +513,12 @@ export class PreviewWorkspaceState {
     const surfaceGeneration = surface.generation;
     const projectRoot = this.dependencies.session.root;
     const runtimeSessionId = this.dependencies.session.runtimeSessionId;
+    const workspaceRevision = this.dependencies.session.workspace?.revision ?? 0;
+    const statusKey = projectWorkspacePreviewStatusKey(
+      projectRoot,
+      runtimeSessionId,
+      workspaceRevision,
+    );
     this.recordResumeDiagnostic("resume_started");
     const resume = (async () => {
       const deferredPlan = this.currentDeferredProjection(projectRoot, runtimeSessionId);
@@ -532,6 +546,7 @@ export class PreviewWorkspaceState {
         { strict: true },
       );
       this.markSurfaceCurrent();
+      this.dependencies.clearStatus(statusKey);
       const current = this.dependencies.context();
       const activeFile = current.project?.files.find(
         (file) => file.relativePath === current.activeScannedPath,
@@ -556,6 +571,13 @@ export class PreviewWorkspaceState {
           this.dependencies.setStatus(
             t("workbench-preview-resume-failed", { message: errorMessage(error) }),
             "error",
+            {
+              source: "preview",
+              code: "preview.resume.failed",
+              dedupeKey: statusKey,
+              resolutionKey: statusKey,
+              lifecycle: "until_resolved",
+            },
           );
           await this.dependencies.reportCanvasDegraded(
             projectRoot,
@@ -612,8 +634,21 @@ export class PreviewWorkspaceState {
     };
   }
 
-  reconcileWorkbenchDocument(previewUrl: string, plan: CanvasProjectionPlan) {
-    return reconcileTemplateWorkbenchPreviewDocument(this.commands(), previewUrl, plan);
+  async reconcileWorkbenchDocument(previewUrl: string, plan: CanvasProjectionPlan) {
+    const reconciled = await reconcileTemplateWorkbenchPreviewDocument(
+      this.commands(),
+      previewUrl,
+      plan,
+    );
+    if (reconciled) {
+      this.markSurfaceCurrent();
+      this.dependencies.clearStatus(projectWorkspacePreviewStatusKey(
+        plan.identity.projectRoot,
+        plan.identity.runtimeSessionId,
+        plan.identity.workspaceRevision,
+      ));
+    }
+    return reconciled;
   }
 
   reload(lease?: PreviewRefreshLease) {

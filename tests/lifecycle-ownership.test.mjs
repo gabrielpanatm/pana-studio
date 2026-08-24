@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { LifecycleGroup } from "$lib/lifecycle/group";
 import { ReactiveEffectsLifecycle } from "$lib/lifecycle/reactive-effects.svelte";
+
+const projectWorkspaceLifecycleSource = readFileSync(
+  new URL("../src/lib/kernel/project-workspace-lifecycle.svelte.ts", import.meta.url),
+  "utf8",
+);
+const workbenchWorkspaceSource = readFileSync(
+  new URL("../src/lib/workbench/workspace-state.svelte.ts", import.meta.url),
+  "utf8",
+);
 
 test("ReactiveEffectsLifecycle înregistrează o singură rădăcină și o eliberează", () => {
   const effect = () => {};
@@ -37,4 +47,19 @@ test("LifecycleGroup oprește resursele în ordine inversă și face rollback la
   assert.throws(() => group.start(), /boom/);
   assert.deepEqual(events, ["start:first", "start:second", "stop:first"]);
   assert.equal(group.active, false);
+});
+
+test("lifecycle-ul nu reactivează documentul Workbench după bootstrap", () => {
+  assert.match(projectWorkspaceLifecycleSource, /workbench\.isHydrated\(sessionId\)/);
+  assert.match(projectWorkspaceLifecycleSource, /workbench\.refresh\(\)/);
+  assert.doesNotMatch(projectWorkspaceLifecycleSource, /workbench\.restore\(\)/);
+  assert.doesNotMatch(workbenchWorkspaceSource, /async restore\(\)/);
+});
+
+test("resetarea Workbench nu înscrie starea resetată în efectul lifecycle apelant", () => {
+  assert.match(workbenchWorkspaceSource, /import \{ untrack \} from "svelte"/);
+  assert.match(
+    workbenchWorkspaceSource,
+    /reset\(\) \{\s*\/\/[\s\S]*?untrack\(\(\) => \{[\s\S]*?this\.projection\.reset\(\);[\s\S]*?this\.documentActivation = \{[\s\S]*?serial: this\.documentActivation\.serial \+ 1,[\s\S]*?\}\);\s*\}/,
+  );
 });

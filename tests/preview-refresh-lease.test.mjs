@@ -287,6 +287,64 @@ test("bootstrap Canvas promovează numai identitatea completă a documentului mo
   assert.equal(activeHost.canvasProjectionConfirmation, null);
 });
 
+test("confirmarea Canvas așteaptă rebazarea selecției înainte să elibereze Inspectorul", async () => {
+  const identity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 9,
+    transactionId: "canvas-selection-barrier-9",
+    previewRevision: "workspace-selection-barrier-9",
+  };
+  const plan = {
+    schemaVersion: 1,
+    identity,
+    workspaceTransactionId: "workspace-edit-selection-barrier-9",
+    phase: "prepared",
+    impact: { kinds: ["htmlStructure"], paths: ["templates/index.html"], requiresFullDocument: false },
+    resources: { schemaVersion: 1, previewRevision: identity.previewRevision, totalBytes: 0, entries: [] },
+  };
+  mockIPC(async (command) => {
+    assert.equal(command, "acknowledge_canvas_projection_phases");
+    return { ...plan, phase: "canonicalVerified" };
+  });
+  const selectionStarted = deferred();
+  const selectionGate = deferred();
+  const frame = { contentWindow: {} };
+  const activeHost = host({
+    previewFrame: frame,
+    canvasSurfaceElement: frame,
+    canvasSurfaceGeneration: 1,
+    editorSelection: {
+      selectionSnapshot: null,
+      reset() {},
+      async refreshNavigationSnapshot(rebasedIdentity) {
+        assert.deepEqual(rebasedIdentity, identity);
+        selectionStarted.resolve();
+        await selectionGate.promise;
+      },
+    },
+  });
+  const mounted = prepareCanvasProjectionNavigation(activeHost, plan);
+  let confirmationSettled = false;
+  const confirming = confirmMountedCanvasProjection(
+    activeHost,
+    identity,
+    canvasPhaseReceipts(identity),
+  ).finally(() => { confirmationSettled = true; });
+
+  await selectionStarted.promise;
+  await nextTurn();
+  assert.equal(confirmationSettled, false);
+  assert.equal(activeHost.pendingCanvasProjection, plan);
+  assert.notEqual(activeHost.canvasProjectionConfirmation, null);
+
+  selectionGate.resolve();
+  assert.equal(await confirming, true);
+  await mounted;
+  assert.equal(activeHost.pendingCanvasProjection, null);
+  assert.equal(activeHost.canvasProjectionConfirmation, null);
+});
+
 test("ACK-urile concurente pentru aceeași identitate Canvas folosesc o singură confirmare Rust", async () => {
   const identity = {
     projectRoot: "/project-a",
@@ -1860,6 +1918,59 @@ test("Source Graph întârziat nu poate fi publicat într-un runtime redeschis p
 
   assert.equal(await refresh, false);
   assert.equal(activeHost.sourceGraph, runtimeTwoGraph);
+});
+
+test("o citire Source Graph strict înlocuită de o citire mai nouă se încheie fără eroare", async () => {
+  const firstReadStarted = deferred();
+  const firstReadGate = deferred();
+  let readCalls = 0;
+  mockIPC(async (command) => {
+    assert.equal(command, "read_source_graph");
+    readCalls += 1;
+    if (readCalls === 1) {
+      firstReadStarted.resolve();
+      await firstReadGate.promise;
+      return {
+        projectRoot: "/project-a",
+        runtimeSessionId: "session-a:runtime-1",
+        workspaceRevision: 8,
+        graph: { schemaVersion: 1, nodes: [{ id: "older" }] },
+      };
+    }
+    return {
+      projectRoot: "/project-a",
+      runtimeSessionId: "session-a:runtime-1",
+      workspaceRevision: 8,
+      graph: { schemaVersion: 1, nodes: [{ id: "latest" }] },
+    };
+  });
+  const activeHost = {
+    scannedProject: { root: "/project-a" },
+    sessionProjectRoot: "/project-a",
+    kernelProjectSessionId: "session-a:runtime-1",
+    projectSessionEpoch: 7,
+    projectWorkspaceSnapshot: { revision: 8 },
+    sourceGraphLoadSerial: 0,
+    sourceGraph: null,
+    sourceGraphProjectionStatus: "deferred",
+    sourceGraphWorkspaceRevision: null,
+    pageSections: [],
+    coordinatedElementSelection: null,
+    hydratePageSections(sections) {
+      return sections;
+    },
+  };
+
+  const older = refreshSourceGraph(activeHost, { strict: true });
+  await firstReadStarted.promise;
+  const latest = refreshSourceGraph(activeHost, { strict: true });
+
+  assert.equal(await latest, true);
+  firstReadGate.resolve();
+  assert.equal(await older, false);
+  assert.equal(activeHost.sourceGraph.nodes[0].id, "latest");
+  assert.equal(activeHost.sourceGraphProjectionStatus, "current");
+  assert.equal(readCalls, 2);
 });
 
 test("reset invalidează lease-ul Preview înaintea următoarei continuări", () => {

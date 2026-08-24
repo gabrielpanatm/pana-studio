@@ -22,9 +22,7 @@ use super::{
     },
     rewrite::{
         ensure_metadata_contracts, stage_remove_field_values, stage_remove_model_values,
-        stage_rename_dynamic_marker_model, stage_rename_dynamic_marker_paths,
-        stage_rename_field_values, stage_rename_template_references,
-        stage_replace_dynamic_marker_binding, stage_replace_model_values,
+        stage_rename_field_values, stage_rename_template_references, stage_replace_model_values,
     },
     usage_index::{
         model_field_paths, template_files_for_other_sections, template_files_for_section,
@@ -236,14 +234,6 @@ pub fn plan_content_model_mutation(
                     assignment.model_id = new_id.to_string();
                 }
             }
-            stage_rename_dynamic_marker_model(
-                project_root,
-                source_texts,
-                graph,
-                model_id,
-                new_id,
-                &mut changes,
-            )?;
             changes.insert(renamed.file.clone(), serialize_model(&renamed)?);
             changes.insert(
                 CONTENT_MODEL_ASSIGNMENTS_PATH.to_string(),
@@ -376,16 +366,6 @@ pub fn plan_content_model_mutation(
                         old_path,
                         new_path,
                         None,
-                        &mut changes,
-                    )?;
-                    stage_rename_dynamic_marker_paths(
-                        project_root,
-                        source_texts,
-                        graph,
-                        &model,
-                        model_id,
-                        old_path,
-                        new_path,
                         &mut changes,
                     )?;
                     warnings.push(format!(
@@ -647,7 +627,6 @@ pub fn plan_content_model_mutation(
                 .ok_or_else(|| "Atașarea care trebuie înlocuită nu mai există.".to_string())?;
 
             let mut migrations = Vec::new();
-            let mut marker_migrations = Vec::new();
             let mut migrated_ids = BTreeSet::new();
             for (from_field_id, to_field_id) in field_migrations {
                 let from_field = find_field(&from_model.fields, from_field_id)
@@ -670,12 +649,6 @@ pub fn plan_content_model_mutation(
                             .to_string(),
                     );
                 }
-                marker_migrations.push((
-                    from_field_id.clone(),
-                    to_field_id.clone(),
-                    from_path.clone(),
-                    to_path.clone(),
-                ));
                 migrations.push((from_path, to_path));
                 migrated_ids.insert(from_field_id.clone());
             }
@@ -733,21 +706,6 @@ pub fn plan_content_model_mutation(
                     source_texts,
                     graph,
                     from_path,
-                    to_path,
-                    section_templates.as_ref(),
-                    &mut changes,
-                )?;
-            }
-            for (from_field_id, to_field_id, from_path, to_path) in &marker_migrations {
-                stage_replace_dynamic_marker_binding(
-                    project_root,
-                    source_texts,
-                    graph,
-                    from_model_id,
-                    from_field_id,
-                    from_path,
-                    to_model_id,
-                    to_field_id,
                     to_path,
                     section_templates.as_ref(),
                     &mut changes,

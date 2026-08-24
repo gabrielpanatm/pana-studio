@@ -1,6 +1,6 @@
 import type { LocalizedDiagnostic } from "$lib/contracts/localized-diagnostic";
 
-export const WORKBENCH_SCHEMA_VERSION = 1;
+export const WORKBENCH_SCHEMA_VERSION = 3;
 
 export const WORKBENCH_COMMAND_SCHEMA_VERSION = 1;
 
@@ -8,7 +8,6 @@ export type WorkbenchActivity =
   | "editor"
   | "templates"
   | "components"
-  | "blocks"
   | "design_system"
   | "assets"
   | "content"
@@ -17,9 +16,12 @@ export type WorkbenchActivity =
   | "data"
   | "versioning"
   | "audit"
-  | "publish";
+  | "publish"
+  | "project_settings";
 
 export type WorkbenchSurface = "visual" | "code";
+
+export type WorkbenchDocumentPresentation = "html" | "code_only";
 
 type ContentWorkspaceMode = "list" | "edit";
 
@@ -38,6 +40,11 @@ type WorkbenchProjectEntrySelection = {
 type WorkbenchProjectEntryRemap = {
   sourcePrefix: string;
   destinationPrefix: string;
+};
+
+type WorkbenchDocumentPresentationEntry = {
+  relativePath: string;
+  presentation: WorkbenchDocumentPresentation;
 };
 
 export type WorkspaceSourceOpenOptions = {
@@ -66,6 +73,7 @@ export type WorkbenchDocumentSnapshot = {
   documentId: string;
   relativePath: string;
   title: string;
+  presentation: WorkbenchDocumentPresentation;
   surface: WorkbenchSurface;
   pinned: boolean;
 };
@@ -144,6 +152,7 @@ export type WorkbenchIntent =
       relativePath: string;
       groupId?: WorkbenchGroupId;
       surface?: WorkbenchSurface;
+      presentation?: WorkbenchDocumentPresentation;
       pinned?: boolean;
     }
   | {
@@ -151,12 +160,18 @@ export type WorkbenchIntent =
       relativePath: string;
       entryKind: WorkbenchProjectEntryKind;
       openSurface?: WorkbenchSurface | null;
+      openPresentation?: WorkbenchDocumentPresentation | null;
     }
   | {
       kind: "reconcile_project_entries";
       remaps?: WorkbenchProjectEntryRemap[];
       deletedPrefixes?: string[];
       selectionOverride?: WorkbenchProjectEntrySelection | null;
+      documentPresentations?: WorkbenchDocumentPresentationEntry[];
+    }
+  | {
+      kind: "reconcile_document_presentations";
+      documents: WorkbenchDocumentPresentationEntry[];
     }
   | { kind: "activate_document"; documentId: string; groupId: WorkbenchGroupId }
   | { kind: "close_document"; documentId: string; groupId: WorkbenchGroupId }
@@ -179,6 +194,7 @@ export type WorkbenchIntent =
       split: Exclude<WorkbenchSplit, "none">;
       relativePath: string;
       secondarySurface: WorkbenchSurface;
+      presentation: WorkbenchDocumentPresentation;
     }
   | { kind: "set_split_ratio"; ratioBasisPoints: number }
   | { kind: "set_canvas_viewport"; viewport: WorkbenchCanvasViewportSnapshot }
@@ -215,8 +231,9 @@ type CommandCenterItemKind =
   | "symbol"
   | "diagnostic";
 
-type CommandCenterAppCommand =
+export type CommandCenterAppCommand =
   | "open_project"
+  | "close_application"
   | "close_project"
   | "save"
   | "undo"
@@ -240,6 +257,7 @@ type CommandCenterAppCommand =
   | "toggle_inspector"
   | "toggle_theme"
   | "open_settings"
+  | "open_about"
   | "show_visual"
   | "show_code";
 

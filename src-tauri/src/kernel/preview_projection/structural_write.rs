@@ -13,7 +13,9 @@ use crate::{
     },
     project::strip_zola_root_prefix,
     project_model::{
-        model::ProjectModel, rebuild_project_model_after_workspace_change_with_source_changes,
+        model::ProjectModel,
+        rebuild_project_model_after_composed_workspace_change_with_source_changes,
+        rebuild_project_model_after_workspace_change_with_source_changes,
         ProjectModelIncrementalBuildReport, ProjectModelIncrementalIntent,
     },
     source_graph::identity::SourceChangeSet,
@@ -68,6 +70,10 @@ impl PreviewStructuralWrite {
 
 pub(crate) struct PreviewStructuralWriteCommit {
     pub(crate) workspace_mutation: ProjectWorkspaceMutationReceipt,
+    /// The model after the user-authored structural transition and before a
+    /// native-block contract adds its managed resources. Postconditions for
+    /// the user operation must be evaluated against this model.
+    pub(crate) intermediate_model: Option<ProjectModel>,
     pub(crate) after_model: ProjectModel,
     pub(crate) primary_contents: String,
     pub(crate) timings: PreviewStructuralWriteTimings,
@@ -129,6 +135,13 @@ pub(crate) fn stage_preview_structural_write_in_transaction(
     let previous_model_source_revision = workspace.project_model_source_revision;
     let project_model_incremental_intent = write.project_model_incremental_intent;
     let source_changes = write.source_changes;
+    let intermediate_template_contents =
+        is_template_source(&write.file).then(|| write.contents.clone());
+    let before_structural_projection = if intermediate_template_contents.is_some() {
+        Some(workspace.capture_projection_snapshot()?)
+    } else {
+        None
+    };
     let identity = ProjectWorkspaceIdentity {
         expected_project_root: workspace.session.project_root.clone(),
         expected_session_id: workspace.runtime_session_id(),
@@ -173,27 +186,87 @@ pub(crate) fn stage_preview_structural_write_in_transaction(
     } = stage;
     let projection = workspace.capture_projection_snapshot()?;
     let after_project_model_started = Instant::now();
-    let model_build = rebuild_project_model_after_workspace_change_with_source_changes(
-        project_root,
-        previous_model.as_deref(),
-        previous_model_source_revision,
-        &projection,
-        &workspace_mutation.touched_files,
-        project_model_incremental_intent,
-        source_changes,
-    )?;
+    let (model_build, intermediate_model) = if let Some(intermediate) =
+        intermediate_template_contents.as_deref()
+    {
+        let final_contents = projection.source_texts.text(&write.file).ok_or_else(|| {
+            format!(
+                "Mutația structurală a pierdut sursa finală {} înainte de reconciliere.",
+                write.file
+            )
+        })?;
+        if intermediate != final_contents {
+            let mut intermediate_projection = before_structural_projection.ok_or_else(|| {
+                "Mutația structurală compusă a pierdut proiecția de bază.".to_string()
+            })?;
+            intermediate_projection.revision = projection.revision;
+            intermediate_projection.workspace_transaction_id =
+                projection.workspace_transaction_id.clone();
+            intermediate_projection
+                .source_texts
+                .insert(write.file.clone(), intermediate.to_string());
+            intermediate_projection.deleted_sources.remove(&write.file);
+            if projection.changed_paths.contains(&write.file) {
+                intermediate_projection
+                    .changed_paths
+                    .insert(write.file.clone());
+            } else {
+                intermediate_projection.changed_paths.remove(&write.file);
+            }
+            let composed =
+                rebuild_project_model_after_composed_workspace_change_with_source_changes(
+                    project_root,
+                    previous_model.as_deref(),
+                    previous_model_source_revision,
+                    &intermediate_projection,
+                    &projection,
+                    std::slice::from_ref(&write.file),
+                    &workspace_mutation.touched_files,
+                    project_model_incremental_intent,
+                    source_changes,
+                )?;
+            (composed.final_build, Some(composed.intermediate_model))
+        } else {
+            let build = rebuild_project_model_after_workspace_change_with_source_changes(
+                project_root,
+                previous_model.as_deref(),
+                previous_model_source_revision,
+                &projection,
+                &workspace_mutation.touched_files,
+                project_model_incremental_intent,
+                source_changes,
+            )?;
+            (build, None)
+        }
+    } else {
+        let build = rebuild_project_model_after_workspace_change_with_source_changes(
+            project_root,
+            previous_model.as_deref(),
+            previous_model_source_revision,
+            &projection,
+            &workspace_mutation.touched_files,
+            project_model_incremental_intent,
+            source_changes,
+        )?;
+        (build, None)
+    };
     let after_project_model_build_ms = elapsed_ms(after_project_model_started);
     workspace_mutation.project_model_performance =
         Some(crate::kernel::performance::ProjectModelPerformanceSample::from(&model_build.report));
     let after_model = model_build.model;
-    let primary_contents = workspace.documents.text_for(&write.file).ok_or_else(|| {
-        format!(
-            "Mutația structurală a pierdut sursa principală {}.",
-            write.file
-        )
-    })?;
+    let primary_contents = projection
+        .source_texts
+        .text(&write.file)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "Mutația structurală a pierdut sursa principală proiectată {}.",
+                write.file
+            )
+        })?;
     Ok(PreviewStructuralWriteCommit {
         workspace_mutation,
+        intermediate_model,
         after_model,
         primary_contents,
         timings: PreviewStructuralWriteTimings {
@@ -358,6 +431,7 @@ mod tests {
         project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
         project_model::{
             attribute_engine::{plan_html_attributes, ProjectHtmlAttributeIntent},
+            build_project_model_from_workspace_projection,
             test_support::ProjectModelTestFixture,
             zola_image_engine::{
                 apply_zola_image_contract, ProjectZolaImageIntent, ZolaImageFormat,
@@ -862,10 +936,13 @@ mod tests {
             NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
         fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let page_source = "+++\ntitle = 'Test'\ntemplate = 'index.html'\n+++\n";
+        fs::write(root.join("content/_index.md"), page_source).unwrap();
         let relative_path = "templates/index.html";
-        let before = "{% block content %}<main></main>{% endblock content %}\n";
-        let with_block = r#"{% block content %}<main><div class="dialog ps-dialog-a" data-anim="ps-dialog-a" data-pana-block="dialog" data-pana-instance="dialog-dialog-a"></div></main>{% endblock content %}
+        let before = "<main></main>\n";
+        let with_block = r#"<main><div class="dialog ps-dialog-a" data-anim="ps-dialog-a" data-pana-block="dialog" data-pana-instance="dialog-dialog-a"></div></main>
 "#;
         fs::write(root.join(relative_path), before).unwrap();
 
@@ -902,14 +979,75 @@ mod tests {
             draft: None,
             revision: 0,
         });
+        documents.insert_loaded_file(FileBufferEntry {
+            relative_path: "content/_index.md".to_string(),
+            absolute_path: root
+                .join("content/_index.md")
+                .to_string_lossy()
+                .into_owned(),
+            language: TextBufferLanguage::Markdown,
+            role: TextBufferRole::Page,
+            baseline: FileBufferBaseline {
+                hash: hash_text(page_source),
+                modified_ms: 1,
+                size: page_source.len() as u64,
+                readonly: false,
+            },
+            baseline_text: page_source.into(),
+            draft: None,
+            revision: 0,
+        });
+        let config_source = "base_url = '/'\n";
+        documents.insert_loaded_file(FileBufferEntry {
+            relative_path: "zola.toml".to_string(),
+            absolute_path: root.join("zola.toml").to_string_lossy().into_owned(),
+            language: TextBufferLanguage::Toml,
+            role: TextBufferRole::Config,
+            baseline: FileBufferBaseline {
+                hash: hash_text(config_source),
+                modified_ms: 1,
+                size: config_source.len() as u64,
+                readonly: false,
+            },
+            baseline_text: config_source.into(),
+            draft: None,
+            revision: 0,
+        });
         let page_js = PageJsDraftStore::new(&session);
         let mut workspace =
             ProjectWorkspace::new(session, accepted.unwrap(), documents, page_js).unwrap();
 
+        let before_projection = workspace.capture_projection_snapshot().unwrap();
+        let before_model = build_project_model_from_workspace_projection(&root, &before_projection)
+            .expect("ProjectModel inițial");
+        let main_source_id = before_model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::Html && node.label == "<main>")
+            .expect("main target")
+            .id
+            .clone();
+        workspace
+            .publish_project_model(&before_projection, before_model)
+            .unwrap();
+        let source_changes = Some(vec![SourceChangeSet::between(
+            relative_path,
+            before,
+            with_block,
+        )
+        .with_tree_insert(
+            main_source_id,
+            crate::source_graph::identity::SourceTreeMovePosition::Inside,
+            Some(0),
+            with_block.find("<div"),
+        )]);
+
         let inserted = stage_preview_structural_write(
             &root,
             &mut workspace,
-            PreviewStructuralWrite::new("Adaugă bloc", relative_path, with_block),
+            PreviewStructuralWrite::new("Adaugă bloc", relative_path, with_block)
+                .with_source_changes(source_changes),
         )
         .unwrap();
 
@@ -935,6 +1073,34 @@ mod tests {
             .text_for(relative_path)
             .unwrap()
             .contains("data-pana-block=\"dialog\""));
+        assert_ne!(
+            workspace.documents.text_for(relative_path).as_deref(),
+            Some(with_block),
+            "contractul nativ trebuie să producă a doua tranziție de sursă"
+        );
+        assert_eq!(
+            inserted
+                .intermediate_model
+                .as_ref()
+                .and_then(|model| model
+                    .files
+                    .iter()
+                    .find(|file| file.relative_path == relative_path))
+                .map(|file| file.contents.as_str()),
+            Some(with_block),
+            "postcondiția inserării trebuie să primească modelul tranziției utilizatorului"
+        );
+        assert_eq!(
+            inserted.primary_contents,
+            inserted
+                .after_model
+                .files
+                .iter()
+                .find(|file| file.relative_path == relative_path)
+                .expect("sursa finală în ProjectModel")
+                .contents,
+            "commit-ul și after_model trebuie să publice aceeași sursă finală"
+        );
         assert!(workspace
             .documents
             .text_for("sass/pagini/index.scss")

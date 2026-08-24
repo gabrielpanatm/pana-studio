@@ -33,7 +33,8 @@ test("BlockGraph deține sursa, iar UiBlockGraph unește explicit Canvas-ul", ()
   const model = source("../src-tauri/src/source_graph/model.rs");
   const graph = source("../src-tauri/src/blocks/graph.rs");
   const canvas = source("../src-tauri/src/preview/canvas.rs");
-  const workspace = source("../src/lib/components/creation/BlocksWorkspace.svelte");
+  const commands = source("../src-tauri/src/commands/blocks.rs");
+  const inspector = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
 
   assert.match(model, /pub struct BlockDefinition/);
   assert.match(model, /pub struct BlockSourceInstance/);
@@ -46,8 +47,10 @@ test("BlockGraph deține sursa, iar UiBlockGraph unește explicit Canvas-ul", ()
   assert.match(graph, /native_block_provider_definitions/);
   assert.match(graph, /SourceNodeKind::BlockMarker/);
   assert.match(canvas, /derive_block_instances/);
-  assert.match(workspace, /readUiBlockGraph/);
-  assert.match(workspace, /uiBlockGraph\?\.renderedInstances/);
+  assert.match(commands, /pub struct UiBlockGraphSnapshot/);
+  assert.match(commands, /pub rendered_instances: Vec<RenderedBlockInstance>/);
+  assert.match(commands, /pub fn read_ui_block_graph/);
+  assert.match(inspector, /readUiBlockGraph/);
 });
 
 test("registrul Rust este autoritatea unică pentru cei opt provideri nativi", () => {
@@ -56,6 +59,7 @@ test("registrul Rust este autoritatea unică pentru cei opt provideri nativi", (
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
   const blockIo = source("../src/lib/blocks/io.ts");
   const iconIo = source("../src/lib/creation/icon-io.ts");
+  const insertCatalog = source("../src-tauri/src/kernel/insert_catalog.rs");
   const io = `${blockIo}\n${iconIo}`;
 
   for (const blockId of ["icon", "counter", "accordion", "tabs", "slider", "dialog", "offcanvas", "nav-menu"]) {
@@ -63,21 +67,16 @@ test("registrul Rust este autoritatea unică pentru cei opt provideri nativi", (
   }
   assert.match(native, /data-pana-block=/);
   assert.doesNotMatch(native, /#[0-9a-fA-F]{3,8}|rgba?\(/);
-  for (const command of [
-    "read_native_block_registry",
-    "read_ui_block_graph",
-    "read_icon_catalog",
-    "search_icon_catalog",
-  ]) {
+  for (const command of ["read_ui_block_graph", "read_icon_catalog", "search_icon_catalog"]) {
     assert.match(commands, new RegExp(command));
     assert.match(registry, new RegExp(command));
   }
-  for (const activeFrontendCommand of [
-    "read_native_block_registry",
-    "read_ui_block_graph",
-    "read_icon_catalog",
-    "search_icon_catalog",
-  ]) assert.match(io, new RegExp(`"${activeFrontendCommand}"`));
+  for (const activeFrontendCommand of ["read_ui_block_graph", "read_icon_catalog", "search_icon_catalog"]) {
+    assert.match(io, new RegExp(`"${activeFrontendCommand}"`));
+  }
+  assert.doesNotMatch(`${commands}\n${registry}\n${io}`, /read_native_block_registry/);
+  assert.match(insertCatalog, /native_block_registry_snapshot\(\)/);
+  assert.match(insertCatalog, /fn block_group\(/);
   assert.doesNotMatch(
     `${commands}\n${registry}\n${io}`,
     /\b(?:plan_native_block_contract|apply_native_block_contract|read_block_runtime_snapshot)\b/,
@@ -87,7 +86,6 @@ test("registrul Rust este autoritatea unică pentru cei opt provideri nativi", (
 test("taxonomia separă elementele, compozițiile și secțiunile page-level", () => {
   const native = source("../src-tauri/src/blocks/native.rs");
   const model = source("../src-tauri/src/source_graph/model.rs");
-  const workspace = source("../src/lib/components/creation/BlocksWorkspace.svelte");
 
   for (const blockId of ["accordion", "tabs", "slider", "dialog", "offcanvas", "nav-menu"]) {
     const definitionStart = native.indexOf(`id: "${blockId}"`);
@@ -98,11 +96,9 @@ test("taxonomia separă elementele, compozițiile și secțiunile page-level", (
   }
   assert.match(model, /zonă completă de pagină\.\n\s+Section,/);
   assert.doesNotMatch(native, /scale: BlockScale::Section/);
-  assert.match(workspace, /availableNativeBlockScales\(definitions\)/);
-  assert.match(workspace, /dynamicFields\.length > 0/);
 });
 
-test("Slider este Composition Rust-first și se editează exclusiv în panoul Blocuri", () => {
+test("Slider este Composition Rust-first și se editează exclusiv în Inspector", () => {
   const native = source("../src-tauri/src/blocks/native.rs");
   const slots = source("../src-tauri/src/blocks/slots.rs");
   const runtime = source("../src-tauri/src/blocks/runtime.js");
@@ -124,7 +120,7 @@ test("Slider este Composition Rust-first și se editează exclusiv în panoul Bl
   assert.doesNotMatch(htmlPane, /SliderBlockPropertiesEditor|data-pana-slider|inspector-slider/);
 });
 
-test("Icon este bloc static Rust-first, iar editorul lui există exclusiv în panoul Blocuri", () => {
+test("Icon este bloc static Rust-first, iar editorul lui există exclusiv în Inspector", () => {
   const native = source("../src-tauri/src/blocks/native.rs");
   const icons = source("../src-tauri/src/blocks/icons.rs");
   const insert = source("../src-tauri/src/project_model/insert_engine.rs");
@@ -258,30 +254,6 @@ test("scrierea structurală reconciliază markup și SCSS, iar runtime-ul rămâ
   assert.doesNotMatch(structural, /PageJsDraftStageInput/);
   assert.match(workspaceSave, /PageRuntimePlan::from_sources/);
   assert.doesNotMatch(frontend, /applyNativeBlockContract|reconcileNativeBlock/);
-});
-
-test("activitatea Blocuri părăsește inserarea numai după confirmarea commitului", () => {
-  const controller = source("../src/lib/editor/html-actions/insertion.ts");
-  const service = source("../src/lib/editor/html-editing-service.ts");
-  const workspace = source("../src/lib/components/creation/BlocksWorkspace.svelte");
-
-  assert.match(
-    controller,
-    /insertPaletteElementAtTarget\([\s\S]*?Promise<EditorActionOutcome>/,
-  );
-  assert.match(controller, /return committedAction\(\);/);
-  assert.match(
-    service,
-    /return insertPaletteElementAtTarget\(this\.actions, request\)/,
-  );
-  assert.match(
-    workspace,
-    /const outcome = await insertPaletteElementAtTarget\([\s\S]*?if \(outcome\.status !== "committed"\)/,
-  );
-  assert.ok(
-    workspace.indexOf('if (outcome.status !== "committed")')
-      < workspace.indexOf("await openEditor()"),
-  );
 });
 
 test("contractul blocurilor are o singură cale canonică", () => {

@@ -9,7 +9,7 @@
     IconSettings,
     IconShieldCheck,
   } from "@tabler/icons-svelte";
-  import DeployPane from "$lib/components/DeployPane.svelte";
+  import PublishOperationsPane from "$lib/components/publish/PublishOperationsPane.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import type { PublishWorkspaceState } from "$lib/deploy/publish-state.svelte";
   import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
@@ -277,19 +277,16 @@
         {#if !releaseReady}
           <div class="release-warning" role="status"><IconAlertTriangle size={15} /><span>{t("publish-gates-warning")}</span></div>
         {/if}
-        <DeployPane
+        <PublishOperationsPane
+          mode="release"
           {scannedProject}
-          cachebustAssets={publishWorkspace.cachebustAssets}
           projectRoot={workspaceMutations.identity?.expectedProjectRoot ?? ""}
           runtimeSessionId={workspaceMutations.identity?.expectedSessionId ?? ""}
           publishPreflight={publishWorkspace.currentPreflight()}
           publishBuild={publishWorkspace.currentBuild()}
           invalidatePublishAuthorization={() => publishWorkspace.invalidate()}
           buildForPublish={() => publishWorkspace.buildForPublish()}
-          workspaceMode
-          actionsOnly
           onStatusUpdate={(text, kind) => globalStatus.set(text, kind as import("$lib/status/global-status").GlobalStatusKind)}
-          onCachebustAssetsChange={(value) => { publishWorkspace.cachebustAssets = value; }}
         />
         <button class="ui-button toolbar output-link" type="button" onclick={() => { void openAudit(true); }}>{t("publish-open-log")}</button>
       </aside>
@@ -300,18 +297,16 @@
         <div><span>{t("publish-config-sources")}</span><h2>{t("publish-config-title")}</h2><p>{t("publish-config-description")}</p></div>
       </header>
       <div class="configuration-scroll">
-        <DeployPane
+        <PublishOperationsPane
+          mode="configuration"
           {scannedProject}
-          cachebustAssets={publishWorkspace.cachebustAssets}
           projectRoot={workspaceMutations.identity?.expectedProjectRoot ?? ""}
           runtimeSessionId={workspaceMutations.identity?.expectedSessionId ?? ""}
           publishPreflight={publishWorkspace.currentPreflight()}
           publishBuild={publishWorkspace.currentBuild()}
           invalidatePublishAuthorization={() => publishWorkspace.invalidate()}
           buildForPublish={() => publishWorkspace.buildForPublish()}
-          workspaceMode
           onStatusUpdate={(text, kind) => globalStatus.set(text, kind as import("$lib/status/global-status").GlobalStatusKind)}
-          onCachebustAssetsChange={(value) => { publishWorkspace.cachebustAssets = value; }}
         />
       </div>
     </div>

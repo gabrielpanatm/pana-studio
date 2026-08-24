@@ -5,6 +5,10 @@
   import InspectorSection from "../InspectorSection.svelte";
   import PropInput from "../controls/PropInput.svelte";
   import TextWithOptions from "../controls/TextWithOptions.svelte";
+  import {
+    calculateAnchoredPopoverPlacement,
+    observeAnchoredPopoverPosition,
+  } from "$lib/ui/anchored-popover";
 
   let {
     pendingValues,
@@ -71,32 +75,33 @@
   let tfBtnRef = $state<HTMLButtonElement | null>(null);
   let showTr   = $state(false);
   let showTf   = $state(false);
-  let trPos    = $state({ top: 0, left: 0, width: 220 });
-  let tfPos    = $state({ top: 0, left: 0, width: 220 });
+  let trPos    = $state({ top: 0, left: 0, width: 220, maxHeight: 280 });
+  let tfPos    = $state({ top: 0, left: 0, width: 220, maxHeight: 280 });
 
-  function calcPos(btn: HTMLButtonElement | null, width = 220) {
-    if (!btn) return { top: 0, left: 0, width };
+  function calcPos(btn: HTMLButtonElement | null, itemCount: number) {
+    if (!btn) return { top: 0, left: 0, width: 220, maxHeight: 280 };
     const rect = btn.getBoundingClientRect();
-    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
-    const spaceBelow = window.innerHeight - rect.bottom - 8;
-    const spaceAbove = rect.top - 8;
-    const top = spaceBelow >= 180 || spaceBelow >= spaceAbove
-      ? rect.bottom + 4
-      : Math.max(8, rect.top - Math.min(240, spaceAbove) - 4);
-    return { top, left, width };
+    return calculateAnchoredPopoverPlacement({
+      anchorRect: rect,
+      itemCount,
+      itemHeight: 42,
+      preferredWidth: 220,
+      horizontalAlign: "end",
+      maxHeight: 280,
+    });
   }
 
   function openTr() {
     showTf = false;
     if (showTr) { showTr = false; return; }
-    trPos = calcPos(trBtnRef);
+    trPos = calcPos(trBtnRef, TRANSITION_PRESETS.length);
     showTr = true;
   }
 
   function openTf() {
     showTr = false;
     if (showTf) { showTf = false; return; }
-    tfPos = calcPos(tfBtnRef);
+    tfPos = calcPos(tfBtnRef, TRANSFORM_FUNCTIONS.length);
     showTf = true;
   }
 
@@ -115,6 +120,16 @@
     edit.commit("transform", next);
     closeAll();
   }
+
+  $effect(() => {
+    const anchor = showTr ? trBtnRef : showTf ? tfBtnRef : null;
+    if (!anchor) return;
+    const update = () => {
+      if (showTr) trPos = calcPos(trBtnRef, TRANSITION_PRESETS.length);
+      if (showTf) tfPos = calcPos(tfBtnRef, TRANSFORM_FUNCTIONS.length);
+    };
+    return observeAnchoredPopoverPosition(anchor, update);
+  });
 </script>
 
 <!-- Backdrop to close popovers on outside click -->
@@ -129,14 +144,17 @@
 <!-- Transition popover -->
 {#if showTr}
   <div
-    class="tr-popover"
+    class="tr-popover ui-popover"
     role="listbox"
-    style="top:{trPos.top}px; left:{trPos.left}px; width:{trPos.width}px;"
+    style:top={`${trPos.top}px`}
+    style:left={`${trPos.left}px`}
+    style:width={`${trPos.width}px`}
+    style:max-height={`${trPos.maxHeight}px`}
   >
     {#each TRANSITION_PRESETS as p}
       <button
         type="button"
-        class="tr-option"
+        class="tr-option ui-option"
         onmousedown={(e) => e.preventDefault()}
         onclick={() => applyTransition(p.value)}
       >
@@ -150,14 +168,17 @@
 <!-- Transform function popover -->
 {#if showTf}
   <div
-    class="tr-popover"
+    class="tr-popover ui-popover"
     role="listbox"
-    style="top:{tfPos.top}px; left:{tfPos.left}px; width:{tfPos.width}px;"
+    style:top={`${tfPos.top}px`}
+    style:left={`${tfPos.left}px`}
+    style:width={`${tfPos.width}px`}
+    style:max-height={`${tfPos.maxHeight}px`}
   >
     {#each TRANSFORM_FUNCTIONS as f}
       <button
         type="button"
-        class="tr-option fn-option"
+        class="tr-option fn-option ui-option"
         onmousedown={(e) => e.preventDefault()}
         onclick={() => addTransformFn(f.fn)}
       >
@@ -176,8 +197,9 @@
     <button
       bind:this={trBtnRef}
       type="button"
-      class="add-btn"
+      class="add-btn ui-icon-button mini"
       class:active={showTr}
+      aria-pressed={showTr}
       title={t("inspector-transform-transition-presets")}
       aria-label={t("inspector-transform-open-transition-presets")}
       onclick={openTr}
@@ -192,13 +214,14 @@
   />
 
   <!-- TRANSFORM -->
-  <div class="sub-header" style="margin-top: 4px;">
+  <div class="sub-header spaced">
     <span class="sub-label" class:has-value={getValue("transform") !== ""}>{t("inspector-transform-transform")}</span>
     <button
       bind:this={tfBtnRef}
       type="button"
-      class="add-btn"
+      class="add-btn ui-icon-button mini"
       class:active={showTf}
+      aria-pressed={showTf}
       title={t("inspector-transform-add-function")}
       aria-label={t("inspector-transform-add-function")}
       onclick={openTf}
@@ -261,26 +284,8 @@
     color: var(--brand-strong);
   }
 
-  .add-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid var(--border-3);
-    border-radius: 4px;
-    background: var(--surface-4);
-    color: var(--text-muted);
-    font-size: 14px;
-    line-height: 1;
-    cursor: pointer;
-    transition: color 80ms, border-color 80ms, background 80ms;
-  }
-
-  .add-btn:hover, .add-btn.active {
-    border-color: var(--brand);
-    background: var(--brand-soft);
-    color: var(--brand-strong);
+  .sub-header.spaced {
+    margin-top: 4px;
   }
 
   .row-label {
@@ -308,15 +313,7 @@
   /* ── Popover ──────────────────────────────────────────────────────────── */
 
   .tr-popover {
-    position: fixed;
-    z-index: 1000;
     overflow-y: auto;
-    max-height: 280px;
-    padding: 4px;
-    border: 1px solid var(--border-4);
-    border-radius: 8px;
-    background: var(--surface-2);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
   }
 
   .tr-option {
@@ -324,18 +321,7 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 1px;
-    width: 100%;
     padding: 6px 9px;
-    border: 0;
-    border-radius: 5px;
-    background: transparent;
-    cursor: pointer;
-    text-align: left;
-    transition: background 80ms;
-  }
-
-  .tr-option:hover {
-    background: var(--brand-soft);
   }
 
   .tr-opt-name {
@@ -346,7 +332,7 @@
 
   .tr-opt-value {
     font-size: 12px;
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     color: var(--text-muted);
   }
 

@@ -62,7 +62,7 @@
           </div>
           <button
             type="button"
-            class="notification-close"
+            class="ui-icon-button ui-close-button"
             aria-label={t("common-close-notification", { title: notification.title })}
             title={t("common-close")}
             onclick={() => dismiss(notification.id)}
@@ -188,23 +188,4 @@
     background: transparent;
   }
 
-  .notification-close {
-    display: inline-grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    color: var(--text-muted);
-    background: transparent;
-    font-size: 18px;
-    line-height: 1;
-    cursor: pointer;
-  }
-
-  .notification-close:hover {
-    color: var(--text);
-    background: var(--surface);
-  }
 </style>

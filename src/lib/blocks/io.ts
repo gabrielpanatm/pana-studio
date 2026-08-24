@@ -1,6 +1,5 @@
 import {
   INSERT_CATALOG_SCHEMA_VERSION,
-  type NativeBlockRegistrySnapshot,
   type UiBlockGraphSnapshot,
   type InsertCatalogContext,
   type InsertCatalogSnapshot,
@@ -9,10 +8,6 @@ import type { FileBufferRequestIdentity } from "$lib/project/workspace-contract"
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "$lib/i18n/runtime.svelte";
 import { requireProjectFileRequestIdentity } from "$lib/session/workspace-entry-io";
-
-export function readNativeBlockRegistry(): Promise<NativeBlockRegistrySnapshot> {
-  return invoke<NativeBlockRegistrySnapshot>("read_native_block_registry");
-}
 
 export async function readUiBlockGraph(
   identity: FileBufferRequestIdentity,

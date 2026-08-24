@@ -11,7 +11,6 @@ const designSystem = source("../src/routes/design-system.css");
 const qualifiedSurfaces = [
   "../src/lib/components/project/EditorNavigationTree.svelte",
   "../src/lib/components/project/ProjectFilesTab.svelte",
-  "../src/lib/components/creation/BlocksWorkspace.svelte",
   "../src/lib/components/creation/ComponentsWorkspace.svelte",
   "../src/lib/components/creation/AssetsWorkspace.svelte",
   "../src/lib/components/creation/design-system/DesignClassesWorkspace.svelte",

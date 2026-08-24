@@ -181,13 +181,13 @@
         </div>
         <button class="ui-icon-button ui-close-button" type="button" aria-label={t("design-cancel-create")} disabled={mutating} onclick={resetPanel}><IconX size={14} /></button>
       </header>
-      <label><span>{t("design-token-name")}</span><input bind:value={formName} disabled={mutating || detailMode === "edit"} placeholder="color-accent" /></label>
-      <label><span>{t("design-scss-value")}</span><input bind:value={formValue} disabled={mutating} placeholder="#16836f" /></label>
-      <label><span>{t("design-scss-file")}</span><input bind:value={formPath} disabled={mutating || detailMode === "edit"} /></label>
-      {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+      <label class="ui-form-field"><span class="ui-form-label">{t("design-token-name")}</span><input class="ui-input" bind:value={formName} disabled={mutating || detailMode === "edit"} placeholder="color-accent" /></label>
+      <label class="ui-form-field"><span class="ui-form-label">{t("design-scss-value")}</span><input class="ui-input" bind:value={formValue} disabled={mutating} placeholder="#16836f" /></label>
+      <label class="ui-form-field"><span class="ui-form-label">{t("design-scss-file")}</span><input class="ui-input" bind:value={formPath} disabled={mutating || detailMode === "edit"} /></label>
+      {#if formError}<p class="ui-message error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
       <div class="form-actions">
-        <button type="button" disabled={mutating} onclick={resetPanel}>{t("design-cancel")}</button>
-        <button class="primary" type="submit" disabled={mutating || !formName.trim() || !formPath.trim()}>
+        <button class="ui-button" type="button" disabled={mutating} onclick={resetPanel}>{t("design-cancel")}</button>
+        <button class="ui-button primary" type="submit" disabled={mutating || !formName.trim() || !formPath.trim()}>
           <IconDeviceFloppy size={14} /> {mutating ? (detailMode === "create" ? t("design-creating-rust") : t("design-updating-rust")) : detailMode === "create" ? t("design-create-session") : t("design-save-changes")}
         </button>
       </div>
@@ -214,7 +214,7 @@
       <button class="ui-button primary primary-action" type="button" disabled={!selectedToken.editable} onclick={beginEdit}><IconEdit size={14} /> {t("design-edit")}</button>
     </div>
   {:else}
-    <div class="workspace-state">{t("design-token-empty")}</div>
+    <div class="ui-empty-state">{t("design-token-empty")}</div>
   {/if}
 {/snippet}
 

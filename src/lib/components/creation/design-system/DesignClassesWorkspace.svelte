@@ -130,9 +130,9 @@
 
 {#snippet list()}
   {#if error}
-    <div class="workspace-state error" role="alert">{error}</div>
+    <div class="ui-empty-state error" role="alert">{error}</div>
   {:else if loading && !inventory}
-    <div class="workspace-state">{t("design-loading-classes")}</div>
+    <div class="ui-empty-state">{t("design-loading-classes")}</div>
   {:else}
     {#each classes as entry (entry.name)}
       <button type="button" class="class-row ui-entity-selectable" data-ui-selected={selectedClass?.name === entry.name ? "true" : undefined} aria-pressed={selectedClass?.name === entry.name} onclick={() => selectClass(entry.name)}>
@@ -142,7 +142,7 @@
         <small>{t("design-selectors-count", { count: entry.selectorOccurrences })}</small>
       </button>
     {:else}
-      <div class="workspace-state">{t("design-empty-classes")}</div>
+      <div class="ui-empty-state">{t("design-empty-classes")}</div>
     {/each}
   {/if}
 {/snippet}
@@ -157,10 +157,10 @@
         <div><span class="detail-kicker">{detailMode === "create" ? t("design-new-resource") : t("design-controlled-change")}</span><h2>{detailMode === "create" ? t("design-add-resource", { resource: t("design-view-classes").toLocaleLowerCase(l10n.locale) }) : `.${selectedClass?.name ?? ""}`}</h2><p>{detailMode === "create" ? t("design-create-description") : t("design-change-description")}</p></div>
         <button class="ui-icon-button ui-close-button" type="button" aria-label={t("design-cancel-edit")} disabled={mutating} onclick={resetPanel}><IconX size={14} /></button>
       </header>
-      <label><span>{t("design-class-name")}</span><input bind:value={formName} disabled={mutating} placeholder="service-card" /></label>
-      {#if detailMode === "create"}<label><span>{t("design-destination-stylesheet")}</span><input bind:value={formPath} disabled={mutating} /></label>{/if}
-      {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
-      <div class="form-actions"><button type="button" disabled={mutating} onclick={resetPanel}>{t("design-cancel")}</button><button class="primary" type="submit" disabled={mutating || !formName.trim() || (detailMode === "create" && !formPath.trim())}><IconDeviceFloppy size={14} /> {detailMode === "create" ? t("design-create-session") : t("design-save-changes")}</button></div>
+      <label class="ui-form-field"><span class="ui-form-label">{t("design-class-name")}</span><input class="ui-input" bind:value={formName} disabled={mutating} placeholder="service-card" /></label>
+      {#if detailMode === "create"}<label class="ui-form-field"><span class="ui-form-label">{t("design-destination-stylesheet")}</span><input class="ui-input" bind:value={formPath} disabled={mutating} /></label>{/if}
+      {#if formError}<p class="ui-message error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+      <div class="form-actions"><button class="ui-button" type="button" disabled={mutating} onclick={resetPanel}>{t("design-cancel")}</button><button class="ui-button primary" type="submit" disabled={mutating || !formName.trim() || (detailMode === "create" && !formPath.trim())}><IconDeviceFloppy size={14} /> {detailMode === "create" ? t("design-create-session") : t("design-save-changes")}</button></div>
     </form>
   {:else if selectedClass}
     <span class="detail-kicker">{t("design-class-inventory")}</span>
@@ -173,7 +173,7 @@
         <button type="button" onclick={() => openWorkspaceSource(occurrence.file)}><span>{occurrence.kind === "markup" ? t("design-markup") : t("design-selectors")}</span><code>{occurrence.file}:{occurrence.range.line}:{occurrence.range.column}</code></button>
       {/each}
     </div>
-  {:else}<div class="workspace-state">{t("design-empty-classes")}</div>{/if}
+  {:else}<div class="ui-empty-state">{t("design-empty-classes")}</div>{/if}
 {/snippet}
 
 <ResourceWorkspaceShell panelId="design-panel-classes" tabId="design-tab-classes" detailLabel={t("design-detail-label")} {list} {detail} />

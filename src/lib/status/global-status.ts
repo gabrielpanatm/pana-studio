@@ -115,6 +115,28 @@ function stableSegment(value: string) {
   return normalized.slice(0, 72) || "status";
 }
 
+function stableIdentityHash(value: string) {
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
+/** Resolves every session-only status made durable by one ProjectWorkspace Save. */
+export function projectWorkspaceDirtyStatusKey(
+  projectRoot: string,
+  runtimeSessionId: string,
+) {
+  const identity = `${projectRoot.trim()}\u0000${runtimeSessionId.trim()}`;
+  return [
+    "project-workspace:dirty",
+    stableIdentityHash(identity),
+    stableSegment(runtimeSessionId),
+  ].join(":");
+}
+
 function severityPriority(severity: GlobalStatusSeverity, phase: GlobalStatusPhase) {
   if (severity === "blocking") return 500;
   if (severity === "error") return 450;

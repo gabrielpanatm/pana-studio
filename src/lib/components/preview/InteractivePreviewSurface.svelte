@@ -246,7 +246,6 @@
 <div
   class:canvas-fit={canvasMode === "fit"}
   class:canvas-fixed={canvasMode === "fixed"}
-  class:motion-mode={executionMode === "motion"}
   class="interactive-stage"
   style={`--preview-zoom-scale: ${previewZoom / 100}; --canvas-width-px: ${canvasWidthPx}px;`}
   aria-label={t("workbench-interactive-aria")}
@@ -294,10 +293,6 @@
     z-index: 2;
     opacity: 1;
     pointer-events: auto;
-  }
-
-  .motion-mode .interactive-frame.active {
-    pointer-events: none;
   }
 
   .canvas-fixed .interactive-frame {

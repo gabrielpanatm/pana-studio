@@ -34,11 +34,12 @@ test("contractul public deploy este generic, tipizat și nu mai expune intrarea 
   assert.doesNotMatch(io, /deploy_to_bunny|deployToBunny/);
 });
 
-test("DeployPane oferă configurarea tuturor țintelor, test, plan, progres și receipt", () => {
-  const pane = source("../src/lib/components/DeployPane.svelte");
+test("workspace-ul Publicare oferă ținte, test, plan, progres și receipt fără setările Zola", () => {
+  const pane = source("../src/lib/components/publish/PublishOperationsPane.svelte");
   const targets = source("../src/lib/components/deploy/DeployTargetsPanel.svelte");
 
   assert.match(pane, /<DeployTargetsPanel/);
+  assert.doesNotMatch(pane, /readProjectConfiguration|saveProjectConfiguration|ZolaProjectSettings/);
   for (const provider of ["bunny", "s3", "sftp", "ftp", "cloudflare_pages"]) {
     assert.match(targets, new RegExp(`value: "${provider}"|provider === "${provider}"`));
   }

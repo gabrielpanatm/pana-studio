@@ -67,7 +67,10 @@ export class ProjectAttachmentService {
       get projectWorkspaceSnapshot() { return d.project.workspace; },
       set projectWorkspaceSnapshot(snapshot) { d.project.workspace = snapshot; },
       get workbenchSnapshot() { return d.workbench.snapshot; },
-      set workbenchSnapshot(snapshot) { d.workbench.snapshot = snapshot; },
+      set workbenchSnapshot(snapshot) {
+        if (snapshot) d.workbench.acceptSnapshot(snapshot);
+        else d.workbench.reset();
+      },
       get sourceCache() { return d.source.sourceCache; },
       set sourceCache(cache) { d.source.sourceCache = cache; },
       get scssVariables() { return d.analysis.scssVariables; },

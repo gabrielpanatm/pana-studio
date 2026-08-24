@@ -93,7 +93,7 @@
           <h2 id="project-transition-title">{policyCopy?.title}</h2>
         </div>
       </div>
-      <button type="button" class="ui-icon-button ui-close-button icon-button" title={t("project-transition-cancel")} disabled={submitting} onclick={close}>
+      <button type="button" class="ui-icon-button ui-close-button" title={t("project-transition-cancel")} disabled={submitting} onclick={close}>
         <IconX size={16} stroke={1.9} />
       </button>
     </header>
@@ -235,30 +235,6 @@
     letter-spacing: 0;
   }
 
-  .icon-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border: 1px solid var(--border-3);
-    border-radius: 7px;
-    background: var(--surface-4);
-    color: var(--text-muted);
-    cursor: pointer;
-  }
-
-  .icon-button:hover:not(:disabled) {
-    color: var(--text);
-    border-color: var(--border-4);
-  }
-
-  .icon-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
   .policy-summary {
     display: grid;
     gap: 8px;
@@ -289,7 +265,7 @@
     padding-top: 2px;
     overflow-wrap: anywhere;
     color: var(--text-muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
   }
 

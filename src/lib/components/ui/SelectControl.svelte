@@ -1,6 +1,10 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { t } from "$lib/i18n/runtime.svelte";
+  import {
+    calculateAnchoredPopoverPlacement,
+    observeAnchoredPopoverPosition,
+  } from "$lib/ui/anchored-popover";
 
   export type SelectControlOption = {
     value: string;
@@ -10,32 +14,38 @@
   };
   export type SelectControlOptionInput = SelectControlOption | string;
 
-  const VIEWPORT_MARGIN = 8;
-  const GAP = 4;
-  const MAX_HEIGHT = 240;
-  const MIN_HEIGHT = 80;
   const OPTION_HEIGHT = 28;
   const GROUP_HEIGHT = 24;
   const POPOVER_CHROME_HEIGHT = 12;
+
+  const controlId = $props.id();
 
   let {
     value = "",
     options = [],
     placeholder = "",
     disabled = false,
+    size = "compact",
     ariaLabel = "",
+    name = undefined,
+    required = false,
     onchange = undefined as ((value: string) => void) | undefined,
   }: {
     value?: string;
     options?: readonly SelectControlOptionInput[];
     placeholder?: string;
     disabled?: boolean;
+    size?: "default" | "compact" | "toolbar";
     ariaLabel?: string;
+    name?: string;
+    required?: boolean;
     onchange?: (value: string) => void;
   } = $props();
 
   let root = $state<HTMLDivElement | null>(null);
+  let trigger = $state<HTMLButtonElement | null>(null);
   let open = $state(false);
+  let activeIndex = $state(-1);
   let placement = $state({ left: 0, top: 0, width: 0, maxHeight: 180 });
 
   const normalizedOptions = $derived(options.map((option) => (
@@ -49,13 +59,13 @@
   const selected = $derived(normalizedOptions.find((option) => option.value === value) ?? null);
   const effectivePlaceholder = $derived(placeholder || t("common-choose"));
   const effectiveAriaLabel = $derived(ariaLabel || t("common-choose-option"));
+  const listboxId = `${controlId}-listbox`;
+  const activeOptionId = $derived(
+    open && activeIndex >= 0 ? `${controlId}-option-${activeIndex}` : undefined,
+  );
   const popoverStyle = $derived(
     `left: ${placement.left}px; top: ${placement.top}px; width: ${placement.width}px; max-height: ${placement.maxHeight}px;`,
   );
-
-  function clamp(value: number, min: number, max: number): number {
-    return Math.min(Math.max(value, min), max);
-  }
 
   function horizontalTarget(): HTMLElement | null {
     if (!root) return null;
@@ -73,35 +83,37 @@
 
     const anchorRect = root.getBoundingClientRect();
     const targetRect = (horizontalTarget() ?? root).getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const maxViewportWidth = viewportWidth - VIEWPORT_MARGIN * 2;
-    const width = Math.max(anchorRect.width, Math.min(targetRect.width, maxViewportWidth));
-    const left = clamp(
-      targetRect.left,
-      VIEWPORT_MARGIN,
-      Math.max(VIEWPORT_MARGIN, viewportWidth - width - VIEWPORT_MARGIN),
-    );
-    const spaceBelow = viewportHeight - anchorRect.bottom - VIEWPORT_MARGIN;
-    const spaceAbove = anchorRect.top - VIEWPORT_MARGIN;
-    const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
-    const available = Math.max(MIN_HEIGHT, openAbove ? spaceAbove : spaceBelow);
-    const contentHeight = normalizedOptions.length * OPTION_HEIGHT + groupHeaderCount * GROUP_HEIGHT + POPOVER_CHROME_HEIGHT;
-    const maxHeight = Math.max(
-      MIN_HEIGHT,
-      Math.min(MAX_HEIGHT, contentHeight, Math.max(MIN_HEIGHT, available - GAP)),
-    );
-    const top = openAbove
-      ? Math.max(VIEWPORT_MARGIN, anchorRect.top - GAP - maxHeight)
-      : Math.min(anchorRect.bottom + GAP, viewportHeight - VIEWPORT_MARGIN - maxHeight);
-
-    placement = { left, top, width, maxHeight };
+    placement = calculateAnchoredPopoverPlacement({
+      anchorRect,
+      scopeRect: targetRect,
+      itemCount: normalizedOptions.length,
+      itemHeight: OPTION_HEIGHT,
+      groupCount: groupHeaderCount,
+      groupHeight: GROUP_HEIGHT,
+      chromeHeight: POPOVER_CHROME_HEIGHT,
+    });
   }
 
-  function openMenu() {
+  function selectedIndex(): number {
+    const index = normalizedOptions.findIndex((option) => option.value === value);
+    return index >= 0 ? index : 0;
+  }
+
+  function revealActiveOption() {
+    if (!root || activeIndex < 0) return;
+    root
+      .querySelector<HTMLElement>(`[data-option-index="${activeIndex}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }
+
+  function openMenu(preferredIndex = selectedIndex()) {
     if (!normalizedOptions.length) return;
+    activeIndex = Math.min(Math.max(preferredIndex, 0), normalizedOptions.length - 1);
     open = true;
-    tick().then(updatePlacement);
+    tick().then(() => {
+      updatePlacement();
+      revealActiveOption();
+    });
   }
 
   function toggle() {
@@ -116,6 +128,18 @@
   function select(option: SelectControlOption) {
     onchange?.(option.value);
     open = false;
+    trigger?.focus();
+  }
+
+  function selectActive() {
+    const option = normalizedOptions[activeIndex];
+    if (option) select(option);
+  }
+
+  function moveActive(nextIndex: number) {
+    if (!normalizedOptions.length) return;
+    activeIndex = (nextIndex + normalizedOptions.length) % normalizedOptions.length;
+    tick().then(revealActiveOption);
   }
 
   function closeFromWindow(event: MouseEvent) {
@@ -131,26 +155,43 @@
       return;
     }
     if (disabled) return;
-    if ((event.key === "Enter" || event.key === " ") && !open) {
-      event.preventDefault();
-      openMenu();
-    }
-  }
 
-  function scrollParents(): HTMLElement[] {
-    if (!root) return [];
-    const parents = new Set<HTMLElement>();
-    for (const selector of [
-      ".section-body",
-      ".inspector-pane",
-      ".step-inspector",
-      ".motion-panel",
-      ".motion-timeline-pane-shell",
-    ]) {
-      const parent = root.closest(selector) as HTMLElement | null;
-      if (parent) parents.add(parent);
+    if (event.key === "Tab") {
+      open = false;
+      return;
     }
-    return Array.from(parents);
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!open) openMenu();
+      else moveActive(activeIndex + 1);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) openMenu(selectedIndex() || normalizedOptions.length);
+      else moveActive(activeIndex - 1);
+      return;
+    }
+
+    if (open && event.key === "Home") {
+      event.preventDefault();
+      moveActive(0);
+      return;
+    }
+
+    if (open && event.key === "End") {
+      event.preventDefault();
+      moveActive(normalizedOptions.length - 1);
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (open) selectActive();
+      else openMenu();
+    }
   }
 
   $effect(() => {
@@ -159,40 +200,50 @@
   });
 
   $effect(() => {
-    if (!open || !root) return;
-    const parents = scrollParents();
-    for (const parent of parents) {
-      parent.addEventListener("scroll", updatePlacement, { passive: true });
+    if (!open) return;
+    if (!normalizedOptions.length) {
+      open = false;
+      activeIndex = -1;
+      return;
     }
-    return () => {
-      for (const parent of parents) {
-        parent.removeEventListener("scroll", updatePlacement);
-      }
-    };
+    if (activeIndex >= normalizedOptions.length) {
+      activeIndex = normalizedOptions.length - 1;
+    }
+  });
+
+  $effect(() => {
+    if (!open || !root) return;
+    return observeAnchoredPopoverPosition(root, updatePlacement);
   });
 
   $effect(() => {
     if (!open) return;
     const handleWindowClick = (event: MouseEvent) => closeFromWindow(event);
     window.addEventListener("click", handleWindowClick);
-    window.addEventListener("resize", updatePlacement);
-    window.addEventListener("scroll", updatePlacement, { passive: true });
     return () => {
       window.removeEventListener("click", handleWindowClick);
-      window.removeEventListener("resize", updatePlacement);
-      window.removeEventListener("scroll", updatePlacement);
     };
   });
 </script>
 
 <div bind:this={root} class="select-control-root" class:open>
+  {#if name}
+    <input type="hidden" {name} {value} disabled={disabled} />
+  {/if}
   <button
+    bind:this={trigger}
     type="button"
-    class="select-control"
+    role="combobox"
+    class="select-control ui-select-trigger"
+    class:compact={size === "compact"}
+    class:toolbar={size === "toolbar"}
     {disabled}
     aria-label={effectiveAriaLabel}
+    aria-required={required}
     aria-haspopup="listbox"
     aria-expanded={open}
+    aria-controls={listboxId}
+    aria-activedescendant={activeOptionId}
     onclick={toggle}
     onkeydown={handleKeydown}
   >
@@ -201,24 +252,34 @@
   </button>
 
   {#if open && normalizedOptions.length}
-    <div class="select-popover" role="listbox" aria-label={effectiveAriaLabel} style={popoverStyle}>
+    <div id={listboxId} class="select-popover ui-popover" role="listbox" aria-label={effectiveAriaLabel} style={popoverStyle}>
       {#each normalizedOptions as option, index}
         {#if option.group && option.group !== normalizedOptions[index - 1]?.group}
           <div class="select-group-label">{option.group}</div>
         {/if}
         <button
+          id={`${controlId}-option-${index}`}
           type="button"
-          class="select-option"
+          class="select-option ui-option"
           class:selected={option.value === value}
+          class:active={index === activeIndex}
           role="option"
           aria-selected={option.value === value}
+          tabindex="-1"
+          data-option-index={index}
           onmousedown={(event) => event.preventDefault()}
+          onmouseenter={() => { activeIndex = index; }}
           onclick={() => select(option)}
         >
-          <span>{option.label}</span>
-          {#if option.detail}
-            <small>{option.detail}</small>
-          {/if}
+          <span class="select-option-copy">
+            <span>{option.label}</span>
+            {#if option.detail}<small>{option.detail}</small>{/if}
+          </span>
+          <span
+            class="select-option-check"
+            class:visible={option.value === value}
+            aria-hidden="true"
+          ></span>
         </button>
       {/each}
     </div>
@@ -240,29 +301,13 @@
     gap: 8px;
     width: 100%;
     min-width: 0;
-    height: 26px;
-    padding: 0 7px;
-    box-sizing: border-box;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    background: var(--surface-8);
-    color: var(--text);
-    font: inherit;
-    font-size: 12px;
     line-height: 1;
     cursor: pointer;
     text-align: left;
     overflow: hidden;
   }
 
-  .select-control-root.open .select-control,
-  .select-control:focus-visible {
-    border-color: var(--brand);
-    outline: none;
-  }
-
   .select-control:disabled {
-    opacity: 0.45;
     cursor: default;
   }
 
@@ -287,51 +332,52 @@
     opacity: 0.72;
   }
 
-  .select-popover {
-    position: fixed;
-    z-index: 1000;
-    overflow: auto;
-    box-sizing: border-box;
-    padding: 4px;
-    border: 1px solid var(--border-4);
-    border-radius: 7px;
-    background: var(--surface-2);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
-  }
-
   .select-option {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    width: 100%;
     height: 28px;
-    min-height: 28px;
     padding: 0 8px;
-    box-sizing: border-box;
-    border: 0;
-    border-radius: 5px;
-    background: transparent;
-    color: var(--text);
-    text-align: left;
-    cursor: pointer;
-    font-size: 12px;
     line-height: 1.15;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  }
-
-  .select-option:hover,
-  .select-option:focus,
-  .select-option.selected {
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-    outline: none;
+    font-family: var(--font-mono);
   }
 
   .select-option small {
-    flex-shrink: 0;
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 11px;
+  }
+
+  .select-option-copy {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .select-option-copy > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .select-option-check {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 11px;
+    margin: -2px 4px 0 10px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    opacity: 0;
+    transform: rotate(45deg);
+    transition: opacity 100ms ease;
+  }
+
+  .select-option-check.visible {
+    opacity: 1;
   }
 
   .select-group-label {

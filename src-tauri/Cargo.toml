@@ -1,6 +1,6 @@
 [package]
 name = "pana-studio"
-version = "0.1.8"
+version = "0.1.9"
 description = "Editor vizual desktop open-source pentru site-uri Zola"
 authors = ["Gabriel Pană"]
 license = "EUPL-1.2-or-later"

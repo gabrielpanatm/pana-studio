@@ -17,6 +17,9 @@
     IconSun,
   } from "@tabler/icons-svelte";
   import { onMount } from "svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import ObservabilityLogControl from "$lib/components/kernel/ObservabilityLogControl.svelte";
   import WriteAuthorityRecoveryControl from "$lib/components/kernel/WriteAuthorityRecoveryControl.svelte";
   import AiIntegrationPane from "$lib/components/settings/AiIntegrationPane.svelte";
@@ -29,28 +32,33 @@
   import type { WorkspaceLayoutState } from "$lib/ui/workspace-layout.svelte";
   import type { AiContextStatus } from "$lib/ai/contracts";
   import type { AppHomeSnapshot } from "$lib/application/contracts";
-
-  type SettingsSection = "general" | "ai" | "system" | "storage" | "about";
+  import type { ApplicationSettingsSection } from "$lib/application/shell-state.svelte";
 
   let {
     aiContextStatus,
     applicationPreferences,
     globalStatus,
     workspaceLayout,
+    requestedSection = "general",
   }: {
     aiContextStatus: AiContextStatus | null;
     applicationPreferences: ApplicationPreferencesState;
     globalStatus: GlobalStatusState;
     workspaceLayout: WorkspaceLayoutState;
+    requestedSection?: ApplicationSettingsSection;
   } = $props();
 
-  let activeSection = $state<SettingsSection>("general");
+  let activeSection = $state<ApplicationSettingsSection>("general");
   let appHome = $state<AppHomeSnapshot | null>(null);
   let appVersion = $state("");
   let informationLoading = $state(false);
   let informationError = $state("");
   let diagnosticsRefreshToken = $state(0);
-  const settingsSections: SettingsSection[] = ["general", "ai", "system", "storage", "about"];
+  const settingsSections: ApplicationSettingsSection[] = ["general", "ai", "system", "storage", "about"];
+
+  $effect(() => {
+    if (settingsSections.includes(requestedSection)) activeSection = requestedSection;
+  });
 
   const directoryEntries = $derived.by(() => {
     if (!appHome) return [];
@@ -119,11 +127,11 @@
     globalStatus.set(t("settings-workspace-reset-status"), "restored");
   }
 
-  function selectSettingsSection(section: SettingsSection) {
+  function selectSettingsSection(section: ApplicationSettingsSection) {
     activeSection = section;
   }
 
-  function handleSettingsTabKeydown(event: KeyboardEvent, section: SettingsSection) {
+  function handleSettingsTabKeydown(event: KeyboardEvent, section: ApplicationSettingsSection) {
     const index = settingsSections.indexOf(section);
     let nextIndex = index;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % settingsSections.length;
@@ -139,8 +147,7 @@
     requestAnimationFrame(() => document.getElementById(`settings-tab-${next}`)?.focus());
   }
 
-  function updateLanguage(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
+  function updateLanguage(value: string) {
     void applicationPreferences.persistPatch(
       {
         language: value === "system"
@@ -268,7 +275,7 @@
   >
     {#if activeSection === "general"}
       <div class="content-column">
-        <section class="settings-card" aria-labelledby="appearance-title">
+        <section class="ui-card settings-card" aria-labelledby="appearance-title">
           <div class="card-heading">
             <div>
               <h2 id="appearance-title">{t("settings-appearance-title")}</h2>
@@ -287,19 +294,13 @@
                 <small>{t("settings-language-description")}</small>
               </span>
             </label>
-            <select
-              id="application-language"
+            <SelectControl
               value={languagePreferenceValue}
+              options={[{ value: "system", label: t("settings-language-system-option", { language: effectiveLanguageName }) }, ...localeOptions.map((option) => ({ value: option.locale, label: option.nativeName }))]}
               disabled={applicationPreferences.loading}
+              ariaLabel={t("settings-language-title")}
               onchange={updateLanguage}
-            >
-              <option value="system">
-                {t("settings-language-system-option", { language: effectiveLanguageName })}
-              </option>
-              {#each localeOptions as option (option.locale)}
-                <option value={option.locale}>{option.nativeName}</option>
-              {/each}
-            </select>
+            />
           </div>
 
           <div class="preference-group">
@@ -398,7 +399,7 @@
           </div>
         </section>
 
-        <section class="settings-card" aria-labelledby="layout-title">
+        <section class="ui-card settings-card" aria-labelledby="layout-title">
           <div class="card-heading">
             <div>
               <h2 id="layout-title">{t("settings-workspace-title")}</h2>
@@ -406,7 +407,7 @@
             </div>
             <IconLayout size={20} stroke={1.7} aria-hidden="true" />
           </div>
-          <button type="button" class="secondary-action" onclick={resetWorkspaceLayout}>
+          <button type="button" class="ui-button compact secondary-action" onclick={resetWorkspaceLayout}>
             <IconRefresh size={15} stroke={1.9} />
             <span>{t("settings-workspace-reset")}</span>
           </button>
@@ -425,7 +426,7 @@
       </div>
     {:else if activeSection === "system"}
       <div class="content-column wide">
-        <section class="settings-card" aria-labelledby="directories-title">
+        <section class="ui-card settings-card" aria-labelledby="directories-title">
           <div class="card-heading">
             <div>
               <h2 id="directories-title">{t("settings-directories-title")}</h2>
@@ -433,7 +434,7 @@
             </div>
             <button
               type="button"
-              class="icon-action"
+              class="ui-icon-button mini"
               title={t("settings-directories-refresh-title")}
               aria-label={t("settings-directories-refresh-title")}
               disabled={informationLoading}
@@ -444,9 +445,9 @@
           </div>
 
           {#if informationError}
-            <p class="inline-error" role="alert">{informationError}</p>
+            <InlineMessage message={informationError} tone="error" />
           {:else if informationLoading && !appHome}
-            <p class="empty-state">{t("settings-directories-loading")}</p>
+            <EmptyState compact title={t("settings-directories-loading")} />
           {:else}
             <div class="directory-list">
               {#each directoryEntries as entry (entry.label)}
@@ -455,6 +456,7 @@
                   <span>{entry.label}</span>
                   <code title={entry.value}>{entry.value}</code>
                   <button
+                    class="ui-icon-button mini"
                     type="button"
                     title={t("settings-directory-copy-title", { label: entry.label })}
                     aria-label={t("settings-directory-copy-title", { label: entry.label })}
@@ -483,7 +485,7 @@
       <StoragePane {globalStatus} />
     {:else}
       <div class="content-column">
-        <section class="about-card">
+        <section class="ui-card about-card">
           <div class="about-mark" aria-hidden="true">P</div>
           <div>
             <h2>Pană Studio</h2>
@@ -500,7 +502,7 @@
             <div><dt>{t("settings-about-license")}</dt><dd>EUPL-1.2-or-later</dd></div>
           </dl>
           {#if informationError}
-            <p class="inline-error" role="alert">{informationError}</p>
+            <InlineMessage message={informationError} tone="error" />
           {/if}
         </section>
       </div>
@@ -606,9 +608,6 @@
   .about-card,
   .section-introduction {
     padding: 16px;
-    border: 1px solid var(--wb-border-subtle, var(--border));
-    border-radius: 10px;
-    background: var(--wb-surface-chrome, var(--surface-2));
   }
 
   .section-introduction {
@@ -635,8 +634,7 @@
     font-weight: 850;
   }
 
-  .subtle-status,
-  .empty-state {
+  .subtle-status {
     color: var(--wb-text-muted, var(--text-muted));
     font-size: 12px;
   }
@@ -683,18 +681,6 @@
     color: var(--wb-text-muted, var(--text-muted));
     font-size: 11px;
     line-height: 1.35;
-  }
-
-  .preference-field select {
-    width: 100%;
-    min-height: 32px;
-    padding: 0 30px 0 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
-    color: var(--wb-text-primary, var(--text));
-    background: var(--control-bg, var(--surface-2));
-    font: inherit;
-    font-size: 12px;
   }
 
   .theme-options {
@@ -837,38 +823,8 @@
     cursor: pointer;
   }
 
-  .secondary-action,
-  .icon-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
-    color: var(--wb-text-primary, var(--text));
-    background: var(--surface);
-    cursor: pointer;
-  }
-
   .secondary-action {
     justify-self: start;
-    gap: 7px;
-    min-height: 32px;
-    padding: 0 10px;
-    font-size: 12px;
-    font-weight: 750;
-  }
-
-  .icon-action {
-    width: 30px;
-    height: 30px;
-    padding: 0;
-  }
-
-  .secondary-action:hover,
-  .icon-action:hover:not(:disabled),
-  .directory-row button:hover {
-    border-color: var(--border-4);
-    background: var(--control-hover);
   }
 
   .directory-list {
@@ -903,20 +859,6 @@
     font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .directory-row button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 7px;
-    color: var(--wb-text-muted, var(--text-muted));
-    background: transparent;
-    cursor: pointer;
   }
 
   .about-card {
@@ -970,22 +912,6 @@
     white-space: nowrap;
   }
 
-  .inline-error {
-    color: var(--danger, #dc2626);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  button:focus-visible {
-    outline: 2px solid var(--wb-focus-ring, var(--brand-strong));
-    outline-offset: 1px;
-  }
-
-  button:disabled {
-    cursor: default;
-    opacity: 0.55;
-  }
-
   @media (max-width: 760px) {
     .workspace-heading,
     .settings-scroll {
@@ -1022,7 +948,7 @@
       padding-left: 26px;
     }
 
-    .directory-row button {
+    .directory-row > button {
       grid-column: 3;
       grid-row: 1 / 3;
     }

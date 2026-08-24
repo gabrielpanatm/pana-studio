@@ -159,7 +159,9 @@ export class WorkspaceHistoryService {
         transactionId: target.transactionId,
       });
       this.dependencies.css.clearLiveProperties();
-      if (receipt.workbench) this.dependencies.workbench.snapshot = receipt.workbench.snapshot;
+      if (receipt.workbench) {
+        this.dependencies.workbench.acceptSnapshot(receipt.workbench.snapshot);
+      }
       project.workspace = receipt.workspace;
       this.snapshot = receipt.workspace;
       let previewWarning: string | null = null;

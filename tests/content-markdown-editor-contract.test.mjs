@@ -29,8 +29,8 @@ test("section settings expose mandatory pagination and hide page-only fields", (
   assert.match(settings, /isSection = pageKind === "section"/);
   assert.match(settings, /isSection[\s\S]*content-settings-field-paginate-by/);
   assert.match(settings, /min="1"[\s\S]*setField\("paginateBy"/);
-  assert.match(settings, /\{#if !isSection\}<label class="field">[\s\S]*content-settings-field-date/);
-  assert.match(settings, /\{#if !isSection\}<label class="field">[\s\S]*content-settings-field-slug/);
+  assert.match(settings, /\{#if !isSection\}<label class="ui-form-field">[\s\S]*content-settings-field-date/);
+  assert.match(settings, /\{#if !isSection\}<label class="ui-form-field">[\s\S]*content-settings-field-slug/);
 });
 
 test("the technical editor has Visual and Code only, while raw Markdown opens in Code", () => {

@@ -411,6 +411,7 @@ mod tests {
             contents: contents.to_string(),
             size_bytes: contents.len(),
             revision: "file-revision".to_string(),
+            source_hash: crate::kernel::file_buffer_store::hash_text(contents),
             from_draft: false,
         }
     }

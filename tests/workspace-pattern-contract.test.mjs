@@ -16,7 +16,6 @@ const workspaces = {
 
 const canonicalActivityWorkspaces = {
   ...workspaces,
-  blocks: "../src/lib/components/creation/BlocksWorkspace.svelte",
   templates: "../src/lib/components/templates/TemplatesWorkspace.svelte",
   taxonomies: "../src/lib/components/taxonomies/TaxonomiesWorkspace.svelte",
   audit: "../src/lib/components/audit/AuditWorkspace.svelte",
@@ -30,7 +29,6 @@ const tabbedActivityWorkspaces = {
   content: canonicalActivityWorkspaces.content,
   assets: canonicalActivityWorkspaces.assets,
   data: canonicalActivityWorkspaces.data,
-  blocks: canonicalActivityWorkspaces.blocks,
   templates: canonicalActivityWorkspaces.templates,
   audit: canonicalActivityWorkspaces.audit,
   publish: canonicalActivityWorkspaces.publish,
@@ -120,7 +118,7 @@ test("activitățile folosesc contractul vizual central pentru shell, taburi și
     );
   }
 
-  for (const name of ["design", "components", "content", "assets", "data", "blocks", "templates"]) {
+  for (const name of ["design", "components", "content", "assets", "data", "templates"]) {
     const workspace = source(canonicalActivityWorkspaces[name]);
     assert.match(
       workspace,
@@ -214,7 +212,7 @@ test("Conținut are două panouri și elimină fluxul legacy cu prompt", () => {
   const workspace = source(workspaces.content);
 
   assert.match(workspace, /type ContentView = "all" \| "pages" \| "sections"/);
-  assert.match(workspace, /class="toolbar-filter"[\s\S]*bind:value=\{sectionFilter\}/);
+  assert.match(workspace, /class="toolbar-filter"[\s\S]*value=\{sectionFilter\}/);
   assert.match(workspace, /class="content-list"/);
   assert.match(workspace, /class="detail-panel"/);
   assert.match(workspace, /commands\.createPage/);

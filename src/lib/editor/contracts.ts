@@ -2,6 +2,7 @@ import type { NativeBlockSlotMutationContext } from "$lib/blocks/contracts";
 import type {
   CanvasPatch,
   ProjectMovePosition,
+  SelectionMutationIdentity,
 } from "$lib/preview/contracts";
 import type { ProjectWorkspaceMutationReceipt } from "$lib/project/workspace-contract";
 import type {
@@ -523,6 +524,8 @@ export type SelectionIntent =
       kind: "setFocus";
       focus: SelectionFocus;
       expectedSelectionRevision?: number | null;
+      expectedSelection?: SelectionMutationIdentity | null;
+      intentSequence?: number | null;
     }
   | { kind: "clearSelection" }
   | { kind: "rebase" }

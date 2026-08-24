@@ -38,7 +38,6 @@
     children,
   }: {
     project: {
-      currentPath: string;
       root: string;
       sessionId: string;
       present: boolean;
@@ -107,11 +106,20 @@
     commands.requestCodeSelectionReveal();
   }
 
+  async function executeTopbarAction(action: CommandCenterAction) {
+    try {
+      await executeCommandCenterAction(action);
+    } catch (error) {
+      globalStatus.set(t("application-menu-action-error", {
+        error: error instanceof Error ? error.message : String(error),
+      }), "error");
+    }
+  }
+
 </script>
 
 <div class="chrome-inert-layer" inert={commandCenterOpen ? true : undefined}>
 <Topbar
-  currentProjectPath={project.currentPath}
   canUndo={topbarCanUndo}
   inspectorHasPending={project.savePending}
   canRedo={topbarCanRedo}
@@ -131,6 +139,7 @@
   toggleLeftPane={() => workspaceLayout.toggleLeftPane()}
   toggleRightPane={toggleRightInspectorPane}
   toggleTerminalPane={() => { void terminalWorkspace.togglePane(); }}
+  executeCommandCenterAction={executeTopbarAction}
   {openCommandCenter}
 />
 </div>

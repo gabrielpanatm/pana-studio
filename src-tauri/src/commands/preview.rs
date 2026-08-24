@@ -1075,60 +1075,74 @@ pub fn acknowledge_canvas_projection_phases(
             return Err(error);
         }
 
-        let mut events = Vec::with_capacity(inputs.len().saturating_add(1));
-        let mut final_plan = None;
-        for input in inputs {
-            let generation = match engine.acknowledge_candidate_phase(&app, &input) {
-                Ok(generation) => generation,
-                Err(error) => {
-                    if error.contains("nu mai are candidatul")
-                        || error.contains("altă tranzacție")
-                        || error.contains("altei sesiuni")
-                    {
-                        append_canvas_stale_identity_event(&app, &canvas_identity, error.clone());
+        let current_plan = engine.canvas_plan_for_identity(&canvas_identity)?;
+        let already_canonical = current_plan
+            .filter(|plan| canvas_phase_batch_replays_canonical(&inputs, Some(plan.phase)));
+        if let Some(plan) = already_canonical {
+            // A second frontend consumer may finish the browser-side handshake
+            // after the exact same identity was promoted. Rust is authoritative:
+            // confirming an already-canonical identity is an idempotent no-op.
+            (plan, Vec::new())
+        } else {
+            let mut events = Vec::with_capacity(inputs.len().saturating_add(1));
+            let mut final_plan = None;
+            for input in inputs {
+                let generation = match engine.acknowledge_candidate_phase(&app, &input) {
+                    Ok(generation) => generation,
+                    Err(error) => {
+                        if error.contains("nu mai are candidatul")
+                            || error.contains("altă tranzacție")
+                            || error.contains("altei sesiuni")
+                        {
+                            append_canvas_stale_identity_event(
+                                &app,
+                                &canvas_identity,
+                                error.clone(),
+                            );
+                        }
+                        return Err(error);
                     }
-                    return Err(error);
-                }
-            };
-            let plan = generation.canvas_transaction.plan();
-            let (kind, level) = match plan.phase {
-                CanvasProjectionPhase::CanonicalVerified => (
-                    KernelEventKind::PreviewCanvasCanonicalVerified,
-                    KernelLogLevel::Info,
-                ),
-                CanvasProjectionPhase::Failed => {
-                    (KernelEventKind::PreviewCanvasFailed, KernelLogLevel::Error)
-                }
-                _ => (
-                    KernelEventKind::PreviewCanvasPhaseAcknowledged,
-                    KernelLogLevel::Info,
-                ),
-            };
-            events.push(canvas_phase_event(
-                &plan,
-                kind,
-                level,
-                input.diagnostic,
-                Some(&input.phase_timings_ms),
-            ));
-            if plan.phase == CanvasProjectionPhase::CanonicalVerified {
-                events.push(canvas_observation_event(
-                    &plan,
-                    KernelEventKind::PreviewCanvasFoucGuardSatisfied,
-                    KernelLogLevel::Info,
-                    "canvas.fouc_guard_satisfied",
-                    Some(
-                        "CSS/fonts ready și frame stilizat confirmat înainte de promovare."
-                            .to_string(),
+                };
+                let plan = generation.canvas_transaction.plan();
+                let (kind, level) = match plan.phase {
+                    CanvasProjectionPhase::CanonicalVerified => (
+                        KernelEventKind::PreviewCanvasCanonicalVerified,
+                        KernelLogLevel::Info,
                     ),
+                    CanvasProjectionPhase::Failed => {
+                        (KernelEventKind::PreviewCanvasFailed, KernelLogLevel::Error)
+                    }
+                    _ => (
+                        KernelEventKind::PreviewCanvasPhaseAcknowledged,
+                        KernelLogLevel::Info,
+                    ),
+                };
+                events.push(canvas_phase_event(
+                    &plan,
+                    kind,
+                    level,
+                    input.diagnostic,
+                    Some(&input.phase_timings_ms),
                 ));
+                if plan.phase == CanvasProjectionPhase::CanonicalVerified {
+                    events.push(canvas_observation_event(
+                        &plan,
+                        KernelEventKind::PreviewCanvasFoucGuardSatisfied,
+                        KernelLogLevel::Info,
+                        "canvas.fouc_guard_satisfied",
+                        Some(
+                            "CSS/fonts ready și frame stilizat confirmat înainte de promovare."
+                                .to_string(),
+                        ),
+                    ));
+                }
+                final_plan = Some(plan);
             }
-            final_plan = Some(plan);
+            (
+                final_plan.expect("validated Canvas phase batch has at least one receipt"),
+                events,
+            )
         }
-        (
-            final_plan.expect("validated Canvas phase batch has at least one receipt"),
-            events,
-        )
     };
     let _ = append_events(&app, events);
     update_lifecycle_from_canvas_plan(
@@ -1235,6 +1249,13 @@ fn require_canvas_phase_batch(inputs: &[PreviewPhaseReceipt]) -> Result<(), Stri
         return Err("Batch-ul Canvas conține receipt-uri din identități diferite.".to_string());
     }
     Ok(())
+}
+
+fn canvas_phase_batch_replays_canonical(
+    inputs: &[PreviewPhaseReceipt],
+    current_phase: Option<CanvasProjectionPhase>,
+) -> bool {
+    inputs.len() == 3 && current_phase == Some(CanvasProjectionPhase::CanonicalVerified)
 }
 
 #[tauri::command]
@@ -1634,6 +1655,32 @@ mod tests {
         )];
 
         assert!(require_canvas_phase_batch(&receipts).is_ok());
+    }
+
+    #[test]
+    fn canonical_canvas_phase_batch_is_an_idempotent_replay() {
+        let receipts = vec![
+            canvas_phase_receipt(CanvasProjectionPhase::ResourcesReady, "transaction"),
+            canvas_phase_receipt(CanvasProjectionPhase::Committed, "transaction"),
+            canvas_phase_receipt(CanvasProjectionPhase::StyledReady, "transaction"),
+        ];
+        let failed = vec![canvas_phase_receipt(
+            CanvasProjectionPhase::Failed,
+            "transaction",
+        )];
+
+        assert!(canvas_phase_batch_replays_canonical(
+            &receipts,
+            Some(CanvasProjectionPhase::CanonicalVerified),
+        ));
+        assert!(!canvas_phase_batch_replays_canonical(
+            &receipts,
+            Some(CanvasProjectionPhase::StyledReady),
+        ));
+        assert!(!canvas_phase_batch_replays_canonical(
+            &failed,
+            Some(CanvasProjectionPhase::CanonicalVerified),
+        ));
     }
 
     #[test]

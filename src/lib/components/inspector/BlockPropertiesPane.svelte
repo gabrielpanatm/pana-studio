@@ -6,6 +6,8 @@
     IconGripHorizontal,
   } from "@tabler/icons-svelte";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import DynamicWidgetPropertiesEditor from "$lib/components/inspector/DynamicWidgetPropertiesEditor.svelte";
   import IconBlockPropertiesEditor from "$lib/components/inspector/IconBlockPropertiesEditor.svelte";
   import SliderBlockPropertiesEditor from "$lib/components/inspector/SliderBlockPropertiesEditor.svelte";
@@ -437,10 +439,11 @@ import {
             )}</strong>
       </div>
       <div class="panel-actions">
-        <button type="button" aria-label={t("inspector-block-maximize")} title={t("inspector-block-maximize")} onclick={maximize}>
+        <button class="ui-icon-button mini" type="button" aria-label={t("inspector-block-maximize")} title={t("inspector-block-maximize")} onclick={maximize}>
           <IconArrowsMaximize size={14} stroke={1.8} />
         </button>
         <button
+          class="ui-icon-button mini"
           type="button"
           aria-label={panelCollapsed
             ? t("inspector-block-open")
@@ -509,19 +512,19 @@ import {
           {#if definition && definition.options.length > 0}
             <div class="option-list">
               {#each definition.options as option (option.id)}
-                <label class="option-row">
+                <div class="option-row">
                   <span>
                     <strong>{localizedOptionLabel(sourceInstance.providerId, option)}</strong>
                     <small>{localizedOptionDescription(sourceInstance.providerId, option)}</small>
                   </span>
                   {#if option.control === "toggle"}
-                    <input type="checkbox" checked={booleanValue(option)} disabled={!sourceInstance.editable || Boolean(pendingOption)} onchange={(event) => { setDraft(option.id, { kind: "boolean", value: event.currentTarget.checked }); void commit(option); }} />
+                    <CheckboxControl compact labelHidden label={localizedOptionLabel(sourceInstance.providerId, option)} checked={booleanValue(option)} disabled={!sourceInstance.editable || Boolean(pendingOption)} onchange={(checked) => { setDraft(option.id, { kind: "boolean", value: checked }); void commit(option); }} />
                   {:else if option.control === "number"}
-                    <input class="value-input" type="number" value={numberValue(option)} min={option.constraints.minimum ?? undefined} max={option.constraints.maximum ?? undefined} step={option.constraints.step ?? 1} disabled={!sourceInstance.editable || Boolean(pendingOption)} oninput={(event) => { const next = event.currentTarget.valueAsNumber; if (Number.isFinite(next)) setDraft(option.id, { kind: "integer", value: next }); }} onblur={() => { void commit(option); }} onkeydown={(event) => handleTextKeydown(event, option)} />
+                    <input class="ui-input compact value-input" type="number" value={numberValue(option)} min={option.constraints.minimum ?? undefined} max={option.constraints.maximum ?? undefined} step={option.constraints.step ?? 1} disabled={!sourceInstance.editable || Boolean(pendingOption)} oninput={(event) => { const next = event.currentTarget.valueAsNumber; if (Number.isFinite(next)) setDraft(option.id, { kind: "integer", value: next }); }} onblur={() => { void commit(option); }} onkeydown={(event) => handleTextKeydown(event, option)} />
                   {:else}
-                    <input class="value-input" type="text" value={textValue(option)} maxlength={option.constraints.maximumLength ?? undefined} disabled={!sourceInstance.editable || Boolean(pendingOption)} oninput={(event) => setDraft(option.id, { kind: "text", value: event.currentTarget.value })} onblur={() => { void commit(option); }} onkeydown={(event) => handleTextKeydown(event, option)} />
+                    <input class="ui-input compact value-input" type="text" value={textValue(option)} maxlength={option.constraints.maximumLength ?? undefined} disabled={!sourceInstance.editable || Boolean(pendingOption)} oninput={(event) => setDraft(option.id, { kind: "text", value: event.currentTarget.value })} onblur={() => { void commit(option); }} onkeydown={(event) => handleTextKeydown(event, option)} />
                   {/if}
-                </label>
+                </div>
               {/each}
             </div>
           {/if}
@@ -531,24 +534,26 @@ import {
           {:else}
             <div class="option-list">
               {#each definition.options as option (option.id)}
-                <label class="option-row">
+                <div class="option-row">
                   <span>
                     <strong>{localizedOptionLabel(sourceInstance.providerId, option)}</strong>
                     <small>{localizedOptionDescription(sourceInstance.providerId, option)}</small>
                   </span>
                   {#if option.control === "toggle"}
-                    <input
-                      type="checkbox"
+                    <CheckboxControl
+                      compact
+                      labelHidden
+                      label={localizedOptionLabel(sourceInstance.providerId, option)}
                       checked={booleanValue(option)}
                       disabled={!sourceInstance.editable || Boolean(pendingOption)}
-                      onchange={(event) => {
-                        setDraft(option.id, { kind: "boolean", value: event.currentTarget.checked });
+                      onchange={(checked) => {
+                        setDraft(option.id, { kind: "boolean", value: checked });
                         void commit(option);
                       }}
                     />
                   {:else if option.control === "number"}
                     <input
-                      class="value-input"
+                      class="ui-input compact value-input"
                       type="number"
                       value={numberValue(option)}
                       min={option.constraints.minimum ?? undefined}
@@ -565,24 +570,19 @@ import {
                       onkeydown={(event) => handleTextKeydown(event, option)}
                     />
                   {:else if option.control === "select"}
-                    <select
-                      class="value-input"
+                    <SelectControl
                       value={textValue(option)}
+                      options={option.choices.map((choice) => ({ value: choice.value, label: localizedChoiceLabel(option, choice.value, choice.label) }))}
                       disabled={!sourceInstance.editable || Boolean(pendingOption)}
-                      onchange={(event) => {
-                        setDraft(option.id, { kind: "text", value: event.currentTarget.value });
+                      ariaLabel={localizedOptionLabel(sourceInstance.providerId, option)}
+                      onchange={(value) => {
+                        setDraft(option.id, { kind: "text", value });
                         void commit(option);
                       }}
-                    >
-                      {#each option.choices as choice (choice.value)}
-                        <option value={choice.value}>
-                          {localizedChoiceLabel(option, choice.value, choice.label)}
-                        </option>
-                      {/each}
-                    </select>
+                    />
                   {:else}
                     <input
-                      class="value-input"
+                      class="ui-input compact value-input"
                       type="text"
                       value={textValue(option)}
                       maxlength={option.constraints.maximumLength ?? undefined}
@@ -592,7 +592,7 @@ import {
                       onkeydown={(event) => handleTextKeydown(event, option)}
                     />
                   {/if}
-                </label>
+                </div>
               {/each}
             </div>
           {/if}
@@ -638,8 +638,6 @@ import {
   header span { color: var(--text-muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
   header strong { overflow: hidden; color: var(--text-strong); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .panel-actions { display: flex; flex: 0 0 auto; gap: 2px; }
-  .panel-actions button { display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: var(--radius-control); color: var(--text-muted); background: transparent; }
-  .panel-actions button:hover { border-color: var(--border); background: var(--control-hover); }
   .properties-body { min-height: 0; overflow: auto; padding: 8px; overscroll-behavior: contain; }
   .block-breadcrumb { display: flex; align-items: center; gap: 5px; margin-bottom: 8px; color: var(--text-muted); font-size: 11px; }
   .block-breadcrumb code { color: var(--brand-strong); }
@@ -648,8 +646,8 @@ import {
   .option-row > span { display: grid; gap: 2px; min-width: 0; }
   .option-row strong { color: var(--text-strong); font-size: 11px; }
   .option-row small { color: var(--text-muted); font-size: 11px; line-height: 1.3; }
-  .value-input { width: 100%; min-width: 0; height: 28px; padding: 0 7px; border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--text); background: var(--surface-2); font-size: 11px; }
-  input[type="checkbox"] { justify-self: end; width: 16px; height: 16px; accent-color: var(--brand); }
+  .value-input { width: 100%; min-width: 0; }
+  .option-row :global(.ui-checkbox) { justify-self: end; }
   .diagnostic, .source-note, .empty, .status { margin: 6px 0; font-size: 11px; line-height: 1.4; }
   .diagnostic { color: var(--danger); }
   .source-note, .empty, .status { color: var(--text-muted); }

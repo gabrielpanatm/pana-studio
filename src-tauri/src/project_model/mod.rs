@@ -33,6 +33,7 @@ use crate::{
 };
 
 pub(crate) use incremental::{
+    rebuild_project_model_after_composed_workspace_change_with_source_changes,
     rebuild_project_model_after_workspace_change,
     rebuild_project_model_after_workspace_change_with_source_changes,
     ProjectModelIncrementalBuildReport, ProjectModelIncrementalIntent,

@@ -129,7 +129,7 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
   }
 
   .dot {

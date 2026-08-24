@@ -701,6 +701,8 @@ fn selection_intent_from_project_model(
                         behavior_id: None,
                     },
                     expected_selection_revision: None,
+                    expected_selection: None,
+                    intent_sequence: None,
                 }),
                 _ => Ok(SelectionIntent::SelectSourcePosition {
                     file,
@@ -739,6 +741,8 @@ fn selection_intent_from_project_model(
         SelectionIntent::SetFocus {
             focus,
             expected_selection_revision,
+            expected_selection,
+            intent_sequence,
         } => {
             use crate::kernel::selection_coordinator::SelectionFocus;
             let focus = match focus {
@@ -783,6 +787,8 @@ fn selection_intent_from_project_model(
             Ok(SelectionIntent::SetFocus {
                 focus,
                 expected_selection_revision,
+                expected_selection,
+                intent_sequence,
             })
         }
         intent => Ok(intent),
@@ -1440,6 +1446,7 @@ mod tests {
                     relative_path: "templates/index.html".to_string(),
                     group_id: WorkbenchGroupId::Primary,
                     surface: WorkbenchSurface::Visual,
+                    presentation: crate::kernel::workbench::WorkbenchDocumentPresentation::Html,
                     pinned: false,
                 },
             )

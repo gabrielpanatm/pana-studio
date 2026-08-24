@@ -116,7 +116,6 @@ export async function projectCommittedPreviewStructuralMutation(
     patch,
     projectLocalState,
     structuralRefreshReason(receipt),
-    "await",
   );
 }
 
@@ -149,7 +148,6 @@ export async function projectCommittedPreviewSelectionBatchMutation(
     null,
     projectLocalState,
     "html-structural",
-    "await",
   );
 }
 
@@ -175,7 +173,6 @@ export async function projectCommittedEditorMoveMutation(
     null,
     projectLocalState,
     receipt.canvasPatch ? "html-structural" : "tera-structural",
-    "background",
   );
 }
 
@@ -191,7 +188,6 @@ async function projectCommittedStructuralMutation(
   patch: { file?: string } | null,
   projectLocalState: () => Promise<void> | void,
   previewReason: "html-structural" | "tera-structural",
-  projectionMode: "await" | "background",
 ): Promise<WorkspaceMutationSettlement> {
   requireCurrentCommittedMutationContext(host, context);
   requireCommittedMutationReceiptIdentity(receiptIdentity, context);
@@ -283,78 +279,37 @@ async function projectCommittedStructuralMutation(
   }
   requireCurrentCommittedMutationContext(host, context);
 
-  const settleCanonicalProjection = async () => {
-    const settlement = await settleProjectWorkspaceMutation(host, {
-      projectRoot: context.projectRoot,
-      runtimeSessionId: context.sessionId,
-      mutation,
-      workspace: snapshot,
-    }, {
-      preferredRelativePath: patch?.file ?? receipt.touchedFiles[0] ?? null,
-      refreshSourceGraph: true,
-      refreshScss: false,
-      previewReason,
-      warningLabel: t("structural-projection-operation"),
-    });
-    settlement.warnings.push(...localWarnings);
+  const settlement = await settleProjectWorkspaceMutation(host, {
+    projectRoot: context.projectRoot,
+    runtimeSessionId: context.sessionId,
+    mutation,
+    workspace: snapshot,
+  }, {
+    preferredRelativePath: patch?.file ?? receipt.touchedFiles[0] ?? null,
+    refreshSourceGraph: true,
+    refreshScss: false,
+    previewReason,
+    warningLabel: t("structural-projection-operation"),
+  });
+  settlement.warnings.push(...localWarnings);
 
-    if (
-      settlement.projections.preview === "degraded"
-      && canvasPatchApplied
-      && receipt.canvasPatch
-    ) {
-      try {
-        await host.rollbackCanvasPatchInPreview(receipt.canvasPatch);
-      } catch (rollbackError) {
-        settlement.warnings.push(
-          t("structural-projection-canvas-rollback-refused", {
-            message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-          }),
-        );
-      }
+  if (
+    settlement.projections.preview === "degraded"
+    && canvasPatchApplied
+    && receipt.canvasPatch
+  ) {
+    try {
+      await host.rollbackCanvasPatchInPreview(receipt.canvasPatch);
+    } catch (rollbackError) {
+      settlement.warnings.push(
+        t("structural-projection-canvas-rollback-refused", {
+          message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        }),
+      );
     }
-    publishStructuralProjectionWarning(host, settlement);
-    return settlement;
-  };
-  if (projectionMode === "background") {
-    void settleCanonicalProjection().catch((error) => {
-      if (
-        host.sessionProjectRoot === context.projectRoot
-        && host.kernelProjectSessionId === context.sessionId
-        && host.projectSessionEpoch === context.projectSessionEpoch
-      ) {
-        host.setGlobalStatus?.(
-          t("structural-projection-workspace-resync", {
-            message: error instanceof Error ? error.message : String(error),
-          }),
-          "unsaved",
-        );
-      }
-    });
-    return deferredCommittedStructuralSettlement(mutation, localWarnings);
   }
-  return await settleCanonicalProjection();
-}
-
-function deferredCommittedStructuralSettlement(
-  mutation: ProjectWorkspaceMutationReceipt,
-  warnings: string[],
-): WorkspaceMutationSettlement {
-  return {
-    authority: "committed",
-    workspaceRevision: mutation.revisionAfter,
-    transactionId: mutation.transactionId,
-    projections: {
-      workspaceRevision: mutation.revisionAfter,
-      topology: "deferred",
-      sourceGraph: "deferred",
-      scss: "deferred",
-      preview: "deferred",
-      previewOutcome: null,
-      warnings: [...new Set(warnings)],
-    },
-    warnings: [...new Set(warnings)],
-  };
+  publishStructuralProjectionWarning(host, settlement);
+  return settlement;
 }
 
 function degradedCommittedStructuralSettlement(
@@ -408,7 +363,9 @@ function publishStructuralProjectionWarning(
 ) {
   if (settlement.warnings.length === 0) return;
   host.setGlobalStatus?.(
-    t("structural-projection-committed-resync"),
+    t("structural-projection-committed-resync", {
+      message: settlement.warnings.join(" "),
+    }),
     "unsaved",
   );
 }

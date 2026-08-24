@@ -9,11 +9,9 @@
   import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
   import type { TerminalWorkspaceState } from "$lib/terminal/workspace.svelte";
   import type { ProjectWorkspaceMutationService } from "$lib/session/workspace-mutation-service";
-  import type { PreviewInsertDropRequest } from "$lib/state/preview-insert-controller";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
   import type { CssMutationAuthorityReceipt } from "$lib/css/mutation-contract";
   import type { ScssVariable } from "$lib/css/contracts";
-  import type { TeraDropRequest } from "$lib/tera/model";
   import type {
     PageFrontmatterField,
     PageFrontmatterMutationValue,
@@ -55,6 +53,7 @@
   import { errorMessage } from "$lib/util";
   import type { DesignClassInventorySnapshot } from "$lib/css/design-system-contract";
   import type { MotionPreviewMode } from "$lib/motion/workspace.svelte";
+  import type { ApplicationSettingsSection } from "$lib/application/shell-state.svelte";
 
   type ForwardedEditorShellProps = Omit<
     ComponentProps<typeof EditorShell>,
@@ -98,6 +97,7 @@
   }: {
     session: {
       applicationSurface: ApplicationSurface;
+      applicationSettingsSection: ApplicationSettingsSection;
       workbenchSnapshot: WorkbenchSnapshot | null;
       centerView: CenterView;
       sessionId: string;
@@ -156,14 +156,6 @@
       returnToLivePreview: () => Promise<void>;
     };
     creationCommands: {
-      updateTemplateWorkbenchContext: (
-        project: ProjectScan,
-        template: ProjectFile,
-        pageFile: string,
-        options: { preferredRoute: string; strict: true },
-      ) => Promise<unknown>;
-      insertTeraPaletteItemAtTarget: (request: TeraDropRequest) => Promise<unknown>;
-      insertPaletteElementAtTarget: (request: PreviewInsertDropRequest) => Promise<unknown>;
       refreshClassInventory: () => Promise<unknown>;
       createVariable: (path: string, name: string, value: string) => Promise<boolean>;
       createClass: (name: string, path: string) => Promise<boolean>;
@@ -239,11 +231,11 @@
   let ContentModelsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let DataWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let AssetsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
-  let BlocksWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let ComponentsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let DesignSystemWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let KernelWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let PublishWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let ProjectSettingsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let SettingsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let TaxonomiesWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let TemplatesWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
@@ -269,11 +261,6 @@
     components: async () => {
       ComponentsWorkspace = (await import(
         "$lib/components/creation/ComponentsWorkspace.svelte"
-      )).default;
-    },
-    blocks: async () => {
-      BlocksWorkspace = (await import(
-        "$lib/components/creation/BlocksWorkspace.svelte"
       )).default;
     },
     design_system: async () => {
@@ -314,6 +301,11 @@
     publish: async () => {
       PublishWorkspace = (await import(
         "$lib/components/publish/PublishWorkspace.svelte"
+      )).default;
+    },
+    project_settings: async () => {
+      ProjectSettingsWorkspace = (await import(
+        "$lib/components/project-settings/ProjectSettingsWorkspace.svelte"
       )).default;
     },
     audit: async () => {
@@ -572,6 +564,7 @@
     {#if retainedAuxiliarySurface === "settings" && SettingsWorkspace}
       <SettingsWorkspace
         aiContextStatus={auxiliary.aiContextStatus}
+        requestedSection={session.applicationSettingsSection}
         {applicationPreferences}
         {globalStatus}
         {workspaceLayout}
@@ -591,27 +584,6 @@
         {workspaceMutations}
         sourceGraph={creation.sourceGraph}
         {openWorkspaceSource}
-      />
-    {:else if retainedAuxiliarySurface === "blocks" && BlocksWorkspace}
-      <BlocksWorkspace
-        sourceGraph={creation.sourceGraph}
-        coordinatedElementSelection={creation.coordinatedElementSelection}
-        activeScannedPath={session.activeScannedPath}
-        activeCanvasPreviewRevision={creation.activeCanvasPreviewRevision}
-        {workspaceMutations}
-        scannedProject={session.project}
-        templateWorkbenchPreferredPagePath={creation.templateWorkbenchPreferredPagePath}
-        updateTemplateWorkbenchContext={(
-          project: ProjectScan,
-          template: ProjectFile,
-          pageFile: string,
-          options: { preferredRoute: string; strict: true },
-        ) => (
-          creationCommands.updateTemplateWorkbenchContext(project, template, pageFile, options)
-        )}
-        insertTeraPaletteItemAtTarget={creationCommands.insertTeraPaletteItemAtTarget}
-        insertPaletteElementAtTarget={creationCommands.insertPaletteElementAtTarget}
-        openEditor={() => workspaceCommands.setWorkbenchActivity("editor")}
       />
     {:else if retainedAuxiliarySurface === "design_system" && DesignSystemWorkspace}
       <DesignSystemWorkspace
@@ -719,6 +691,14 @@
         openAudit={workspaceCommands.openAudit}
         revealSourceRange={workspaceCommands.revealSourceRange}
         {openWorkspaceSource}
+      />
+    {:else if retainedAuxiliarySurface === "project_settings" && ProjectSettingsWorkspace}
+      <ProjectSettingsWorkspace
+        scannedProject={Boolean(session.project)}
+        projectRoot={session.projectRoot}
+        workspaceRevision={session.workspace?.revision ?? 0}
+        {publishWorkspace}
+        {globalStatus}
       />
     {:else if retainedAuxiliarySurface === "audit" && AuditWorkspace}
       <AuditWorkspace

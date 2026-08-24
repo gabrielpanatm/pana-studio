@@ -301,7 +301,7 @@
     padding: 5px 7px;
     border-radius: var(--radius-control);
     color: #ffffff;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     background: var(--selector-bg);
   }

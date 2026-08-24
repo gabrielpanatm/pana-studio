@@ -90,6 +90,11 @@ export class GlobalStatusState implements StatusControllerHost {
       && !hasOpenStatus
       && !this.notificationCenter.wasDismissed(id)
     ) return;
+    this.resolve(id);
+  }
+
+  /** Enqueues an authoritative resolution even if its publication is still in flight. */
+  resolve(id: string) {
     void this.queueKernelCommand(() => resolveKernelGlobalStatus(id));
   }
 

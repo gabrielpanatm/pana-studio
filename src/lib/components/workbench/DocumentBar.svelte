@@ -70,6 +70,7 @@
     activeGroup?.documents.find((document) => document.documentId === presentedActiveDocumentId)
       ?? null,
   );
+  const visualPresentationAvailable = $derived(activeDocument?.presentation === "html");
   const dirtySet = $derived(new Set(dirtyPaths));
   const canCloseDocuments = $derived((activeGroup?.documents.length ?? 0) > 1);
   let documentTabsElement: HTMLDivElement;
@@ -261,7 +262,7 @@
             </button>
             <button
               type="button"
-              class="ui-icon-button ui-close-button document-close"
+              class="ui-icon-button mini danger document-close"
               disabled={!canCloseDocuments}
               aria-label={t("workbench-close-document", { document: document.title })}
               title={canCloseDocuments
@@ -285,72 +286,74 @@
     </div>
   </div>
 
-  {#if snapshot?.split === "none" || !snapshot}
-    <div class="ui-tabs compact surface-switcher" role="group" aria-label={t("workbench-document-surface")}>
+  {#if visualPresentationAvailable}
+    {#if snapshot?.split === "none" || !snapshot}
+      <div class="ui-tabs compact surface-switcher" role="group" aria-label={t("workbench-document-surface")}>
+        <button
+          type="button"
+          class="ui-tab"
+          class:active={activeDocument?.surface === "visual"}
+          aria-pressed={activeDocument?.surface === "visual" ? "true" : "false"}
+          title={t("workbench-visual")}
+          onclick={() => { void setSurface("visual"); }}
+        >
+          <IconEye size={15} stroke={1.8} />
+          <span>{t("workbench-visual")}</span>
+        </button>
+        <button
+          type="button"
+          class="ui-tab"
+          class:active={activeDocument?.surface === "code"}
+          aria-pressed={activeDocument?.surface === "code" ? "true" : "false"}
+          title={t("workbench-code")}
+          onclick={() => { void setSurface("code"); }}
+        >
+          <IconCode size={15} stroke={1.8} />
+          <span>{t("workbench-code")}</span>
+        </button>
+      </div>
+    {:else}
+      <div class="split-mode-label" title={t("workbench-synchronized-surfaces")}>
+        <IconEye size={14} stroke={1.8} />
+        <span>{t("workbench-visual-code")}</span>
+      </div>
+    {/if}
+
+    <div class="layout-switcher" role="group" aria-label={t("workbench-editor-layout")}>
       <button
         type="button"
-        class="ui-tab"
-        class:active={activeDocument?.surface === "visual"}
-        aria-pressed={activeDocument?.surface === "visual" ? "true" : "false"}
-        title={t("workbench-visual")}
-        onclick={() => { void setSurface("visual"); }}
+        class:active={snapshot?.split === "vertical"}
+        aria-pressed={snapshot?.split === "vertical" ? "true" : "false"}
+        disabled={splitDisabled}
+        title={t("workbench-split-side-title")}
+        aria-label={t("workbench-split-side-enable")}
+        onclick={() => { void setSplit("vertical"); }}
       >
-        <IconEye size={15} stroke={1.8} />
-        <span>{t("workbench-visual")}</span>
+        <IconLayoutColumns size={15} stroke={1.8} />
       </button>
       <button
         type="button"
-        class="ui-tab"
-        class:active={activeDocument?.surface === "code"}
-        aria-pressed={activeDocument?.surface === "code" ? "true" : "false"}
-        title={t("workbench-code")}
-        onclick={() => { void setSurface("code"); }}
+        class:active={snapshot?.split === "horizontal"}
+        aria-pressed={snapshot?.split === "horizontal" ? "true" : "false"}
+        disabled={splitDisabled}
+        title={t("workbench-split-stack-title")}
+        aria-label={t("workbench-split-stack-enable")}
+        onclick={() => { void setSplit("horizontal"); }}
       >
-        <IconCode size={15} stroke={1.8} />
-        <span>{t("workbench-code")}</span>
+        <IconLayoutRows size={15} stroke={1.8} />
       </button>
-    </div>
-  {:else}
-    <div class="split-mode-label" title={t("workbench-synchronized-surfaces")}>
-      <IconEye size={14} stroke={1.8} />
-      <span>{t("workbench-visual-code")}</span>
+      {#if snapshot?.split !== "none"}
+        <button
+          type="button"
+          title={t("workbench-split-close")}
+          aria-label={t("workbench-split-close")}
+          onclick={() => { void setSplit("none"); }}
+        >
+          <IconLayoutOff size={15} stroke={1.8} />
+        </button>
+      {/if}
     </div>
   {/if}
-
-  <div class="layout-switcher" role="group" aria-label={t("workbench-editor-layout")}>
-    <button
-      type="button"
-      class:active={snapshot?.split === "vertical"}
-      aria-pressed={snapshot?.split === "vertical" ? "true" : "false"}
-      disabled={splitDisabled}
-      title={t("workbench-split-side-title")}
-      aria-label={t("workbench-split-side-enable")}
-      onclick={() => { void setSplit("vertical"); }}
-    >
-      <IconLayoutColumns size={15} stroke={1.8} />
-    </button>
-    <button
-      type="button"
-      class:active={snapshot?.split === "horizontal"}
-      aria-pressed={snapshot?.split === "horizontal" ? "true" : "false"}
-      disabled={splitDisabled}
-      title={t("workbench-split-stack-title")}
-      aria-label={t("workbench-split-stack-enable")}
-      onclick={() => { void setSplit("horizontal"); }}
-    >
-      <IconLayoutRows size={15} stroke={1.8} />
-    </button>
-    {#if snapshot?.split !== "none"}
-      <button
-        type="button"
-        title={t("workbench-split-close")}
-        aria-label={t("workbench-split-close")}
-        onclick={() => { void setSplit("none"); }}
-      >
-        <IconLayoutOff size={15} stroke={1.8} />
-      </button>
-    {/if}
-  </div>
 </header>
 
 <style>

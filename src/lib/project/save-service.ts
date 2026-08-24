@@ -77,6 +77,7 @@ export class ProjectSaveService {
         dependencies.project.jsRefreshToken += 1;
       },
       setGlobalStatus: (text, kind) => dependencies.status.set(text, kind),
+      resolveGlobalStatus: (key) => dependencies.status.resolve(key),
       html: {
         get inspectorPending() { return dependencies.html.inspectorPending; },
         get pending() { return dependencies.html.htmlPending; },

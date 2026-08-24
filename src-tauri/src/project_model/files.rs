@@ -9,6 +9,18 @@ use crate::project_model::model::{ProjectModelFile, ProjectModelFileKind};
 const TEXT_EXTENSIONS: &[&str] = &[
     "html", "md", "toml", "scss", "css", "js", "json", "xml", "txt", "yml", "yaml", "svg",
 ];
+
+pub(super) fn is_project_model_text_path(relative_path: &str) -> bool {
+    Path::new(relative_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            TEXT_EXTENSIONS
+                .iter()
+                .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+        })
+}
+
 pub(super) fn collect_project_model_files_from_workspace_sources(
     source_texts: &HashMap<String, String>,
     deleted_sources: &HashSet<String>,
@@ -19,15 +31,7 @@ pub(super) fn collect_project_model_files_from_workspace_sources(
     let mut files = source_texts
         .iter()
         .filter(|(relative_path, _)| {
-            !deleted_sources.contains(*relative_path)
-                && Path::new(relative_path)
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| {
-                        TEXT_EXTENSIONS
-                            .iter()
-                            .any(|allowed| extension.eq_ignore_ascii_case(allowed))
-                    })
+            !deleted_sources.contains(*relative_path) && is_project_model_text_path(relative_path)
         })
         .map(|(relative_path, contents)| {
             project_model_file(
@@ -75,12 +79,14 @@ pub(super) fn project_model_file(
 ) -> ProjectModelFile {
     let size_bytes = contents.len();
     let revision = content_revision(&contents);
+    let source_hash = crate::kernel::file_buffer_store::hash_text(&contents);
     ProjectModelFile {
         kind: file_kind(&relative_path),
         relative_path,
         contents,
         size_bytes,
         revision,
+        source_hash,
         from_draft,
     }
 }

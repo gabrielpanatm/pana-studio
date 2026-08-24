@@ -100,6 +100,7 @@
     </div>
     <button
       type="button"
+      class="ui-icon-button mini"
       title={t("inspector-slider-add")}
       aria-label={t("inspector-slider-add")}
       disabled={disabled || pending || !slot?.editable || (slot?.maximumItems != null && slot.items.length >= slot.maximumItems)}
@@ -127,10 +128,10 @@
       {/each}
     </div>
     <div class="slide-actions">
-      <button type="button" title={t("inspector-slider-move-up")} aria-label={t("inspector-slider-move-up")} disabled={disabled || pending || selectedIndex <= 0} onclick={() => move(-1)}><IconArrowUp size={14} /></button>
-      <button type="button" title={t("inspector-slider-move-down")} aria-label={t("inspector-slider-move-down")} disabled={disabled || pending || selectedIndex >= slot.items.length - 1} onclick={() => move(1)}><IconArrowDown size={14} /></button>
-      <button type="button" title={t("inspector-slider-duplicate")} aria-label={t("inspector-slider-duplicate")} disabled={disabled || pending || !selected || (slot.maximumItems != null && slot.items.length >= slot.maximumItems)} onclick={duplicate}><IconCopy size={14} /></button>
-      <button class="danger" type="button" title={t("inspector-slider-delete")} aria-label={t("inspector-slider-delete")} disabled={disabled || pending || !selected || slot.items.length <= slot.minimumItems} onclick={remove}><IconTrash size={14} /></button>
+      <button class="ui-icon-button mini" type="button" title={t("inspector-slider-move-up")} aria-label={t("inspector-slider-move-up")} disabled={disabled || pending || selectedIndex <= 0} onclick={() => move(-1)}><IconArrowUp size={14} /></button>
+      <button class="ui-icon-button mini" type="button" title={t("inspector-slider-move-down")} aria-label={t("inspector-slider-move-down")} disabled={disabled || pending || selectedIndex >= slot.items.length - 1} onclick={() => move(1)}><IconArrowDown size={14} /></button>
+      <button class="ui-icon-button mini" type="button" title={t("inspector-slider-duplicate")} aria-label={t("inspector-slider-duplicate")} disabled={disabled || pending || !selected || (slot.maximumItems != null && slot.items.length >= slot.maximumItems)} onclick={duplicate}><IconCopy size={14} /></button>
+      <button class="ui-icon-button mini danger" type="button" title={t("inspector-slider-delete")} aria-label={t("inspector-slider-delete")} disabled={disabled || pending || !selected || slot.items.length <= slot.minimumItems} onclick={remove}><IconTrash size={14} /></button>
     </div>
   {/if}
   {#if status}<p class="status" aria-live="polite">{status}</p>{/if}
@@ -142,12 +143,9 @@
   .slider-editor__heading > div { display: grid; gap: 2px; }
   strong { color: var(--text-strong); font-size: 11px; }
   small { color: var(--text-muted); font-size: 11px; }
-  button { display: grid; min-width: 27px; height: 27px; padding: 0 7px; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--text); background: var(--surface-2); }
-  button:hover:not(:disabled) { background: var(--control-hover); }
-  button:disabled { opacity: 0.45; }
-  button.danger { color: var(--danger); }
   .slide-list { display: grid; gap: 3px; max-height: 132px; overflow: auto; }
-  .slide-list button { display: flex; justify-content: space-between; width: 100%; }
+  .slide-list button { display: flex; width: 100%; min-width: 27px; height: 27px; justify-content: space-between; place-items: center; padding: 0 7px; border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--text); background: var(--surface-2); }
+  .slide-list button:hover:not(:disabled) { background: var(--control-hover); }
   .slide-list button.active { border-color: var(--brand); background: var(--control-selected); }
   .slide-list span { font-size: 11px; }
   .slide-actions { display: flex; gap: 4px; }

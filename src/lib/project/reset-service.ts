@@ -142,7 +142,10 @@ export class ProjectResetService {
       get projectWorkspaceSnapshot() { return d.workspace.project.workspace; },
       set projectWorkspaceSnapshot(snapshot) { d.workspace.project.workspace = snapshot; },
       get workbenchSnapshot() { return d.workspace.workbench.snapshot; },
-      set workbenchSnapshot(snapshot) { d.workspace.workbench.snapshot = snapshot; },
+      set workbenchSnapshot(snapshot) {
+        if (snapshot) d.workspace.workbench.acceptSnapshot(snapshot);
+        else d.workspace.workbench.reset();
+      },
       get fileExplorerSnapshot() { return d.workspace.explorer.snapshot; },
       set fileExplorerSnapshot(snapshot) { d.workspace.explorer.snapshot = snapshot; },
       get fileExplorerLoading() { return d.workspace.explorer.loading; },

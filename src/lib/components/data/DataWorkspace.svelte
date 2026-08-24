@@ -16,6 +16,10 @@
     IconTrash,
     IconX,
   } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
+  import TextFieldControl from "$lib/components/ui/TextFieldControl.svelte";
   import {
   applyDataMutation,
   readDataNodeEditor,
@@ -591,11 +595,7 @@
           </span>
         </button>
       {:else}
-        <div class="workspace-state">
-          <IconDatabase size={24} />
-          <strong>{t("data-empty-title")}</strong>
-          <span>{t("data-empty-description")}</span>
-        </div>
+        <EmptyState title={t("data-empty-title")} description={t("data-empty-description")} />
       {/each}
     </div>
 
@@ -608,22 +608,16 @@
               <h2>{t("data-toml-data")}</h2>
               <p>{t("data-new-file-description")}</p>
             </div>
-            <button class="ui-icon-button ui-close-button icon-button" type="button" aria-label={t("data-close")} onclick={resetPanel}>
+            <button class="ui-icon-button ui-close-button" type="button" aria-label={t("data-close")} onclick={resetPanel}>
               <IconX size={16} />
             </button>
           </header>
-          <label>
-            <span>{t("data-project-relative-path")}</span>
-            <input bind:value={newFileName} disabled={mutating} placeholder={t("data-new-file-placeholder")} />
-            <small>
-              {t("data-new-file-path-help")}
-            </small>
-          </label>
+          <TextFieldControl label={t("data-project-relative-path")} description={t("data-new-file-path-help")} bind:value={newFileName} disabled={mutating} placeholder={t("data-new-file-placeholder")} />
           {#if formError}
             <p class="ui-message error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>
           {/if}
           <div class="form-actions">
-            <button type="button" disabled={mutating} onclick={resetPanel}>{t("data-cancel")}</button>
+            <button class="ui-button compact" type="button" disabled={mutating} onclick={resetPanel}>{t("data-cancel")}</button>
             <button class="ui-button primary" type="submit" disabled={mutating || !canonicalFilePath(newFileName)}>
               <IconPlus size={14} /> {mutating ? t("data-validating") : t("data-create-file")}
             </button>
@@ -637,7 +631,7 @@
               <h2>{selectedFile.logicalPath}</h2>
               <p>{t("data-visual-editing-description")}</p>
             </div>
-            <button class="ui-icon-button ui-close-button icon-button" type="button" aria-label={t("data-close-editor")} onclick={resetPanel}>
+            <button class="ui-icon-button ui-close-button" type="button" aria-label={t("data-close-editor")} onclick={resetPanel}>
               <IconX size={16} />
             </button>
           </header>
@@ -677,46 +671,24 @@
                 </div>
 
                 {#if nodeEditorLoading}
-                  <div class="workspace-state compact">{t("data-loading-exact-value")}</div>
+                  <EmptyState compact title={t("data-loading-exact-value")} />
                 {:else if nodeEditor && (nodeEditor.editableKey || nodeEditor.editableValue)}
                   <form class="node-form" onsubmit={updateNode}>
                     {#if nodeEditor.editableKey}
-                      <label>
-                        <span>{t("data-key")}</span>
-                        <input bind:value={draftKey} disabled={mutating} />
-                      </label>
+                      <TextFieldControl label={t("data-key")} bind:value={draftKey} disabled={mutating} compact />
                     {/if}
                     {#if nodeEditor.editableValue}
-                      <label>
-                        <span>{t("data-type")}</span>
-                        <select
-                          value={draftKind}
-                          disabled={mutating}
-                          onchange={(event) => updateDraftKind(event.currentTarget.value as DataDraftKind)}
-                        >
-                          {#each scalarKinds as kind (kind.id)}
-                            <option value={kind.id}>{kind.label}</option>
-                          {/each}
-                        </select>
-                      </label>
+                      <div class="ui-form-field">
+                        <span class="ui-form-label">{t("data-type")}</span>
+                        <SelectControl value={draftKind} options={scalarKinds.map((kind) => ({ value: kind.id, label: kind.label }))} disabled={mutating} ariaLabel={t("data-type")} onchange={(value) => updateDraftKind(value as DataDraftKind)} />
+                      </div>
                       {#if draftKind === "boolean"}
-                        <label class="boolean-field">
-                          <input
-                            type="checkbox"
-                            checked={draftValue === "true"}
-                            disabled={mutating}
-                            onchange={(event) => { draftValue = event.currentTarget.checked ? "true" : "false"; }}
-                          />
-                          <span>{t("data-active-value")}</span>
-                        </label>
+                        <CheckboxControl compact label={t("data-active-value")} checked={draftValue === "true"} disabled={mutating} onchange={(checked) => { draftValue = checked ? "true" : "false"; }} />
                       {:else}
-                        <label>
-                          <span>{t("data-value-with-kind", { kind: draftKindLabel(draftKind).toLocaleLowerCase(uiLocale) })}</span>
-                          <input bind:value={draftValue} disabled={mutating} />
-                        </label>
+                        <TextFieldControl label={t("data-value-with-kind", { kind: draftKindLabel(draftKind).toLocaleLowerCase(uiLocale) })} bind:value={draftValue} disabled={mutating} compact />
                       {/if}
                     {/if}
-                    <button class="primary full-action" type="submit" disabled={mutating || !canUpdateSelected}>
+                    <button class="ui-button primary compact full-action" type="submit" disabled={mutating || !canUpdateSelected}>
                       <IconDeviceFloppy size={14} /> {mutating ? t("data-validating") : t("data-save-node")}
                     </button>
                   </form>
@@ -731,44 +703,23 @@
                       <h3>{selectedNode.kind === "arrayOfTables" ? t("data-kind-new-row") : t("data-new-element")}</h3>
                     </div>
                     {#if childNeedsKey(selectedNode)}
-                      <label>
-                        <span>{t("data-key")}</span>
-                        <input bind:value={insertKey} disabled={mutating} placeholder={t("data-new-key-placeholder")} />
-                      </label>
+                      <TextFieldControl label={t("data-key")} bind:value={insertKey} disabled={mutating} placeholder={t("data-new-key-placeholder")} compact />
                     {/if}
                     {#if selectedNode.kind !== "arrayOfTables"}
-                      <label>
-                        <span>{t("data-type")}</span>
-                        <select
-                          value={insertKind}
-                          disabled={mutating}
-                          onchange={(event) => updateInsertKind(event.currentTarget.value as DataDraftKind)}
-                        >
-                          {#each insertKinds as kind (kind.id)}
-                            <option value={kind.id}>{kind.label}</option>
-                          {/each}
-                        </select>
-                      </label>
+                      <div class="ui-form-field">
+                        <span class="ui-form-label">{t("data-type")}</span>
+                        <SelectControl value={insertKind} options={insertKinds.map((kind) => ({ value: kind.id, label: kind.label }))} disabled={mutating} ariaLabel={t("data-type")} onchange={(value) => updateInsertKind(value as DataDraftKind)} />
+                      </div>
                     {/if}
                     {#if draftNeedsValue(insertKind) && selectedNode.kind !== "arrayOfTables"}
                       {#if insertKind === "boolean"}
-                        <label class="boolean-field">
-                          <input
-                            type="checkbox"
-                            checked={insertValue === "true"}
-                            disabled={mutating}
-                            onchange={(event) => { insertValue = event.currentTarget.checked ? "true" : "false"; }}
-                          />
-                          <span>{t("data-active-value")}</span>
-                        </label>
+                        <CheckboxControl compact label={t("data-active-value")} checked={insertValue === "true"} disabled={mutating} onchange={(checked) => { insertValue = checked ? "true" : "false"; }} />
                       {:else}
-                        <label>
-                          <span>{t("data-value")}</span>
-                          <input bind:value={insertValue} disabled={mutating} />
-                        </label>
+                        <TextFieldControl label={t("data-value")} bind:value={insertValue} disabled={mutating} compact />
                       {/if}
                     {/if}
                     <button
+                      class="ui-button compact"
                       type="submit"
                       disabled={mutating || (childNeedsKey(selectedNode) && !insertKey)}
                     ><IconPlus size={14} /> {t("data-add-action")}</button>
@@ -780,13 +731,13 @@
                     {#if deleteConfirmationOpen}
                       <p>{t("data-delete-confirmation", { node: nodeLabel(selectedNode) })}</p>
                       <div>
-                        <button type="button" disabled={mutating} onclick={() => { deleteConfirmationOpen = false; }}>{t("data-cancel")}</button>
+                        <button class="ui-button compact" type="button" disabled={mutating} onclick={() => { deleteConfirmationOpen = false; }}>{t("data-cancel")}</button>
                         <button class="ui-button danger" type="button" disabled={mutating} onclick={() => { void deleteNode(); }}>
                           <IconTrash size={14} /> {mutating ? t("data-checking") : t("data-delete")}
                         </button>
                       </div>
                     {:else}
-                      <button class="danger-link" type="button" onclick={() => { deleteConfirmationOpen = true; }}>
+                      <button class="ui-button quiet danger compact danger-link" type="button" onclick={() => { deleteConfirmationOpen = true; }}>
                         <IconTrash size={14} /> {t("data-delete-node")}
                       </button>
                     {/if}
@@ -814,7 +765,7 @@
               <p><code>{selectedFile.file}</code></p>
             </div>
             {#if selectedFile.capabilities.canOpenInCode}
-              <button type="button" onclick={() => { void openSource(selectedFile); }}>
+              <button class="ui-button compact" type="button" onclick={() => { void openSource(selectedFile); }}>
                 <IconExternalLink size={14} /> {t("data-open-in-editor")}
               </button>
             {/if}
@@ -856,7 +807,7 @@
           </div>
 
           {#if selectedFile.capabilities.canEditVisual && selectedFile.format === "toml" && !selectedFile.parseError}
-            <button class="primary full-action" type="button" onclick={() => beginEdit(selectedFile)}>
+            <button class="ui-button primary full-action" type="button" onclick={() => beginEdit(selectedFile)}>
               <IconEdit size={14} /> {t("data-edit-visually")}
             </button>
           {:else}
@@ -868,7 +819,7 @@
           {/if}
         </div>
       {:else}
-        <div class="workspace-state">{t("data-select-or-create")}</div>
+        <EmptyState title={t("data-select-or-create")} />
       {/if}
     </aside>
   </div>
@@ -896,7 +847,6 @@
   .file-details, .detail-form { display: grid; align-content: start; gap: 14px; padding: 17px; }
   .detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
   .detail-header > div { min-width: 0; }
-  .detail-header > button:not(.icon-button) { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; min-height: 28px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 11px; }
   .detail-kicker-row { display: flex; align-items: center; justify-content: space-between; }
   .detail-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin: 0; }
   .detail-stats div { padding: 9px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-chrome); }
@@ -911,7 +861,6 @@
   .context-note { padding: 10px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-chrome); }
   .visual-editor { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 0; }
   .editor-header { padding: 14px 16px; border-bottom: 1px solid var(--wb-border-subtle); }
-  .icon-button { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-muted); background: var(--wb-surface-document); }
   .editor-body { display: grid; grid-template-columns: minmax(250px, .82fr) minmax(270px, 1fr); min-width: 0; min-height: 0; }
   .node-tree { min-width: 0; min-height: 0; overflow: auto; padding: 8px; border-right: 1px solid var(--wb-border-subtle); }
   .node-tree > button { --ui-entity-color: var(--wb-text-muted); display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; width: 100%; min-height: 38px; gap: 6px; padding: 5px 7px; border: 1px solid transparent; border-radius: 6px; color: var(--wb-text-muted); background: transparent; text-align: left; }
@@ -926,27 +875,13 @@
   .node-editor-title code { max-width: 48%; overflow: hidden; color: var(--wb-text-muted); text-overflow: ellipsis; white-space: nowrap; }
   .node-form, .insert-form { display: grid; gap: 9px; padding: 11px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-chrome); }
   .insert-form { border-style: dashed; }
-  :is(.detail-form, .node-form, .insert-form) label { display: grid; gap: 5px; color: var(--wb-text-muted); font-size: 11px; font-weight: 650; }
-  :is(.detail-form, .node-form, .insert-form) :is(input, select) { min-width: 0; height: 31px; padding: 0 8px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font: inherit; font-weight: 500; }
-  :is(.detail-form, .node-form, .insert-form) :is(input, select):focus { border-color: var(--wb-accent); outline: 2px solid var(--wb-focus-ring); outline-offset: -2px; }
-  .detail-form label small { color: var(--wb-text-muted); font-weight: 450; line-height: 1.4; }
-  .boolean-field { display: flex; align-items: center; gap: 7px; }
-  .boolean-field input { width: 16px; height: 16px; }
   .load-paths { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-chrome); }
   .load-paths code { overflow: hidden; color: var(--wb-text-muted); text-overflow: ellipsis; white-space: nowrap; }
   .form-actions { display: flex; justify-content: flex-end; gap: 7px; padding-top: 3px; }
-  .form-actions > button:not(.primary), .insert-form > button, .danger-zone button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 11px; }
   .danger-zone { display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid var(--wb-border-subtle); }
   .danger-zone > p { color: var(--danger); }
   .danger-zone > div { display: flex; justify-content: flex-end; gap: 7px; }
-  .danger-zone .danger, .danger-zone .danger-link { color: var(--danger); border-color: color-mix(in srgb, var(--danger), transparent 60%); }
-  .danger-zone .danger-link { justify-self: start; border-color: transparent; background: transparent; }
-  .ui-message { display: flex; align-items: flex-start; gap: 6px; padding: 8px 9px; border-radius: 6px; font-size: 11px; line-height: 1.4; }
-  .ui-message.error { border: 1px solid color-mix(in srgb, var(--danger), transparent 58%); color: var(--danger); background: color-mix(in srgb, var(--danger), transparent 92%); }
-  .workspace-state { display: grid; min-height: 180px; place-content: center; justify-items: center; gap: 7px; padding: 18px; color: var(--wb-text-muted); text-align: center; font-size: 12px; }
-  .workspace-state.compact { min-height: 70px; }
-  button:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: -2px; }
-  button:disabled { cursor: default; opacity: .5; }
+  .danger-zone .danger-link { justify-self: start; }
   @media (max-width: 1180px) {
     .workspace-body { grid-template-columns: minmax(260px, .65fr) minmax(430px, 1.35fr); }
     .workspace-header dl div:nth-child(2), .workspace-header dl div:nth-child(3) { display: none; }

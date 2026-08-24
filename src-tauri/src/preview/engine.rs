@@ -21,7 +21,11 @@ use crate::{
         template_path_from_motion_source,
     },
     kernel::{
-        project_workspace::WorkspaceProjectionSnapshot, write_authority::PendingProjectAuthority,
+        project_workspace::WorkspaceProjectionSnapshot,
+        write_authority::{
+            PendingProjectAuthority, WriteAuthority, WriteCategory, WriteIntent,
+            WriteOperationKind, WriteOwner, WritePolicy, WriteTarget,
+        },
     },
     preview::{
         inject::{
@@ -718,32 +722,31 @@ impl PersistentZolaPreviewEngine {
                 self.site = Some(site);
                 rendered
             }),
-            ProjectionRenderImpact::Templates => self
+            ProjectionRenderImpact::Templates | ProjectionRenderImpact::TemplatesAndAssets => self
                 .site
                 .as_mut()
                 .ok_or_else(|| "Motorul Zola persistent nu are site activ.".to_string())
                 .and_then(|site| {
-                    let previous = previous_generation.clone().ok_or_else(|| {
-                        "Motorul Preview nu are generația de artifacte pentru reload-ul template-urilor."
-                            .to_string()
-                    })?;
-                    remove_persistent_preview_artifact_root(
-                        app,
-                        &self.session_root,
-                        artifact_root,
-                    )?;
-                    generation_assets_root = previous.assets_root.clone();
-                    inherited_assets = Some(previous);
-                    site.set_base_url(base_url.clone());
-                    site.set_output_path(&generation_assets_root);
-                    clear_site_content()?;
-                    site.reload_templates().map_err(|error| {
-                        format!(
-                            "Zola 0.22.1 nu a putut reîncărca template-urile reviziei {}: {error}",
-                            projection.revision
-                        )
-                    })?;
-                    capture_site_content()
+                    if impact == ProjectionRenderImpact::Templates {
+                        let previous = previous_generation.clone().ok_or_else(|| {
+                            "Motorul Preview nu are generația de artifacte pentru reload-ul template-urilor."
+                                .to_string()
+                        })?;
+                        remove_persistent_preview_artifact_root(
+                            app,
+                            &self.session_root,
+                            artifact_root,
+                        )?;
+                        generation_assets_root = previous.assets_root.clone();
+                        inherited_assets = Some(previous);
+                    }
+                    render_incremental_template_generation(
+                        site,
+                        &generation_assets_root,
+                        &base_url,
+                        projection.revision,
+                        impact == ProjectionRenderImpact::TemplatesAndAssets,
+                    )
                 }),
             ProjectionRenderImpact::AssetsOnly => self
                 .site
@@ -779,7 +782,28 @@ impl PersistentZolaPreviewEngine {
             reused.preview_revision = preview_revision.to_string();
             reused
         } else {
-            CanvasResourceManifest::from_artifact_root(preview_revision, &generation_assets_root)?
+            CanvasResourceManifest::from_revisioned_artifact_root(
+                preview_revision,
+                &generation_assets_root,
+                |target, contents| {
+                    let intent = WriteIntent::new(
+                        WriteCategory::PreviewWorkspaceWrite,
+                        WriteOwner::Preview,
+                        WriteOperationKind::WriteBytes,
+                        WriteTarget::new(
+                            target.to_path_buf(),
+                            generation_assets_root.clone(),
+                            "preview/revisioned-stylesheet",
+                        ),
+                        WritePolicy::preview_workspace_atomic(),
+                        "Versionare URL resurse CSS Preview",
+                    );
+                    WriteAuthority::new(app)
+                        .write_bytes(intent, contents)
+                        .map(|_| ())
+                        .map_err(|error| error.into_terminal_diagnostic())
+                },
+            )?
         };
         let resource_manifest_ms = elapsed_ms(resource_manifest_started);
         let resource_versions = PreviewResourceVersions::from_entries(
@@ -1531,6 +1555,7 @@ fn canvas_route_for_content_key(content_key: &str) -> String {
 enum ProjectionRenderImpact {
     Full,
     Templates,
+    TemplatesAndAssets,
     AssetsOnly,
 }
 
@@ -1543,6 +1568,7 @@ fn projection_render_impact(
         return ProjectionRenderImpact::Full;
     }
     let mut templates = false;
+    let mut assets = false;
     for project_relative in &update.projected_paths {
         let relative = project_relative.as_str();
         if relative == "config.toml"
@@ -1558,12 +1584,14 @@ fn projection_render_impact(
         }
         if relative.starts_with("templates/") {
             templates = true;
+        } else {
+            assets = true;
         }
     }
-    if templates {
-        ProjectionRenderImpact::Templates
-    } else {
-        ProjectionRenderImpact::AssetsOnly
+    match (templates, assets) {
+        (true, true) => ProjectionRenderImpact::TemplatesAndAssets,
+        (true, false) => ProjectionRenderImpact::Templates,
+        (false, _) => ProjectionRenderImpact::AssetsOnly,
     }
 }
 
@@ -1664,6 +1692,27 @@ fn clear_site_content() -> Result<(), String> {
         .map_err(|_| "Zola SITE_CONTENT este indisponibil înainte de randare.".to_string())?
         .clear();
     Ok(())
+}
+
+fn render_incremental_template_generation(
+    site: &mut Site,
+    artifact_root: &Path,
+    base_url: &str,
+    workspace_revision: u64,
+    rebuild_assets: bool,
+) -> Result<HashMap<String, String>, String> {
+    site.set_base_url(base_url.to_string());
+    site.set_output_path(artifact_root);
+    if rebuild_assets {
+        materialize_official_zola_assets(site, workspace_revision)?;
+    }
+    clear_site_content()?;
+    site.reload_templates().map_err(|error| {
+        format!(
+            "Zola 0.22.1 nu a putut reîncărca template-urile reviziei {workspace_revision}: {error}"
+        )
+    })?;
+    capture_site_content()
 }
 
 fn materialize_official_zola_assets(site: &Site, workspace_revision: u64) -> Result<(), String> {
@@ -2434,6 +2483,22 @@ Conținut draft vizibil în editor.
             ProjectionRenderImpact::AssetsOnly
         );
         assert_eq!(
+            projection_render_impact(
+                &update(&["templates/layout.html", "sass/pages/index.scss"], false),
+                true,
+                true,
+            ),
+            ProjectionRenderImpact::TemplatesAndAssets
+        );
+        assert_eq!(
+            projection_render_impact(
+                &update(&["templates/layout.html", "static/site.js"], false),
+                true,
+                true,
+            ),
+            ProjectionRenderImpact::TemplatesAndAssets
+        );
+        assert_eq!(
             projection_render_impact(&update(&["content/about.md"], false), true, true),
             ProjectionRenderImpact::Full
         );
@@ -2510,10 +2575,9 @@ Conținut draft vizibil în editor.
 "#,
         )
         .unwrap();
-        site.set_output_path(&template_output);
-        clear_site_content().unwrap();
-        site.reload_templates().unwrap();
-        let template_rendered = capture_site_content().unwrap();
+        let template_rendered =
+            render_incremental_template_generation(&mut site, &template_output, base_url, 2, false)
+                .unwrap();
 
         fs::write(
             project.join("sass/site.scss"),
@@ -2536,6 +2600,58 @@ Conținut draft vizibil în editor.
         assert_eq!(
             fs::read(sass_output.join("asset.txt")).unwrap(),
             fs::read(sass_fresh.join("asset.txt")).unwrap()
+        );
+
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn retained_site_mixed_template_and_asset_update_keeps_fresh_disk_parity() {
+        let fixture = parity_fixture("persistent-site-mixed-parity");
+        let project = fixture.join("project");
+        let first_output = fixture.join("first-output");
+        let mixed_output = fixture.join("mixed-output");
+        let mixed_fresh = fixture.join("mixed-fresh");
+        create_parity_project(&project);
+        fs::create_dir_all(&first_output).unwrap();
+        fs::create_dir_all(&mixed_output).unwrap();
+        let base_url = "https://preview.pana.invalid";
+
+        let _render = acquire_zola_engine_for_test();
+        let (mut site, _) = build_new_official_zola_site(
+            &project,
+            &first_output,
+            base_url,
+            1,
+            DraftRenderPolicy::Include,
+        )
+        .unwrap();
+        fs::write(
+            project.join("templates/index.html"),
+            r#"<!doctype html>
+<html lang="ro"><head><meta charset="utf-8"><title>{{ config.title }} · {{ section.title }}</title><link rel="stylesheet" href="{{ get_url(path='site.css') }}"></head><body><main data-revision="mixed-2">{{ section.content | safe }}</main><a href="{{ get_url(path='asset.txt') }}">asset</a></body></html>
+"#,
+        )
+        .unwrap();
+        fs::write(
+            project.join("sass/site.scss"),
+            "$accent: #a32952; body { color: $accent; main { display: flex; } }\n",
+        )
+        .unwrap();
+        let mixed_rendered =
+            render_incremental_template_generation(&mut site, &mixed_output, base_url, 2, true)
+                .unwrap();
+        drop(_render);
+
+        run_fresh_embedded_disk_build(&project, &mixed_fresh, base_url);
+        assert_rendered_matches_disk(&mixed_rendered, &mixed_fresh);
+        assert_eq!(
+            fs::read(mixed_output.join("site.css")).unwrap(),
+            fs::read(mixed_fresh.join("site.css")).unwrap()
+        );
+        assert_eq!(
+            fs::read(mixed_output.join("asset.txt")).unwrap(),
+            fs::read(mixed_fresh.join("asset.txt")).unwrap()
         );
 
         fs::remove_dir_all(fixture).unwrap();
@@ -2808,6 +2924,10 @@ Conținut draft vizibil în editor.
 
         let sass_path = "sass/site.scss".to_string();
         source_texts.insert(
+            template_path.clone(),
+            source_texts[&template_path].replace("data-draft=\"two\"", "data-draft=\"three\""),
+        );
+        source_texts.insert(
             sass_path.clone(),
             "$accent: #a32952; body { color: $accent; main { display: flex; } }\n".to_string(),
         );
@@ -2817,9 +2937,6 @@ Conținut draft vizibil în editor.
                 &projection(
                     3,
                     source_texts.clone(),
-                    // A real projection still reports every path dirty against
-                    // Save; the projection result must expose only this
-                    // revision-to-revision Sass delta.
                     HashSet::from([template_path.clone(), sass_path.clone()]),
                 ),
                 None,
@@ -2829,7 +2946,28 @@ Conținut draft vizibil în editor.
             .unwrap();
         assert!(third.generation.inherited_assets.is_none());
         assert_ne!(third.generation.assets_root, first_assets_root);
-        assert_eq!(third.projected_paths, vec![sass_path]);
+        assert_eq!(
+            third.projected_paths,
+            vec![sass_path.clone(), template_path.clone()]
+        );
+        let previous_css_hash = second_generation
+            .canvas_transaction
+            .resources
+            .entries
+            .iter()
+            .find(|entry| entry.url == "/site.css")
+            .map(|entry| entry.content_hash.clone())
+            .expect("generația template-only trebuie să păstreze manifestul CSS");
+        let next_css_hash = third
+            .generation
+            .canvas_transaction
+            .resources
+            .entries
+            .iter()
+            .find(|entry| entry.url == "/site.css")
+            .map(|entry| entry.content_hash.clone())
+            .expect("generația mixtă trebuie să publice manifestul CSS");
+        assert_ne!(next_css_hash, previous_css_hash);
         assert!(read_http_document(&format!("{url}/site.css"))
             .unwrap()
             .contains("#147d6f"));
@@ -2837,6 +2975,9 @@ Conținut draft vizibil în editor.
         assert!(read_http_document(&format!("{url}/site.css"))
             .unwrap()
             .contains("#a32952"));
+        assert!(read_http_document(&format!("{url}/"))
+            .unwrap()
+            .contains("data-draft=\"three\""));
 
         source_texts.insert(template_path.clone(), "{% if %}".to_string());
         assert!(engine
@@ -2850,7 +2991,7 @@ Conținut draft vizibil în editor.
             .is_err());
         assert!(read_http_document(&format!("{url}/"))
             .unwrap()
-            .contains("data-draft=\"two\""));
+            .contains("data-draft=\"three\""));
 
         engine.stop(&app_handle).unwrap();
         drop(app);

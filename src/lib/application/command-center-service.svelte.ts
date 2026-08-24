@@ -27,6 +27,7 @@ import type {
   WorkbenchSurface,
 } from "$lib/workbench/contracts";
 import { t } from "$lib/i18n/runtime.svelte";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type CommandCenterGuards = Readonly<{
   ai: AiCoordinationState;
@@ -98,6 +99,9 @@ export class CommandCenterService {
     event.preventDefault();
     const d = this.dependencies;
     if (intent === "commandCenter") this.show();
+    else if (intent === "openProject") void d.project.startup.openFolder();
+    else if (intent === "closeApplication") void getCurrentWindow().close();
+    else if (intent === "openSettings") void this.execute({ kind: "app_command", command: "open_settings" });
     else if (intent === "save") void d.actions.save.saveActiveFile();
     else if (intent === "undo") void d.actions.history.run("undo");
     else if (intent === "redo") void d.actions.history.run("redo");
@@ -127,6 +131,7 @@ export class CommandCenterService {
     }
     switch (action.command) {
       case "open_project": await d.project.startup.openFolder(); break;
+      case "close_application": await getCurrentWindow().close(); break;
       case "close_project": await d.project.transitions.close(); break;
       case "save": await d.actions.save.saveActiveFile(); break;
       case "undo": await d.actions.history.run("undo"); break;
@@ -160,7 +165,14 @@ export class CommandCenterService {
       case "toggle_left_sidebar": d.workspace.layout.toggleLeftPane(); break;
       case "toggle_inspector": await this.toggleInspector(); break;
       case "toggle_theme": d.preferences.toggleTheme(); break;
-      case "open_settings": d.workspace.shell.openSettings(); break;
+      case "open_settings":
+        await flushWorkspaceMutationInputs("template-switch");
+        d.workspace.shell.openSettings();
+        break;
+      case "open_about":
+        await flushWorkspaceMutationInputs("template-switch");
+        d.workspace.shell.openSettings("about");
+        break;
       case "show_visual": await d.workspace.navigation.setCenterView("preview"); break;
       case "show_code": await d.workspace.navigation.setCenterView("code"); break;
     }

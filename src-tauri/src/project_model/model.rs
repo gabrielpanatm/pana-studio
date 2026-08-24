@@ -40,6 +40,7 @@ pub struct ProjectModelFile {
     pub contents: String,
     pub size_bytes: usize,
     pub revision: String,
+    pub(crate) source_hash: String,
     pub from_draft: bool,
 }
 

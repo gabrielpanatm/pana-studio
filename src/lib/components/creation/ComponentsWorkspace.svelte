@@ -13,6 +13,10 @@
     IconTrash,
     IconX,
   } from "@tabler/icons-svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
+  import TextAreaControl from "$lib/components/ui/TextAreaControl.svelte";
+  import TextFieldControl from "$lib/components/ui/TextFieldControl.svelte";
   import {
   applyComponentMutation,
 } from "$lib/creation/components-io";
@@ -491,7 +495,7 @@ import {
       aria-labelledby={`components-tab-${activeView}`}
     >
       {#if !componentGraph}
-        <div class="workspace-state">{t("components-loading")}</div>
+        <EmptyState title={t("components-loading")} />
       {:else}
         {#each filteredDefinitions as definition (definition.id)}
           {@const DefinitionIcon = iconForDefinition(definition)}
@@ -514,7 +518,7 @@ import {
             </span>
           </button>
         {:else}
-          <div class="workspace-state">{t("components-empty-filter")}</div>
+          <EmptyState title={t("components-empty-filter")} />
         {/each}
       {/if}
     </div>
@@ -534,54 +538,35 @@ import {
           </header>
 
           {#if detailMode === "create"}
-            <label>
-              <span>{t("components-type")}</span>
-              <select value={formKind} disabled={mutating} onchange={(event) => updateCreateKind(event.currentTarget.value)}>
-                <option value="partial">{t("components-type-tera-partial")}</option>
-                <option value="macro_library">{t("components-type-macro-library")}</option>
-                <option value="shortcode_html">{t("components-type-html-shortcode")}</option>
-                <option value="shortcode_markdown">{t("components-type-markdown-shortcode")}</option>
-              </select>
-            </label>
+            <div class="ui-form-field">
+              <span class="ui-form-label">{t("components-type")}</span>
+              <SelectControl size="default" value={formKind} options={[
+                { value: "partial", label: t("components-type-tera-partial") },
+                { value: "macro_library", label: t("components-type-macro-library") },
+                { value: "shortcode_html", label: t("components-type-html-shortcode") },
+                { value: "shortcode_markdown", label: t("components-type-markdown-shortcode") },
+              ]} disabled={mutating} ariaLabel={t("components-type")} onchange={updateCreateKind} />
+            </div>
           {/if}
-          <label>
-            <span>{t("components-logical-name")}</span>
-            <input bind:value={formName} disabled={mutating || loadingSource} placeholder="catalog/card" />
-            <small>{t("components-logical-name-help")}</small>
-          </label>
-          <label>
-            <span>{t("components-source", {
+          <TextFieldControl label={t("components-logical-name")} description={t("components-logical-name-help")} bind:value={formName} disabled={mutating || loadingSource} placeholder="catalog/card" />
+          <TextAreaControl label={t("components-source", {
               format: formKind === "shortcode_markdown" ? "Markdown + Tera" : "HTML + Tera",
-            })}</span>
-            <textarea bind:value={formSource} disabled={mutating || loadingSource} spellcheck="false"></textarea>
-          </label>
+            })} bind:value={formSource} disabled={mutating || loadingSource} rows={12} code spellcheck={false} />
 
           {#if detailMode === "create"}
             <details>
               <summary>{t("components-companions")}</summary>
               <div class="companion-fields">
-                <label>
-                  <span>{t("components-style")}</span>
-                  <input bind:value={formStylePath} disabled={mutating} placeholder={t("components-style-path-placeholder")} />
-                  <textarea bind:value={formStyleSource} disabled={mutating} spellcheck="false" placeholder={".card { }"}></textarea>
-                </label>
-                <label>
-                  <span>{t("components-script")}</span>
-                  <input bind:value={formScriptPath} disabled={mutating} placeholder="static/js/card.js" />
-                  <textarea bind:value={formScriptSource} disabled={mutating} spellcheck="false" placeholder={`// ${t("components-script-placeholder")}`}></textarea>
-                </label>
-                <label>
-                  <span>{t("components-canonical-data")}</span>
-                  <input bind:value={formDataPath} disabled={mutating} placeholder={t("components-data-path-placeholder")} />
-                  <textarea bind:value={formDataSource} disabled={mutating} spellcheck="false" placeholder="[[items]]"></textarea>
-                </label>
+                <section class="companion-field"><TextFieldControl label={t("components-style")} bind:value={formStylePath} disabled={mutating} placeholder={t("components-style-path-placeholder")} /><TextAreaControl label={t("components-source", { format: "SCSS" })} bind:value={formStyleSource} disabled={mutating} placeholder={".card { }"} rows={4} code spellcheck={false} /></section>
+                <section class="companion-field"><TextFieldControl label={t("components-script")} bind:value={formScriptPath} disabled={mutating} placeholder="static/js/card.js" /><TextAreaControl label={t("components-source", { format: "JavaScript" })} bind:value={formScriptSource} disabled={mutating} placeholder={`// ${t("components-script-placeholder")}`} rows={4} code spellcheck={false} /></section>
+                <section class="companion-field"><TextFieldControl label={t("components-canonical-data")} bind:value={formDataPath} disabled={mutating} placeholder={t("components-data-path-placeholder")} /><TextAreaControl label={t("components-source", { format: "TOML" })} bind:value={formDataSource} disabled={mutating} placeholder="[[items]]" rows={4} code spellcheck={false} /></section>
               </div>
             </details>
           {/if}
 
-          {#if formError}<p class="ui-message error form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+          {#if formError}<p class="ui-message error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
           <div class="form-actions">
-            <button type="button" disabled={mutating} onclick={resetPanel}>{t("components-cancel")}</button>
+            <button class="ui-button compact" type="button" disabled={mutating} onclick={resetPanel}>{t("components-cancel")}</button>
             <button class="ui-button primary" type="submit" disabled={mutating || loadingSource || !formName.trim()}>
               <IconDeviceFloppy size={14} />
               {mutating
@@ -654,7 +639,7 @@ import {
           </section>
         {/if}
 
-        {#if formError}<p class="ui-message error form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+        {#if formError}<p class="ui-message error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
         <div class="detail-actions">
           {#if selectedDefinition.origin === "theme" && isMutableFileDefinition(selectedDefinition)}
             <button class="ui-button primary primary-action" type="button" disabled={mutating} onclick={() => { void overrideSelected(); }}>
@@ -666,12 +651,12 @@ import {
             </button>
           {/if}
           {#if selectedDefinition.file}
-            <button type="button" disabled={mutating} onclick={() => { void openWorkspaceSource(selectedDefinition.file!); }}>
+            <button class="ui-button compact" type="button" disabled={mutating} onclick={() => { void openWorkspaceSource(selectedDefinition.file!); }}>
               <IconExternalLink size={14} /> {t("components-open-source")}
             </button>
           {/if}
           {#if selectedDefinition.capabilities.canDuplicate && isMutableFileDefinition(selectedDefinition)}
-            <button type="button" disabled={mutating} onclick={() => { void duplicateSelected(); }}>
+            <button class="ui-button compact" type="button" disabled={mutating} onclick={() => { void duplicateSelected(); }}>
               <IconCopy size={14} /> {t("components-duplicate")}
             </button>
           {/if}
@@ -687,7 +672,7 @@ import {
             <strong>{t("components-delete-title", { name: selectedDefinition.displayName })}</strong>
             <span>{t("components-delete-description")}</span>
             <div>
-              <button type="button" disabled={mutating} onclick={() => { deleteConfirmationOpen = false; }}>{t("components-cancel")}</button>
+              <button class="ui-button compact" type="button" disabled={mutating} onclick={() => { deleteConfirmationOpen = false; }}>{t("components-cancel")}</button>
               <button class="ui-button danger" type="button" disabled={mutating} onclick={() => { void deleteSelected(); }}>
                 {mutating ? t("components-checking") : t("components-remove-session")}
               </button>
@@ -695,7 +680,7 @@ import {
           </div>
         {/if}
       {:else}
-        <div class="workspace-state">{t("components-select-help")}</div>
+        <EmptyState title={t("components-select-help")} />
       {/if}
     </aside>
   </div>
@@ -720,7 +705,6 @@ import {
   h2 { margin: 7px 0 0; color: var(--text-strong); font-size: 19px; }
   .resource-detail > p, .detail-heading p { margin: 6px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
   .detail-heading { align-items: flex-start; justify-content: space-between; gap: 12px; }
-  .detail-heading > button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-muted); background: var(--wb-surface-document); }
   .component-contract { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 14px 0 0; }
   .component-contract div { min-width: 0; padding: 7px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; background: var(--wb-surface-document); }
   .component-contract dd { font-size: 13px; }
@@ -732,31 +716,18 @@ import {
   .semantic-row span.unresolved { color: var(--danger); }
   .diagnostics p { display: flex; align-items: flex-start; gap: 5px; margin: 5px 0; color: var(--danger); font-size: 11px; }
   .component-form { display: grid; gap: 11px; }
-  .component-form label, .companion-fields label { display: grid; gap: 5px; min-width: 0; }
-  .component-form label > span, .companion-fields label > span { color: var(--wb-text-muted); font-size: 11px; font-weight: 750; }
-  .component-form label > small { color: var(--wb-text-muted); font-size: var(--font-meta); line-height: 1.4; }
-  input, select, textarea { width: 100%; min-width: 0; border: 1px solid var(--wb-border-subtle); border-radius: 6px; color: var(--text-strong); background: var(--wb-surface-document); font: inherit; font-size: 12px; }
-  input, select { height: 32px; padding: 0 9px; }
-  textarea { min-height: 180px; padding: 9px; resize: vertical; font-family: var(--font-mono); line-height: 1.45; tab-size: 2; }
   details { overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
   summary { min-height: 34px; padding: 9px 10px; color: var(--text-strong); font-size: 11px; font-weight: 700; cursor: pointer; }
   .companion-fields { display: grid; gap: 12px; padding: 10px; border-top: 1px solid var(--wb-border-subtle); }
-  .companion-fields textarea { min-height: 74px; }
-  .form-error { display: flex; align-items: flex-start; gap: 6px; margin: 9px 0 0; padding: 8px; border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--wb-border-subtle)); border-radius: 6px; color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--wb-surface-document)); font-size: 11px; line-height: 1.4; }
+  .companion-field { display: grid; gap: 8px; }
   .form-actions { justify-content: flex-end; gap: 7px; margin-top: 4px; }
-  .form-actions button, .detail-actions button, .delete-confirmation button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 31px; padding: 0 10px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 11px; font-weight: 650; }
-  .form-actions button.primary, .detail-actions .primary-action { border-color: var(--wb-accent); color: #fff; background: var(--wb-accent); }
   .detail-actions { flex-wrap: wrap; align-items: stretch; gap: 7px; margin-top: 14px; }
   .detail-actions button { flex: 1 1 130px; }
-  .detail-actions button.danger, .delete-confirmation button.danger { border-color: var(--danger); color: var(--danger); }
   .delete-confirmation { display: grid; gap: 6px; margin-top: 9px; padding: 10px; border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--wb-border-subtle)); border-radius: 7px; background: var(--wb-surface-document); }
   .delete-confirmation strong { color: var(--text-strong); font-size: 12px; }
   .delete-confirmation > span { color: var(--wb-text-muted); font-size: 11px; line-height: 1.4; }
   .delete-confirmation > div { display: flex; justify-content: flex-end; gap: 7px; }
-  .workspace-state { display: grid; min-height: 180px; place-items: center; color: var(--wb-text-muted); font-size: 12px; text-align: center; }
-  button:disabled { opacity: .5; }
-  button:not(:disabled) { cursor: pointer; }
-  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }
+  summary:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   @media (max-width: 1050px) { .workspace-header dl { grid-template-columns: repeat(2, 70px); } }
   @media (max-width: 900px) { .workspace-body { grid-template-columns: 1fr; } .resource-detail { display: none; } .resource-list { border-right: 0; } }

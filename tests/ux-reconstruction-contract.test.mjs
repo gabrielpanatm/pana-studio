@@ -47,7 +47,7 @@ test("bara separă statusul global din stânga de sursa selecției din dreapta",
 });
 
 test("glosarul românesc elimină etichetele legacy din suprafețele vizibile", () => {
-  assert.equal(UI_TERM_IDS.settings, "workbench-settings");
+  assert.equal(UI_TERM_IDS.projectSettings, "workbench-project-settings");
   assert.equal(UI_TERM_IDS.designSystem, "workbench-design-system");
   assert.equal(UI_TERM_IDS.problemsAudit, "workbench-audit");
   assert.equal(UI_TERM_IDS.safeEditing, "workbench-safe-editing");
@@ -100,6 +100,7 @@ test("panoul inferior este exclusiv Terminal, cu un singur toolbar compact", () 
   const terminal = source("../src/lib/components/TerminalPane.svelte");
   const commandCenter = source("../src/lib/application/command-center-service.svelte.ts");
   const workbenchState = source("../src/lib/workbench/workspace-state.svelte.ts");
+  const projectBootstrap = source("../src-tauri/src/commands/project/bootstrap.rs");
   const audit = source("../src/lib/components/audit/AuditWorkspace.svelte");
   const kernel = source("../src/lib/components/kernel/KernelWorkspace.svelte");
   const observability = source("../src/lib/components/kernel/ObservabilityLogControl.svelte");
@@ -121,8 +122,11 @@ test("panoul inferior este exclusiv Terminal, cu un singur toolbar compact", () 
   assert.match(commandCenter, /case "show_problems": await d\.actions\.openAudit\("overview"\)/);
   assert.match(commandCenter, /case "show_output": await d\.actions\.openAudit\("runtime", true\)/);
   assert.doesNotMatch(commandCenter, /setWorkbenchBottomPanel\(true, "(?:problems|output)"\)/);
-  assert.match(workbenchState, /snapshot\.bottomPanel\.activeView !== "terminal"/);
-  assert.match(workbenchState, /open:\s*false,\s*activeView:\s*"terminal"/);
+  assert.match(workbenchState, /activeView: WorkbenchBottomPanelView = "terminal"/);
+  assert.match(
+    projectBootstrap,
+    /WorkbenchIntent::SetBottomPanel\s*\{[\s\S]*?open:\s*false,[\s\S]*?active_view:\s*WorkbenchBottomPanelView::Terminal/,
+  );
   assert.match(audit, /observabilityFocusSerial/);
   assert.match(kernel, /focusToken=\{observabilityFocusSerial\}/);
   assert.match(observability, /scrollIntoView\(\{ block: "start", behavior: "smooth" \}\)/);
@@ -142,6 +146,16 @@ test("design-system.css este singura sursă de tokeni și expune primitivele com
   const shell = source("../src/routes/workspace-shell.css");
   const design = source("../src/routes/design-system.css");
   const projectPane = source("../src/lib/components/ProjectPane.svelte");
+  const projectFiles = source("../src/lib/components/project/ProjectFilesTab.svelte");
+  const navigationTree = source("../src/lib/components/project/EditorNavigationTree.svelte");
+  const htmlPane = source("../src/lib/components/inspector/HtmlPane.svelte");
+  const gridBuilder = source("../src/lib/components/inspector/controls/GridBuilder.svelte");
+  const blockProperties = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
+  const motionStudio = source("../src/lib/components/inspector/js/MotionStudioPanel.svelte");
+  const aiSettings = source("../src/lib/components/settings/AiIntegrationPane.svelte");
+  const storageSettings = source("../src/lib/components/settings/StoragePane.svelte");
+  const colorPicker = source("../src/lib/components/ui/PanaColorPicker.svelte");
+  const terminal = source("../src/lib/components/TerminalPane.svelte");
   const components = source("../src/lib/components/creation/ComponentsWorkspace.svelte");
   const dataWorkspace = source("../src/lib/components/data/DataWorkspace.svelte");
 
@@ -157,8 +171,34 @@ test("design-system.css este singura sursă de tokeni și expune primitivele com
     design,
     /button\.ui-icon-button\.ui-close-button\s*\{[^}]*width:\s*var\(--control-height-compact\);[^}]*height:\s*var\(--control-height-compact\);[^}]*min-height:\s*var\(--control-height-compact\);[^}]*border-radius:\s*var\(--radius-control\);/,
   );
+  assert.match(design, /button\.ui-icon-button\.mini\s*\{[^}]*width:\s*20px;[^}]*height:\s*20px;[^}]*background:\s*transparent;/);
+  assert.match(design, /button\.ui-icon-button\.mini :where\(svg\)\s*\{[^}]*width:\s*var\(--ui-mini-icon-size\);[^}]*height:\s*var\(--ui-mini-icon-size\);/);
+  assert.match(design, /button\.ui-icon-button\.mini:is\(\.active, \[aria-pressed="true"\]\)/);
+  assert.match(design, /button\.ui-icon-button\.mini\.danger:hover:not\(:disabled\)\s*\{[^}]*var\(--danger\)/);
   assert.match(projectPane, /ui-button/);
-  assert.match(dataWorkspace, /class="ui-icon-button ui-close-button icon-button"/);
+  assert.match(projectFiles, /class="ui-icon-button mini"/);
+  assert.match(projectFiles, /class="ui-icon-button mini danger"/);
+  assert.match(projectFiles, /class="file-row-btn ui-entity-trigger"/);
+  assert.match(projectFiles, /t\("project-files-heading"\)/);
+  assert.doesNotMatch(projectFiles, /project-files-explorer/);
+  assert.doesNotMatch(projectFiles, /\.icon-action\s*\{/);
+  assert.match(navigationTree, /class="delete-action ui-icon-button mini danger"/);
+  assert.match(htmlPane, /class="ui-icon-button mini danger"/);
+  assert.doesNotMatch(htmlPane, /\.cls-chip-del\s*\{/);
+  assert.match(gridBuilder, /class="ui-icon-button mini danger"/);
+  assert.match(blockProperties, /class="ui-icon-button mini"/);
+  assert.match(motionStudio, /class="ui-icon-button mini danger"/);
+  assert.match(aiSettings, /class="ui-icon-button mini"/);
+  assert.match(storageSettings, /class="ui-icon-button mini"/);
+  assert.match(colorPicker, /class="ui-icon-button compact"/);
+  assert.match(terminal, /class="ui-icon-button compact quiet"/);
+  assert.doesNotMatch(htmlPane, /\.(?:hf-add-btn|hf-del-btn)\s*\{/);
+  assert.doesNotMatch(blockProperties, /\.panel-actions button\s*\{/);
+  assert.doesNotMatch(aiSettings, /^\s*button\s*\{/m);
+  assert.doesNotMatch(storageSettings, /\.icon-action\s*\{/);
+  assert.doesNotMatch(colorPicker, /\.icon-button\s*\{/);
+  assert.doesNotMatch(terminal, /\.terminal-(?:add|icon)-button/);
+  assert.match(dataWorkspace, /class="ui-icon-button ui-close-button"/);
   for (const usage of ["ui-tabs", "ui-tab", "ui-field", "ui-message"]) assert.match(components, new RegExp(usage));
 
   const uniqueDarkSurfaces = [...design.matchAll(/--surface-(?:base|panel|raised):\s*([^;]+);/g)].map((match) => match[1]);
@@ -358,7 +398,7 @@ test("rail-ul de activități începe direct cu navigarea, fără monogramă dec
 
   assert.doesNotMatch(rail, /product-mark/);
   assert.doesNotMatch(rail, /aria-label="Pană Studio">P</);
-  assert.match(rail, /<nav class="activity-rail"[\s\S]*?<div class="activity-list">/);
+  assert.match(rail, /<nav class="activity-rail"[\s\S]*?<div class="activity-list primary-activities">/);
 });
 
 test("capul preview-ului nu dublează documentul și nu păstrează contextul legacy", () => {
@@ -404,8 +444,9 @@ test("taburile documentelor derulează exclusiv orizontal", () => {
   assert.match(documentBar, /class:can-scroll-left=\{canScrollDocumentsLeft\}/);
   assert.match(documentBar, /class:can-scroll-right=\{canScrollDocumentsRight\}/);
   assert.match(documentBar, /\.document-tabs-shell\.can-scroll-left::before,[\s\S]*\.document-tabs-shell\.can-scroll-right::after/);
-  assert.match(documentBar, /class="ui-icon-button ui-close-button document-close"/);
-  assert.match(designSystem, /button\.ui-icon-button\.ui-close-button:hover:not\(:disabled\)\s*\{[^}]*var\(--danger\)/);
+  assert.match(documentBar, /class="ui-icon-button mini danger document-close"/);
+  assert.match(designSystem, /button\.ui-icon-button\.mini\.danger:hover:not\(:disabled\)\s*\{[^}]*var\(--danger\)/);
+  assert.match(designSystem, /\.ui-button\.primary:disabled\s*\{[^}]*var\(--material-control-disabled\)[^}]*opacity:\s*1/);
   assert.doesNotMatch(
     documentBar,
     /\.document-select,\s*\.document-close|\.document-close:hover:not\(:disabled\)/,

@@ -29,9 +29,12 @@ use crate::{
         file_buffer_store::{
             read_project_disk_text_snapshot, require_file_buffer_session_binding,
             FileBufferCommandReceipt, FileBufferRequestIdentity, FileBufferStore,
-            ProjectDiskTextReadOutcome,
+            ProjectDiskTextReadOutcome, FILE_BUFFER_STALE_SESSION_CODE,
+            FILE_BUFFER_STORE_SESSION_MISMATCH_CODE,
         },
-        observability::append_events,
+        observability::{
+            append_event, append_events, KernelEventKind, KernelLogEvent, KernelLogLevel,
+        },
         performance::{
             elapsed_us, performance_event, project_model_performance_event,
             with_project_model_sample,
@@ -44,7 +47,9 @@ use crate::{
             WorkspaceMutationMetadata, WorkspaceResourceDelete, WorkspaceResourceMutation,
             WorkspaceTextChange, WorkspaceTextDelete, WorkspaceTextResourceMutationInput,
         },
-        selection_coordinator::SelectionMutationIdentity,
+        selection_coordinator::{
+            SelectionMutationIdentity, SelectionTargetFailure, SelectionTargetFailureKind,
+        },
     },
     project::{strip_zola_root_prefix, zola_project_root},
     project_model::{
@@ -68,6 +73,39 @@ const CSS_MUTATION_AUTHORITY_SCHEMA_VERSION: u32 = 2;
 pub enum CssMutationStatus {
     Noop,
     Staged,
+}
+
+#[cfg(test)]
+mod css_command_outcome_serialization_tests {
+    use super::{CssInspectorContextCommandOutcome, CssMutationCommandOutcome};
+
+    #[test]
+    fn mutation_outcome_serializes_struct_variant_fields_as_camel_case() {
+        let value = serde_json::to_value(CssMutationCommandOutcome::<()>::Superseded {
+            interaction_id: Some("css-edit:42".to_string()),
+            reason: "selection_anchor_superseded".to_string(),
+            message: "selection changed".to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(value["kind"], "superseded");
+        assert_eq!(value["interactionId"], "css-edit:42");
+        assert!(value.get("interaction_id").is_none());
+    }
+
+    #[test]
+    fn inspector_read_outcome_serializes_struct_variant_fields_as_camel_case() {
+        let value = serde_json::to_value(CssInspectorContextCommandOutcome::RetryableStale {
+            interaction_id: Some("css-edit:42".to_string()),
+            reason: "canonical_authority_pending".to_string(),
+            message: "workspace pending".to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(value["kind"], "retryableStale");
+        assert_eq!(value["interactionId"], "css-edit:42");
+        assert!(value.get("interaction_id").is_none());
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -96,6 +134,86 @@ pub struct CssMutationCommandReceipt<T> {
     pub workspace_revision: u64,
     pub payload: T,
     pub authority: CssMutationAuthorityReceipt,
+}
+
+#[derive(Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum CssMutationCommandOutcome<T> {
+    Applied {
+        interaction_id: Option<String>,
+        receipt: CssMutationCommandReceipt<T>,
+    },
+    Noop {
+        interaction_id: Option<String>,
+        receipt: CssMutationCommandReceipt<T>,
+    },
+    Superseded {
+        interaction_id: Option<String>,
+        reason: String,
+        message: String,
+    },
+    RetryableStale {
+        interaction_id: Option<String>,
+        reason: String,
+        message: String,
+    },
+    Rejected {
+        interaction_id: Option<String>,
+        reason: String,
+        message: String,
+    },
+}
+
+enum CssMutationCommandFailure {
+    Superseded { reason: String, message: String },
+    RetryableStale { reason: String, message: String },
+    Rejected { reason: String, message: String },
+}
+
+impl From<String> for CssMutationCommandFailure {
+    fn from(message: String) -> Self {
+        if message.contains(FILE_BUFFER_STALE_SESSION_CODE)
+            || message.contains(FILE_BUFFER_STORE_SESSION_MISMATCH_CODE)
+        {
+            Self::Superseded {
+                reason: "file_buffer_session_superseded".to_string(),
+                message,
+            }
+        } else if message.contains("[theme_style_stale_workspace]") {
+            Self::RetryableStale {
+                reason: "workspace_revision_pending".to_string(),
+                message,
+            }
+        } else {
+            Self::Rejected {
+                reason: "css_mutation_rejected".to_string(),
+                message,
+            }
+        }
+    }
+}
+
+impl From<SelectionTargetFailure> for CssMutationCommandFailure {
+    fn from(failure: SelectionTargetFailure) -> Self {
+        match failure.kind {
+            SelectionTargetFailureKind::Superseded => Self::Superseded {
+                reason: failure.reason.to_string(),
+                message: failure.message,
+            },
+            SelectionTargetFailureKind::RetryableStale => Self::RetryableStale {
+                reason: failure.reason.to_string(),
+                message: failure.message,
+            },
+            SelectionTargetFailureKind::Rejected => Self::Rejected {
+                reason: failure.reason.to_string(),
+                message: failure.message,
+            },
+        }
+    }
 }
 
 impl<T> CssMutationCommandReceipt<T> {
@@ -162,6 +280,159 @@ impl<T> CssMutationCommandReceipt<T> {
             },
         }
     }
+}
+
+fn css_edit_authority_event<T>(
+    receipt: &CssMutationCommandReceipt<T>,
+    interaction_id: Option<&str>,
+) -> Option<KernelLogEvent> {
+    let interaction_id = interaction_id?.trim();
+    if interaction_id.is_empty() {
+        return None;
+    }
+    Some(
+        KernelLogEvent::new(
+            KernelLogLevel::Info,
+            KernelEventKind::CssEditAuthorityCommitted,
+            "css",
+            "css_edit_session",
+            "css.edit.authority",
+            Some(receipt.authority.operation_id.clone()),
+            "CSS edit authority committed.",
+            None,
+        )
+        .with_attribute("interactionId", interaction_id)
+        .with_attribute("transactionId", &receipt.authority.operation_id)
+        .with_attribute("projectRoot", &receipt.authority.project_root)
+        .with_attribute("runtimeSessionId", &receipt.authority.session_id)
+        .with_attribute("revisionBefore", receipt.authority.revision_before)
+        .with_attribute("revisionAfter", receipt.authority.revision_after)
+        .with_attribute("status", receipt.authority.status)
+        .with_attribute("touchedFiles", &receipt.authority.touched_files),
+    )
+}
+
+fn execute_inspector_css_mutation<T>(
+    app: &AppHandle,
+    state: &State<AppState>,
+    identity: &FileBufferRequestIdentity,
+    expected_selection: Option<&SelectionMutationIdentity>,
+    interaction_id: Option<String>,
+    execute: impl FnOnce() -> Result<CssMutationCommandReceipt<T>, String>,
+) -> CssMutationCommandOutcome<T> {
+    let result = (|| {
+        if let Some(expected) = expected_selection {
+            state
+                .selection_coordinator
+                .require_stable_semantic_mutation_target(&identity.expected_session_id, expected)
+                .map_err(CssMutationCommandFailure::from)?;
+        }
+        execute().map_err(CssMutationCommandFailure::from)
+    })();
+    let outcome = match result {
+        Ok(receipt) if receipt.authority.status == CssMutationStatus::Noop => {
+            CssMutationCommandOutcome::Noop {
+                interaction_id,
+                receipt,
+            }
+        }
+        Ok(receipt) => CssMutationCommandOutcome::Applied {
+            interaction_id,
+            receipt,
+        },
+        Err(CssMutationCommandFailure::Superseded { reason, message }) => {
+            CssMutationCommandOutcome::Superseded {
+                interaction_id,
+                reason,
+                message,
+            }
+        }
+        Err(CssMutationCommandFailure::RetryableStale { reason, message }) => {
+            CssMutationCommandOutcome::RetryableStale {
+                interaction_id,
+                reason,
+                message,
+            }
+        }
+        Err(CssMutationCommandFailure::Rejected { reason, message }) => {
+            CssMutationCommandOutcome::Rejected {
+                interaction_id,
+                reason,
+                message,
+            }
+        }
+    };
+    append_css_mutation_outcome_event(app, &outcome, identity, expected_selection);
+    outcome
+}
+
+fn append_css_mutation_outcome_event<T>(
+    app: &AppHandle,
+    outcome: &CssMutationCommandOutcome<T>,
+    identity: &FileBufferRequestIdentity,
+    expected_selection: Option<&SelectionMutationIdentity>,
+) {
+    let (kind, level, interaction_id, reason, diagnostic) = match outcome {
+        CssMutationCommandOutcome::Applied { .. } | CssMutationCommandOutcome::Noop { .. } => {
+            return;
+        }
+        CssMutationCommandOutcome::Superseded {
+            interaction_id,
+            reason,
+            message,
+        } => (
+            KernelEventKind::CssEditSuperseded,
+            KernelLogLevel::Info,
+            interaction_id.as_deref(),
+            reason.as_str(),
+            message.as_str(),
+        ),
+        CssMutationCommandOutcome::RetryableStale {
+            interaction_id,
+            reason,
+            message,
+        } => (
+            KernelEventKind::CssEditRetryableStale,
+            KernelLogLevel::Info,
+            interaction_id.as_deref(),
+            reason.as_str(),
+            message.as_str(),
+        ),
+        CssMutationCommandOutcome::Rejected {
+            interaction_id,
+            reason,
+            message,
+        } => (
+            KernelEventKind::CssEditRejected,
+            KernelLogLevel::Error,
+            interaction_id.as_deref(),
+            reason.as_str(),
+            message.as_str(),
+        ),
+    };
+    let Some(interaction_id) = interaction_id else {
+        return;
+    };
+    let mut event = KernelLogEvent::new(
+        level,
+        kind,
+        "css",
+        "css_edit_session",
+        "css.edit.outcome",
+        Some(interaction_id.to_string()),
+        format!("CSS edit outcome: {reason}."),
+        Some(diagnostic.to_string()),
+    )
+    .with_attribute("interactionId", interaction_id)
+    .with_attribute("projectRoot", &identity.expected_project_root)
+    .with_attribute("runtimeSessionId", &identity.expected_session_id)
+    .with_attribute("reason", reason);
+    if let Some(expected) = expected_selection {
+        event = event
+            .with_attribute("expectedWorkspaceRevision", expected.workspace_revision)
+            .with_attribute("expectedSelectionRevision", expected.selection_revision);
+    }
+    let _ = append_event(app, event);
 }
 
 fn to_zola_relative_path(path: &str) -> String {
@@ -543,13 +814,34 @@ fn with_bound_css_file_buffer_revision_internal<T>(
     ))
 }
 
+pub(crate) struct CssWorkspaceMutationMetadata<'a> {
+    expected_workspace_revision: Option<u64>,
+    interaction_id: Option<&'a str>,
+    source: &'a str,
+    coalesce_prefix: Option<&'a str>,
+}
+
+impl<'a> CssWorkspaceMutationMetadata<'a> {
+    pub(crate) const fn new(
+        expected_workspace_revision: Option<u64>,
+        interaction_id: Option<&'a str>,
+        source: &'a str,
+        coalesce_prefix: Option<&'a str>,
+    ) -> Self {
+        Self {
+            expected_workspace_revision,
+            interaction_id,
+            source,
+            coalesce_prefix,
+        }
+    }
+}
+
 pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
     app: &AppHandle,
     state: &State<AppState>,
     identity: &FileBufferRequestIdentity,
-    expected_workspace_revision: Option<u64>,
-    source: &str,
-    coalesce_prefix: Option<&str>,
+    metadata: CssWorkspaceMutationMetadata<'_>,
     build: impl FnOnce(
         &Path,
         &Path,
@@ -557,6 +849,12 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
         Option<&ProjectModel>,
     ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
 ) -> Result<CssMutationCommandReceipt<R>, String> {
+    let CssWorkspaceMutationMetadata {
+        expected_workspace_revision,
+        interaction_id,
+        source,
+        coalesce_prefix,
+    } = metadata;
     let performance_started = Instant::now();
     let current_root_lock_wait_started = Instant::now();
     let current_root = state
@@ -610,11 +908,11 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
     )?;
     let Some(input) = input else {
         let session = workspace.session.clone();
-        return Ok(CssMutationCommandReceipt::noop(
-            &session,
-            result_value,
-            workspace,
-        ));
+        let receipt = CssMutationCommandReceipt::noop(&session, result_value, workspace);
+        if let Some(event) = css_edit_authority_event(&receipt, interaction_id) {
+            let _ = append_event(app, event);
+        }
+        return Ok(receipt);
     };
     let written_files = input
         .changes
@@ -767,6 +1065,9 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
             sample,
         ));
     }
+    if let Some(event) = css_edit_authority_event(&receipt, interaction_id) {
+        events.push(event);
+    }
     let _ = append_events(app, events);
     Ok(receipt)
 }
@@ -775,6 +1076,7 @@ fn execute_css_workspace_mutation<R>(
     app: &AppHandle,
     state: &State<AppState>,
     identity: &FileBufferRequestIdentity,
+    interaction_id: Option<&str>,
     build: impl FnOnce(
         &Path,
         &Path,
@@ -785,62 +1087,9 @@ fn execute_css_workspace_mutation<R>(
         app,
         state,
         identity,
-        None,
-        "css.panel",
-        Some("css.panel"),
+        CssWorkspaceMutationMetadata::new(None, interaction_id, "css.panel", Some("css.panel")),
         |project_root, zola_root, store, _project_model| build(project_root, zola_root, store),
     )
-}
-
-fn execute_selection_bound_css_workspace_mutation<R>(
-    app: &AppHandle,
-    state: &State<AppState>,
-    identity: &FileBufferRequestIdentity,
-    expected_selection: Option<&SelectionMutationIdentity>,
-    build: impl FnOnce(
-        &Path,
-        &Path,
-        &FileBufferStore,
-    ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
-) -> Result<CssMutationCommandReceipt<R>, String> {
-    let execute = || execute_css_workspace_mutation(app, state, identity, build);
-    let Some(expected) = expected_selection else {
-        return execute();
-    };
-    state
-        .selection_coordinator
-        .with_stable_semantic_mutation_target(&identity.expected_session_id, expected, execute)
-}
-
-fn execute_selection_bound_css_workspace_mutation_with_model<R>(
-    app: &AppHandle,
-    state: &State<AppState>,
-    identity: &FileBufferRequestIdentity,
-    expected_selection: Option<&SelectionMutationIdentity>,
-    build: impl FnOnce(
-        &Path,
-        &Path,
-        &FileBufferStore,
-        Option<&ProjectModel>,
-    ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
-) -> Result<CssMutationCommandReceipt<R>, String> {
-    let execute = || {
-        execute_css_workspace_mutation_with_metadata(
-            app,
-            state,
-            identity,
-            None,
-            "css.panel.reusable",
-            Some("css.panel.reusable"),
-            build,
-        )
-    };
-    let Some(expected) = expected_selection else {
-        return execute();
-    };
-    state
-        .selection_coordinator
-        .with_stable_semantic_mutation_target(&identity.expected_session_id, expected, execute)
 }
 
 fn collect_media_query_migration_changes(
@@ -1042,6 +1291,149 @@ pub struct CssInspectorContextResolution {
     pub candidates: Vec<CssInspectorSourceCandidate>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum CssInspectorContextCommandOutcome {
+    Applied {
+        interaction_id: Option<String>,
+        receipt: Box<FileBufferCommandReceipt<CssInspectorContextResolution>>,
+    },
+    Superseded {
+        interaction_id: Option<String>,
+        reason: String,
+        message: String,
+    },
+    RetryableStale {
+        interaction_id: Option<String>,
+        reason: String,
+        message: String,
+    },
+    Rejected {
+        interaction_id: Option<String>,
+        reason: String,
+        message: String,
+    },
+}
+
+fn css_inspector_context_command_outcome(
+    result: Result<FileBufferCommandReceipt<CssInspectorContextResolution>, String>,
+    interaction_id: Option<String>,
+) -> CssInspectorContextCommandOutcome {
+    match result {
+        Ok(receipt) => CssInspectorContextCommandOutcome::Applied {
+            interaction_id,
+            receipt: Box::new(receipt),
+        },
+        Err(message)
+            if message.contains(FILE_BUFFER_STALE_SESSION_CODE)
+                || message.contains(FILE_BUFFER_STORE_SESSION_MISMATCH_CODE) =>
+        {
+            CssInspectorContextCommandOutcome::Superseded {
+                interaction_id,
+                reason: "file_buffer_session_superseded".to_string(),
+                message,
+            }
+        }
+        Err(message) if message.contains("[css_inspector_stale_workspace]") => {
+            CssInspectorContextCommandOutcome::RetryableStale {
+                interaction_id,
+                reason: "canonical_authority_pending".to_string(),
+                message,
+            }
+        }
+        Err(message) => CssInspectorContextCommandOutcome::Rejected {
+            interaction_id,
+            reason: "css_inspector_read_rejected".to_string(),
+            message,
+        },
+    }
+}
+
+fn append_css_inspector_read_event(
+    app: &AppHandle,
+    outcome: &CssInspectorContextCommandOutcome,
+    identity: &FileBufferRequestIdentity,
+    selector: &str,
+    expected_workspace_revision: u64,
+    expected_selection_revision: u64,
+) {
+    let (kind, level, interaction_id, reason, diagnostic, actual_workspace_revision) = match outcome
+    {
+        CssInspectorContextCommandOutcome::Applied {
+            interaction_id,
+            receipt,
+        } => (
+            KernelEventKind::CssInspectorReadApplied,
+            KernelLogLevel::Info,
+            interaction_id.as_deref(),
+            "applied",
+            None,
+            Some(receipt.workspace_revision),
+        ),
+        CssInspectorContextCommandOutcome::Superseded {
+            interaction_id,
+            reason,
+            message,
+        } => (
+            KernelEventKind::CssInspectorReadSuperseded,
+            KernelLogLevel::Info,
+            interaction_id.as_deref(),
+            reason.as_str(),
+            Some(message.clone()),
+            None,
+        ),
+        CssInspectorContextCommandOutcome::RetryableStale {
+            interaction_id,
+            reason,
+            message,
+        } => (
+            KernelEventKind::CssInspectorReadRetryableStale,
+            KernelLogLevel::Info,
+            interaction_id.as_deref(),
+            reason.as_str(),
+            Some(message.clone()),
+            None,
+        ),
+        CssInspectorContextCommandOutcome::Rejected {
+            interaction_id,
+            reason,
+            message,
+        } => (
+            KernelEventKind::CssInspectorReadRejected,
+            KernelLogLevel::Error,
+            interaction_id.as_deref(),
+            reason.as_str(),
+            Some(message.clone()),
+            None,
+        ),
+    };
+    let mut event = KernelLogEvent::new(
+        level,
+        kind,
+        "css",
+        "css_edit_session",
+        "css.inspector.read",
+        interaction_id.map(str::to_string),
+        format!("CSS Inspector read outcome: {reason}."),
+        diagnostic,
+    )
+    .with_attribute("interactionId", interaction_id)
+    .with_attribute("projectRoot", &identity.expected_project_root)
+    .with_attribute("runtimeSessionId", &identity.expected_session_id)
+    .with_attribute("selector", selector)
+    .with_attribute("expectedWorkspaceRevision", expected_workspace_revision)
+    .with_attribute("expectedSelectionRevision", expected_selection_revision)
+    .with_attribute("reason", reason);
+    if let Some(actual_workspace_revision) = actual_workspace_revision {
+        event = event.with_attribute("actualWorkspaceRevision", actual_workspace_revision);
+    }
+    let _ = append_event(app, event);
+}
+
 fn css_inspector_source_candidates(
     sources: &[(String, String)],
     breakpoints: &CssBreakpointValues,
@@ -1127,46 +1519,160 @@ pub fn resolve_css_inspector_context(
     fallback_file: Option<String>,
     expected_workspace_revision: u64,
     expected_selection: SelectionMutationIdentity,
+    interaction_id: Option<String>,
     identity: FileBufferRequestIdentity,
+    app: AppHandle,
     state: State<AppState>,
-) -> Result<FileBufferCommandReceipt<CssInspectorContextResolution>, String> {
-    validate_panel_rule_input(&selector, &HashMap::new(), &viewport)?;
-    let runtime_session_id = identity.expected_session_id.clone();
-    state.selection_coordinator.with_selection_target(
-        &runtime_session_id,
-        &expected_selection,
-        || {
-            with_bound_css_file_buffer_revision_and_model(
-                state.inner(),
-                &identity,
-                move |project_root, _root, _session, store, workspace_revision, project_model| {
-                    if workspace_revision != expected_workspace_revision {
-                        return Err(format!(
+) -> CssInspectorContextCommandOutcome {
+    let event_selector = selector.trim().to_string();
+    let expected_selection_revision = expected_selection.selection_revision;
+    if let Err(failure) = state
+        .selection_coordinator
+        .require_selection_target(&identity.expected_session_id, &expected_selection)
+    {
+        let outcome = match failure.kind {
+            SelectionTargetFailureKind::Superseded => {
+                CssInspectorContextCommandOutcome::Superseded {
+                    interaction_id,
+                    reason: failure.reason.to_string(),
+                    message: failure.message,
+                }
+            }
+            SelectionTargetFailureKind::RetryableStale => {
+                CssInspectorContextCommandOutcome::RetryableStale {
+                    interaction_id,
+                    reason: failure.reason.to_string(),
+                    message: failure.message,
+                }
+            }
+            SelectionTargetFailureKind::Rejected => CssInspectorContextCommandOutcome::Rejected {
+                interaction_id,
+                reason: failure.reason.to_string(),
+                message: failure.message,
+            },
+        };
+        append_css_inspector_read_event(
+            &app,
+            &outcome,
+            &identity,
+            &event_selector,
+            expected_workspace_revision,
+            expected_selection_revision,
+        );
+        return outcome;
+    }
+    let result = (|| -> Result<FileBufferCommandReceipt<CssInspectorContextResolution>, String> {
+        validate_panel_rule_input(&selector, &HashMap::new(), &viewport)?;
+        with_bound_css_file_buffer_revision_and_model(
+            state.inner(),
+            &identity,
+            move |project_root, _root, _session, store, workspace_revision, project_model| {
+                if workspace_revision != expected_workspace_revision {
+                    return Err(format!(
                             "[css_inspector_stale_workspace] Rezoluția CSS a cerut revizia ProjectWorkspace {expected_workspace_revision}, dar revizia activă este {workspace_revision}."
                         ));
-                    }
-                    let selector = selector.trim().to_string();
-                    let template_path =
-                        template_path.map(|path| to_zola_relative_path(&path));
-                    let fallback_file =
-                        fallback_file.map(|path| to_zola_relative_path(&path));
-                    let reusable_owner = template_path
+                }
+                let selector = selector.trim().to_string();
+                let template_path = template_path.map(|path| to_zola_relative_path(&path));
+                let fallback_file = fallback_file.map(|path| to_zola_relative_path(&path));
+                let reusable_owner = template_path
+                    .as_deref()
+                    .and_then(reusable_scss_relative_path);
+                let breakpoints = current_css_breakpoints(project_root, store)?;
+                let sources = collect_current_project_style_sources(project_root, store)?;
+                let candidates = reusable_scoped_candidates(
+                    css_inspector_source_candidates(
+                        &sources,
+                        &breakpoints,
+                        &selector,
+                        &selector,
+                        &viewport,
+                    ),
+                    reusable_owner.as_deref(),
+                );
+
+                if candidates.len() > 1 {
+                    return Ok(CssInspectorContextResolution {
+                        schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+                        selection_revision: expected_selection.selection_revision,
+                        selector,
+                        viewport,
+                        state: CssInspectorContextState::Ambiguous,
+                        target: None,
+                        rule_context: None,
+                        candidates,
+                    });
+                }
+
+                if let Some(candidate) = candidates.first().cloned() {
+                    let file = candidate.file.clone();
+                    let page_file = template_path
                         .as_deref()
-                        .and_then(reusable_scss_relative_path);
-                    let breakpoints = current_css_breakpoints(project_root, store)?;
-                    let sources = collect_current_project_style_sources(project_root, store)?;
-                    let candidates = reusable_scoped_candidates(
+                        .map(page_scss_relative_path)
+                        .unwrap_or_default();
+                    let href = template_path.as_deref().map(page_css_href);
+                    let linked = template_path
+                        .as_deref()
+                        .zip(href.as_deref())
+                        .map(|(template, href)| {
+                            read_current_zola_text(project_root, store, template).map(|source| {
+                                source.as_deref().is_some_and(|source| {
+                                    template_contains_asset_path(source, href)
+                                })
+                            })
+                        })
+                        .transpose()?
+                        .unwrap_or(false);
+                    let mut target = PageCssTarget {
+                        exists: project_relative_exists(project_root, store, &file)?,
+                        page_owned: !page_file.is_empty()
+                            && file == to_project_relative_path(&page_file),
+                        file,
+                        selector: selector.clone(),
+                        target_kind: "existing".to_string(),
+                        linked,
+                        href,
+                        template_path: template_path
+                            .clone()
+                            .map(|path| to_project_relative_path(&path)),
+                        consumer_files: Vec::new(),
+                        consumer_templates: Vec::new(),
+                        reason: "Regula există deja în acest fișier.".to_string(),
+                    };
+                    if reusable_owner.as_deref() == Some(target.file.as_str()) {
+                        target.target_kind = "reusable".to_string();
+                        target.href = None;
+                        populate_reusable_target_delivery(
+                            project_root,
+                            store,
+                            project_model,
+                            &mut target,
+                        )?;
+                    }
+                    return Ok(CssInspectorContextResolution {
+                        schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+                        selection_revision: expected_selection.selection_revision,
+                        selector,
+                        viewport,
+                        state: CssInspectorContextState::Existing,
+                        target: Some(target),
+                        rule_context: Some(candidate.rule_context),
+                        candidates,
+                    });
+                }
+
+                if let Some(base_selector) = base_class_selector(&selector) {
+                    let base_candidates = reusable_scoped_candidates(
                         css_inspector_source_candidates(
                             &sources,
                             &breakpoints,
-                            &selector,
+                            &base_selector,
                             &selector,
                             &viewport,
                         ),
                         reusable_owner.as_deref(),
                     );
-
-                    if candidates.len() > 1 {
+                    if base_candidates.len() > 1 {
                         return Ok(CssInspectorContextResolution {
                             schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
                             selection_revision: expected_selection.selection_revision,
@@ -1175,11 +1681,10 @@ pub fn resolve_css_inspector_context(
                             state: CssInspectorContextState::Ambiguous,
                             target: None,
                             rule_context: None,
-                            candidates,
+                            candidates: base_candidates,
                         });
                     }
-
-                    if let Some(candidate) = candidates.first().cloned() {
+                    if let Some(candidate) = base_candidates.first().cloned() {
                         let file = candidate.file.clone();
                         let page_file = template_path
                             .as_deref()
@@ -1206,7 +1711,7 @@ pub fn resolve_css_inspector_context(
                                 && file == to_project_relative_path(&page_file),
                             file,
                             selector: selector.clone(),
-                            target_kind: "existing".to_string(),
+                            target_kind: "variant".to_string(),
                             linked,
                             href,
                             template_path: template_path
@@ -1214,7 +1719,9 @@ pub fn resolve_css_inspector_context(
                                 .map(|path| to_project_relative_path(&path)),
                             consumer_files: Vec::new(),
                             consumer_templates: Vec::new(),
-                            reason: "Regula există deja în acest fișier.".to_string(),
+                            reason: format!(
+                                "Varianta va fi creată lângă regula de bază {base_selector}."
+                            ),
                         };
                         if reusable_owner.as_deref() == Some(target.file.as_str()) {
                             target.target_kind = "reusable".to_string();
@@ -1231,156 +1738,80 @@ pub fn resolve_css_inspector_context(
                             selection_revision: expected_selection.selection_revision,
                             selector,
                             viewport,
-                            state: CssInspectorContextState::Existing,
+                            state: CssInspectorContextState::Creation,
                             target: Some(target),
                             rule_context: Some(candidate.rule_context),
-                            candidates,
+                            candidates: base_candidates,
                         });
                     }
+                }
 
-                    if let Some(base_selector) = base_class_selector(&selector) {
-                        let base_candidates = reusable_scoped_candidates(
-                            css_inspector_source_candidates(
-                                &sources,
-                                &breakpoints,
-                                &base_selector,
-                                &selector,
-                                &viewport,
-                            ),
-                            reusable_owner.as_deref(),
-                        );
-                        if base_candidates.len() > 1 {
-                            return Ok(CssInspectorContextResolution {
-                                schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
-                                selection_revision: expected_selection.selection_revision,
-                                selector,
-                                viewport,
-                                state: CssInspectorContextState::Ambiguous,
-                                target: None,
-                                rule_context: None,
-                                candidates: base_candidates,
-                            });
-                        }
-                        if let Some(candidate) = base_candidates.first().cloned() {
-                            let file = candidate.file.clone();
-                            let page_file = template_path
+                let mut target = page_target_for_template(
+                    template_path.as_deref(),
+                    &selector,
+                    fallback_file.as_deref(),
+                );
+                let target_source =
+                    read_current_zola_text(project_root, store, &target.file)?.unwrap_or_default();
+                let rule_context = get_rule_context(
+                    &breakpoints,
+                    to_project_relative_path(&target.file),
+                    &target_source,
+                    selector.clone(),
+                    viewport.clone(),
+                );
+                target.exists = project_relative_exists(
+                    project_root,
+                    store,
+                    &to_project_relative_path(&target.file),
+                )?;
+                target.linked = template_path
+                    .as_deref()
+                    .zip(target.href.as_deref())
+                    .map(|(template, href)| {
+                        read_current_zola_text(project_root, store, template).map(|source| {
+                            source
                                 .as_deref()
-                                .map(page_scss_relative_path)
-                                .unwrap_or_default();
-                            let href = template_path.as_deref().map(page_css_href);
-                            let linked = template_path
-                                .as_deref()
-                                .zip(href.as_deref())
-                                .map(|(template, href)| {
-                                    read_current_zola_text(project_root, store, template).map(
-                                        |source| {
-                                            source.as_deref().is_some_and(|source| {
-                                                template_contains_asset_path(source, href)
-                                            })
-                                        },
-                                    )
-                                })
-                                .transpose()?
-                                .unwrap_or(false);
-                            let mut target = PageCssTarget {
-                                exists: project_relative_exists(project_root, store, &file)?,
-                                page_owned: !page_file.is_empty()
-                                    && file == to_project_relative_path(&page_file),
-                                file,
-                                selector: selector.clone(),
-                                target_kind: "variant".to_string(),
-                                linked,
-                                href,
-                                template_path: template_path
-                                    .clone()
-                                    .map(|path| to_project_relative_path(&path)),
-                                consumer_files: Vec::new(),
-                                consumer_templates: Vec::new(),
-                                reason: format!(
-                                    "Varianta va fi creată lângă regula de bază {base_selector}."
-                                ),
-                            };
-                            if reusable_owner.as_deref() == Some(target.file.as_str()) {
-                                target.target_kind = "reusable".to_string();
-                                target.href = None;
-                                populate_reusable_target_delivery(
-                                    project_root,
-                                    store,
-                                    project_model,
-                                    &mut target,
-                                )?;
-                            }
-                            return Ok(CssInspectorContextResolution {
-                                schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
-                                selection_revision: expected_selection.selection_revision,
-                                selector,
-                                viewport,
-                                state: CssInspectorContextState::Creation,
-                                target: Some(target),
-                                rule_context: Some(candidate.rule_context),
-                                candidates: base_candidates,
-                            });
-                        }
-                    }
-
-                    let mut target = page_target_for_template(
-                        template_path.as_deref(),
-                        &selector,
-                        fallback_file.as_deref(),
-                    );
-                    let target_source =
-                        read_current_zola_text(project_root, store, &target.file)?
-                            .unwrap_or_default();
-                    let rule_context = get_rule_context(
-                        &breakpoints,
-                        to_project_relative_path(&target.file),
-                        &target_source,
-                        selector.clone(),
-                        viewport.clone(),
-                    );
-                    target.exists = project_relative_exists(
+                                .is_some_and(|source| template_contains_asset_path(source, href))
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                target.file = to_project_relative_path(&target.file);
+                target.template_path = target
+                    .template_path
+                    .map(|path| to_project_relative_path(&path));
+                if target.target_kind == "reusable" {
+                    populate_reusable_target_delivery(
                         project_root,
                         store,
-                        &to_project_relative_path(&target.file),
+                        project_model,
+                        &mut target,
                     )?;
-                    target.linked = template_path
-                        .as_deref()
-                        .zip(target.href.as_deref())
-                        .map(|(template, href)| {
-                            read_current_zola_text(project_root, store, template).map(|source| {
-                                source.as_deref().is_some_and(|source| {
-                                    template_contains_asset_path(source, href)
-                                })
-                            })
-                        })
-                        .transpose()?
-                        .unwrap_or(false);
-                    target.file = to_project_relative_path(&target.file);
-                    target.template_path = target
-                        .template_path
-                        .map(|path| to_project_relative_path(&path));
-                    if target.target_kind == "reusable" {
-                        populate_reusable_target_delivery(
-                            project_root,
-                            store,
-                            project_model,
-                            &mut target,
-                        )?;
-                    }
-                    Ok(CssInspectorContextResolution {
-                        schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
-                        selection_revision: expected_selection.selection_revision,
-                        selector,
-                        viewport,
-                        state: CssInspectorContextState::Creation,
-                        target: Some(target),
-                        rule_context: Some(rule_context),
-                        candidates,
-                    })
-                },
-            )
-        },
-    )
+                }
+                Ok(CssInspectorContextResolution {
+                    schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+                    selection_revision: expected_selection.selection_revision,
+                    selector,
+                    viewport,
+                    state: CssInspectorContextState::Creation,
+                    target: Some(target),
+                    rule_context: Some(rule_context),
+                    candidates,
+                })
+            },
+        )
+    })();
+    let outcome = css_inspector_context_command_outcome(result, interaction_id);
+    append_css_inspector_read_event(
+        &app,
+        &outcome,
+        &identity,
+        &event_selector,
+        expected_workspace_revision,
+        expected_selection_revision,
+    );
+    outcome
 }
 
 #[tauri::command(async)]
@@ -1410,6 +1841,7 @@ pub fn set_scss_variable(
         &app,
         &state,
         &identity,
+        None,
         |project_root, _zola_root, store| {
             let project_relative_path = to_project_relative_path(&zola_relative_path);
             let source = read_current_zola_text(project_root, store, &zola_relative_path)?
@@ -1487,6 +1919,7 @@ pub fn create_scss_variable(
         &app,
         &state,
         &identity,
+        None,
         |project_root, _zola_root, store| {
             let project_relative_path = to_project_relative_path(&zola_relative_path);
             let source = read_current_zola_text(project_root, store, &zola_relative_path)?
@@ -1549,18 +1982,29 @@ pub fn set_css_rule_at_viewport(
     viewport: String,
     identity: FileBufferRequestIdentity,
     expected_selection: Option<SelectionMutationIdentity>,
+    interaction_id: Option<String>,
     app: AppHandle,
     state: State<AppState>,
-) -> Result<CssMutationCommandReceipt<()>, String> {
-    set_css_rule_at_viewport_impl(
-        relative_path,
-        selector,
-        properties,
-        viewport,
-        &identity,
-        expected_selection.as_ref(),
+) -> CssMutationCommandOutcome<()> {
+    let event_interaction_id = interaction_id.clone();
+    execute_inspector_css_mutation(
         &app,
         &state,
+        &identity,
+        expected_selection.as_ref(),
+        interaction_id,
+        || {
+            set_css_rule_at_viewport_impl(
+                relative_path,
+                selector,
+                properties,
+                viewport,
+                &identity,
+                event_interaction_id.as_deref(),
+                &app,
+                &state,
+            )
+        },
     )
 }
 
@@ -1572,17 +2016,17 @@ fn set_css_rule_at_viewport_impl(
     properties: HashMap<String, String>,
     viewport: String,
     identity: &FileBufferRequestIdentity,
-    expected_selection: Option<&SelectionMutationIdentity>,
+    interaction_id: Option<&str>,
     app: &AppHandle,
     state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<()>, String> {
     let properties = normalize_panel_rule_input(&selector, &properties, &viewport)?;
     let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
-    execute_selection_bound_css_workspace_mutation(
+    execute_css_workspace_mutation(
         app,
         state,
         identity,
-        expected_selection,
+        interaction_id,
         move |project_root, _zola_root, store| {
             if properties.is_empty() {
                 return Ok((None, ()));
@@ -1637,8 +2081,44 @@ pub fn set_reusable_css_rule_at_viewport(
     viewport: String,
     identity: FileBufferRequestIdentity,
     expected_selection: Option<SelectionMutationIdentity>,
+    interaction_id: Option<String>,
     app: AppHandle,
     state: State<AppState>,
+) -> CssMutationCommandOutcome<ReusableCssWriteResult> {
+    let event_interaction_id = interaction_id.clone();
+    execute_inspector_css_mutation(
+        &app,
+        &state,
+        &identity,
+        expected_selection.as_ref(),
+        interaction_id,
+        || {
+            set_reusable_css_rule_at_viewport_impl(
+                template_path,
+                relative_path,
+                selector,
+                properties,
+                viewport,
+                &identity,
+                event_interaction_id.as_deref(),
+                &app,
+                &state,
+            )
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn set_reusable_css_rule_at_viewport_impl(
+    template_path: String,
+    relative_path: String,
+    selector: String,
+    properties: HashMap<String, String>,
+    viewport: String,
+    identity: &FileBufferRequestIdentity,
+    interaction_id: Option<&str>,
+    app: &AppHandle,
+    state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<ReusableCssWriteResult>, String> {
     let properties = normalize_panel_rule_input(&selector, &properties, &viewport)?;
     let template_path = to_zola_relative_path(&template_path);
@@ -1652,11 +2132,16 @@ pub fn set_reusable_css_rule_at_viewport(
         ));
     }
 
-    execute_selection_bound_css_workspace_mutation_with_model(
-        &app,
-        &state,
-        &identity,
-        expected_selection.as_ref(),
+    execute_css_workspace_mutation_with_metadata(
+        app,
+        state,
+        identity,
+        CssWorkspaceMutationMetadata::new(
+            None,
+            interaction_id,
+            "css.panel.reusable",
+            Some("css.panel.reusable"),
+        ),
         move |project_root, _zola_root, store, project_model| {
             let cachebust_assets = crate::commands::config::cachebust_assets_from_store(store)?;
             let model = project_model.ok_or_else(|| {
@@ -1783,19 +2268,30 @@ pub fn set_page_css_rule_at_viewport(
     viewport: String,
     identity: FileBufferRequestIdentity,
     expected_selection: Option<SelectionMutationIdentity>,
+    interaction_id: Option<String>,
     app: AppHandle,
     state: State<AppState>,
-) -> Result<CssMutationCommandReceipt<PageCssWriteResult>, String> {
-    set_page_css_rule_at_viewport_impl(
-        template_path,
-        relative_path,
-        selector,
-        properties,
-        viewport,
-        &identity,
-        expected_selection.as_ref(),
+) -> CssMutationCommandOutcome<PageCssWriteResult> {
+    let event_interaction_id = interaction_id.clone();
+    execute_inspector_css_mutation(
         &app,
         &state,
+        &identity,
+        expected_selection.as_ref(),
+        interaction_id,
+        || {
+            set_page_css_rule_at_viewport_impl(
+                template_path,
+                relative_path,
+                selector,
+                properties,
+                viewport,
+                &identity,
+                event_interaction_id.as_deref(),
+                &app,
+                &state,
+            )
+        },
     )
 }
 
@@ -1808,18 +2304,18 @@ fn set_page_css_rule_at_viewport_impl(
     properties: HashMap<String, String>,
     viewport: String,
     identity: &FileBufferRequestIdentity,
-    expected_selection: Option<&SelectionMutationIdentity>,
+    interaction_id: Option<&str>,
     app: &AppHandle,
     state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<PageCssWriteResult>, String> {
     let properties = normalize_panel_rule_input(&selector, &properties, &viewport)?;
     let template_path = to_zola_relative_path(&template_path);
     let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
-    execute_selection_bound_css_workspace_mutation(
+    execute_css_workspace_mutation(
         app,
         state,
         identity,
-        expected_selection,
+        interaction_id,
         move |project_root, _zola_root, store| {
             let cachebust_assets = crate::commands::config::cachebust_assets_from_store(store)?;
             if properties.is_empty() {

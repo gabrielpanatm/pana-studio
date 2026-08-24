@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     IconBox,
-    IconBlocks,
     IconBrush,
     IconCodeDots,
     IconDatabase,
@@ -14,7 +13,6 @@
     IconShieldCheck,
     IconTags,
     IconTemplate,
-    IconTerminal2,
   } from "@tabler/icons-svelte";
   import type { WorkbenchActivity } from "$lib/workbench/contracts";
   import { t } from "$lib/i18n/runtime.svelte";
@@ -28,47 +26,43 @@
   let {
     activeActivity = "editor",
     disabled = false,
-    terminalOpen = false,
-    settingsActive = false,
+    applicationSettingsActive = false,
     selectActivity = () => {},
-    toggleTerminal = () => {},
-    selectSettings = () => {},
   }: {
     activeActivity?: WorkbenchActivity;
     disabled?: boolean;
-    terminalOpen?: boolean;
-    settingsActive?: boolean;
+    applicationSettingsActive?: boolean;
     selectActivity?: (activity: WorkbenchActivity) => void | Promise<void>;
-    toggleTerminal?: () => void | Promise<void>;
-    selectSettings?: () => void;
   } = $props();
 
-  const activities = $derived<ActivityEntry[]>([
+  const primaryActivities = $derived<ActivityEntry[]>([
     { id: "editor", label: t(UI_TERM_IDS.editor) },
     { id: "templates", label: t(UI_TERM_IDS.templates) },
     { id: "components", label: t(UI_TERM_IDS.components) },
-    { id: "blocks", label: t(UI_TERM_IDS.blocks) },
     { id: "design_system", label: t(UI_TERM_IDS.designSystem) },
     { id: "assets", label: t(UI_TERM_IDS.assets) },
     { id: "content", label: t(UI_TERM_IDS.content) },
     { id: "content_models", label: t(UI_TERM_IDS.contentModels) },
     { id: "taxonomies", label: t(UI_TERM_IDS.taxonomies) },
     { id: "data", label: t(UI_TERM_IDS.data) },
+  ]);
+  const technicalActivities = $derived<ActivityEntry[]>([
     { id: "versioning", label: t(UI_TERM_IDS.versionControl) },
     { id: "audit", label: t(UI_TERM_IDS.problemsAudit) },
     { id: "publish", label: t(UI_TERM_IDS.publish) },
+    { id: "project_settings", label: t(UI_TERM_IDS.projectSettings) },
   ]);
 </script>
 
 <nav class="activity-rail" aria-label={t("workbench-activities-label")}>
-  <div class="activity-list">
-    {#each activities as activity (activity.id)}
+  <div class="activity-list primary-activities">
+    {#each primaryActivities as activity (activity.id)}
       <button
         type="button"
-        class:active={!settingsActive && activeActivity === activity.id}
+        class:active={!applicationSettingsActive && activeActivity === activity.id}
         disabled={disabled}
         aria-label={activity.label}
-        aria-current={!settingsActive && activeActivity === activity.id ? "page" : undefined}
+        aria-current={!applicationSettingsActive && activeActivity === activity.id ? "page" : undefined}
         title={activity.label}
         onclick={() => { void selectActivity(activity.id); }}
       >
@@ -78,8 +72,6 @@
           <IconTemplate size={19} stroke={1.8} />
         {:else if activity.id === "components"}
           <IconBox size={19} stroke={1.8} />
-        {:else if activity.id === "blocks"}
-          <IconBlocks size={19} stroke={1.8} />
         {:else if activity.id === "design_system"}
           <IconBrush size={19} stroke={1.8} />
         {:else if activity.id === "assets"}
@@ -92,43 +84,35 @@
           <IconTags size={19} stroke={1.8} />
         {:else if activity.id === "data"}
           <IconDatabase size={19} stroke={1.8} />
-        {:else if activity.id === "versioning"}
-          <IconGitBranch size={19} stroke={1.8} />
-        {:else if activity.id === "audit"}
-          <IconShieldCheck size={19} stroke={1.8} />
-        {:else}
-          <IconRocket size={19} stroke={1.8} />
         {/if}
         <span>{activity.label}</span>
       </button>
     {/each}
   </div>
 
-  <div class="rail-utilities">
-    <button
-      type="button"
-      class:active={terminalOpen}
-      disabled={disabled}
-      aria-label={t("workbench-terminal")}
-      aria-pressed={terminalOpen}
-      aria-keyshortcuts="Control+` Meta+`"
-      title={`${t("workbench-terminal")} (Ctrl+\`)`}
-      onclick={() => { void toggleTerminal(); }}
-    >
-      <IconTerminal2 size={19} stroke={1.8} />
-      <span>{t("workbench-terminal")}</span>
-    </button>
-    <button
-      type="button"
-      class:active={settingsActive}
-      aria-label={t(UI_TERM_IDS.settings)}
-      aria-current={settingsActive ? "page" : undefined}
-      title={t(UI_TERM_IDS.settings)}
-      onclick={selectSettings}
-    >
-      <IconSettings size={19} stroke={1.8} />
-      <span>{t(UI_TERM_IDS.settings)}</span>
-    </button>
+  <div class="technical-activities" aria-label={t("workbench-technical-activities-label")}>
+    {#each technicalActivities as activity (activity.id)}
+      <button
+        type="button"
+        class:active={!applicationSettingsActive && activeActivity === activity.id}
+        disabled={disabled}
+        aria-label={activity.label}
+        aria-current={!applicationSettingsActive && activeActivity === activity.id ? "page" : undefined}
+        title={activity.label}
+        onclick={() => { void selectActivity(activity.id); }}
+      >
+        {#if activity.id === "versioning"}
+          <IconGitBranch size={19} stroke={1.8} />
+        {:else if activity.id === "audit"}
+          <IconShieldCheck size={19} stroke={1.8} />
+        {:else if activity.id === "publish"}
+          <IconRocket size={19} stroke={1.8} />
+        {:else}
+          <IconSettings size={19} stroke={1.8} />
+        {/if}
+        <span>{activity.label}</span>
+      </button>
+    {/each}
   </div>
 </nav>
 
@@ -148,7 +132,7 @@
   }
 
   .activity-list,
-  .rail-utilities {
+  .technical-activities {
     display: grid;
     gap: 3px;
     width: 100%;
@@ -215,7 +199,7 @@
     opacity: 0.36;
   }
 
-  .rail-utilities {
+  .technical-activities {
     padding-top: 5px;
     border-top: 1px solid var(--wb-border-subtle);
     box-shadow: inset 0 1px 0 var(--skeuo-edge-highlight);

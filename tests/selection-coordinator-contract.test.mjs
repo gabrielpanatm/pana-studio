@@ -36,6 +36,8 @@ test("SelectionCoordinator is the sole semantic selection authority", () => {
   assert.match(canvas, /app\.selection\.editorSelection\.applyHoverIntent\(/);
   assert.match(inspectorState, /get selectedClass\(\)/);
   assert.match(inspectorState, /this\.coordinatedSelector\?\.selectedClass/);
+  assert.doesNotMatch(session, /this\.host\(\)\.targetCssFile/);
+  assert.doesNotMatch(selectionWorkspace, /targetCssFile/);
 
   const combined = `${selectionWorkspace}\n${session}\n${canvas}\n${inspector}\n${inspectorState}`;
   assert.doesNotMatch(
@@ -93,8 +95,10 @@ test("selection-driven mutations carry a Rust-validated revision", () => {
   assert.match(coordinator, /struct SelectionMutationIdentity/);
   assert.match(coordinator, /selection_revision: u64/);
   assert.match(pipeline, /selection_coordinator\.with_mutation_target/);
-  assert.match(css, /execute_selection_bound_css_workspace_mutation/);
-  assert.match(css, /with_stable_semantic_mutation_target/);
+  assert.match(css, /execute_inspector_css_mutation/);
+  assert.match(css, /require_stable_semantic_mutation_target/);
+  assert.match(css, /CssMutationCommandOutcome/);
+  assert.doesNotMatch(css, /execute_selection_bound_css_workspace_mutation/);
   assert.match(lane, /expectedSelection: lease\.selection/);
   assert.match(lane, /requireCapturedSelection/);
   assert.match(queue, /expectedSelection/);

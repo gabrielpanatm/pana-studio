@@ -15,7 +15,10 @@ use crate::kernel::{
     },
 };
 
-use super::model::{WorkbenchSnapshot, WORKBENCH_SCHEMA_VERSION};
+use super::model::{
+    WorkbenchDocumentPresentation, WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface,
+    WORKBENCH_SCHEMA_VERSION,
+};
 
 const WORKBENCH_STATE_FILE: &str = "workbench.json";
 const WORKBENCH_STATE_MAX_BYTES: u64 = 256 * 1024;
@@ -53,8 +56,33 @@ pub fn read_persisted_workbench(
     }
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("Workbench nu a putut citi proiecția persistentă: {error}"))?;
-    let snapshot = serde_json::from_str::<WorkbenchSnapshot>(&source)
+    let mut snapshot = serde_json::from_str::<WorkbenchSnapshot>(&source)
         .map_err(|error| format!("Workbench nu a putut decoda proiecția persistentă: {error}"))?;
+    if snapshot.schema_version == 1 {
+        // Schema 1 did not persist document presentation. Preserve only the
+        // minimum compatibility needed to load its visual/split layout; the
+        // authoritative ProjectScan/FileBuffer language immediately replaces
+        // this migration hint before the snapshot is published.
+        let visual_layout = snapshot.split != WorkbenchSplit::None;
+        for group in &mut snapshot.groups {
+            for document in &mut group.documents {
+                document.presentation =
+                    if visual_layout || document.surface == WorkbenchSurface::Visual {
+                        WorkbenchDocumentPresentation::Html
+                    } else {
+                        WorkbenchDocumentPresentation::CodeOnly
+                    };
+            }
+        }
+        snapshot.schema_version = 2;
+    }
+    if snapshot.schema_version == 2 {
+        // Schema 3 adds the project_settings activity. Schema 2 snapshots do
+        // not require a data rewrite; advancing the explicit schema keeps the
+        // persisted contract auditable instead of silently accepting an old
+        // projection shape forever.
+        snapshot.schema_version = WORKBENCH_SCHEMA_VERSION;
+    }
     require_persisted_identity(session, &snapshot)?;
     Ok(Some(snapshot))
 }
@@ -165,7 +193,10 @@ mod tests {
         app_home::{ensure_app_home, project_session_dir, TEST_APP_ENV_LOCK},
         kernel::{
             project_session::{ProjectRootFingerprint, ProjectSessionScanSummary},
-            workbench::WorkbenchRuntime,
+            workbench::{
+                WorkbenchDocumentPresentation, WorkbenchGroupId, WorkbenchIdentity,
+                WorkbenchIntent, WorkbenchRuntime, WorkbenchSplit, WorkbenchSurface,
+            },
             write_authority::WriteAuthorityRuntime,
         },
     };
@@ -200,6 +231,82 @@ mod tests {
             PathBuf::from(&session.session_dir)
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_one_visual_split_is_loadable_before_authoritative_reconciliation() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = unique_test_dir("workbench-storage-v1");
+        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("Tauri test app should build");
+        let session = test_session(app.handle(), "/project/workbench-v1");
+        fs::create_dir_all(&session.session_dir).unwrap();
+        let runtime = WorkbenchRuntime::default();
+        let before = runtime.read(&session).unwrap();
+        let snapshot = runtime
+            .apply(
+                &session,
+                &WorkbenchIdentity {
+                    expected_project_root: before.project_root.clone(),
+                    expected_runtime_session_id: before.runtime_session_id.clone(),
+                    expected_revision: before.revision,
+                },
+                WorkbenchIntent::ConfigureSynchronizedSplit {
+                    split: WorkbenchSplit::Vertical,
+                    relative_path: "templates/index.html".to_string(),
+                    secondary_surface: WorkbenchSurface::Code,
+                    presentation: WorkbenchDocumentPresentation::Html,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        let mut legacy = serde_json::to_value(snapshot).unwrap();
+        legacy["schemaVersion"] = serde_json::json!(1);
+        for group in legacy["groups"].as_array_mut().unwrap() {
+            for document in group["documents"].as_array_mut().unwrap() {
+                document.as_object_mut().unwrap().remove("presentation");
+            }
+        }
+        fs::write(
+            PathBuf::from(&session.session_dir).join(WORKBENCH_STATE_FILE),
+            format!("{}\n", serde_json::to_string_pretty(&legacy).unwrap()),
+        )
+        .unwrap();
+
+        let restored = read_persisted_workbench(&session).unwrap().unwrap();
+
+        assert_eq!(restored.schema_version, WORKBENCH_SCHEMA_VERSION);
+        assert_eq!(restored.split, WorkbenchSplit::Vertical);
+        assert!(restored.groups.iter().all(|group| group
+            .documents
+            .iter()
+            .all(|document| document.presentation == WorkbenchDocumentPresentation::Html)));
+        assert_eq!(restored.active_group_id, WorkbenchGroupId::Secondary);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_two_snapshot_advances_to_the_project_settings_schema() {
+        let session = detached_test_session(
+            "workbench-v2",
+            "/project/workbench-v2",
+            "/tmp/project-workbench-v2",
+        );
+        fs::create_dir_all(&session.session_dir).unwrap();
+        let mut legacy = WorkbenchRuntime::default().read(&session).unwrap();
+        legacy.schema_version = 2;
+        fs::write(
+            PathBuf::from(&session.session_dir).join(WORKBENCH_STATE_FILE),
+            format!("{}\n", serde_json::to_string_pretty(&legacy).unwrap()),
+        )
+        .unwrap();
+
+        let restored = read_persisted_workbench(&session).unwrap().unwrap();
+
+        assert_eq!(restored.schema_version, WORKBENCH_SCHEMA_VERSION);
+        fs::remove_dir_all(&session.session_dir).unwrap();
     }
 
     #[test]

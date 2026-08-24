@@ -73,7 +73,7 @@
   <!-- PADDING -->
   <div class="sub-header">
     <span class="sub-label">{t("inspector-spacing-padding")}</span>
-    <button type="button" class="expand-btn" title={t("inspector-spacing-individual-sides")} onclick={() => (expandPadding = !expandPadding)}>
+    <button type="button" class="expand-btn ui-icon-button mini" class:active={expandPadding} aria-pressed={expandPadding} title={t("inspector-spacing-individual-sides")} onclick={() => (expandPadding = !expandPadding)}>
       <IconBoxPadding size={12} stroke={1.7} />
     </button>
   </div>
@@ -106,7 +106,7 @@
   <!-- MARGIN -->
   <div class="sub-header">
     <span class="sub-label">{t("inspector-spacing-margin")}</span>
-    <button type="button" class="expand-btn" title={t("inspector-spacing-individual-sides")} onclick={() => (expandMargin = !expandMargin)}>
+    <button type="button" class="expand-btn ui-icon-button mini" class:active={expandMargin} aria-pressed={expandMargin} title={t("inspector-spacing-individual-sides")} onclick={() => (expandMargin = !expandMargin)}>
       <IconBoxPadding size={12} stroke={1.7} />
     </button>
   </div>
@@ -141,8 +141,9 @@
     <span class="sub-label">{t("inspector-spacing-gap")}</span>
     <button
       type="button"
-      class="expand-btn"
+      class="expand-btn ui-icon-button mini"
       class:active={splitGap}
+      aria-pressed={splitGap}
       title={splitGap ? t("inspector-spacing-gap-unified") : t("inspector-spacing-gap-split")}
       onclick={() => { splitGap = !splitGap; }}
     >
@@ -173,8 +174,9 @@
       <span class="sub-label">{t("inspector-spacing-overflow")}</span>
       <button
         type="button"
-        class="expand-btn"
+        class="expand-btn ui-icon-button mini"
         class:active={splitOverflow}
+        aria-pressed={splitOverflow}
         title={splitOverflow ? t("inspector-spacing-overflow-unified") : t("inspector-spacing-overflow-split")}
         onclick={() => { splitOverflow = !splitOverflow; }}
       >
@@ -254,29 +256,6 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-  }
-
-  .expand-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid var(--border-4);
-    border-radius: 4px;
-    background: var(--surface-4);
-    cursor: pointer;
-    color: var(--text-muted);
-    padding: 0;
-    transition: color 80ms, border-color 80ms, background 80ms;
-  }
-
-  .expand-btn:hover { border-color: var(--brand); color: var(--brand); }
-
-  .expand-btn.active {
-    border-color: var(--brand);
-    color: var(--brand-strong);
-    background: var(--brand-soft);
   }
 
   .row-2 {

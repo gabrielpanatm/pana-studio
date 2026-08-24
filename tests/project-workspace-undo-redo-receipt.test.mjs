@@ -13,6 +13,7 @@ import {
   PROJECT_WORKSPACE_SCHEMA_VERSION,
   PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION,
 } from "$lib/project/workspace-contract";
+import { WORKBENCH_SCHEMA_VERSION } from "$lib/workbench/contracts";
 
 function receipt(overrides = {}) {
   return {
@@ -224,7 +225,8 @@ test("mutarea semantică finalizează editarea HTML și comite direct prin autor
   const capture = operation.indexOf("captureEditorMoveNodeAnchor");
   const rebase = operation.indexOf("resolveEditorMoveNodeAnchor");
   const commit = operation.indexOf("await commitEditorMove");
-  const projection = operation.indexOf("await host.projectCommittedMove");
+  const projection = operation.indexOf("const settlement = await host.projectCommittedMove");
+  const settledStatus = operation.indexOf("if (settlement.warnings.length === 0)", projection);
 
   assert.ok(start >= 0 && end > start);
   assert.ok(capture >= 0 && capture < flush);
@@ -232,7 +234,24 @@ test("mutarea semantică finalizează editarea HTML și comite direct prin autor
   assert.ok(rebase > flush);
   assert.ok(commit > rebase);
   assert.ok(projection > commit);
+  assert.ok(settledStatus > projection);
   assert.doesNotMatch(operation, /runInPreviewStructuralLane/);
+});
+
+test("mutarea semantică păstrează patch-ul rapid, dar așteaptă reconcilierea canonică", () => {
+  const control = readFileSync(
+    resolve(process.cwd(), "src/lib/kernel/preview-projection-control.ts"),
+    "utf8",
+  );
+  const start = control.indexOf("export async function projectCommittedEditorMoveMutation");
+  const end = control.indexOf("function degradedCommittedStructuralSettlement", start);
+  const projection = control.slice(start, end);
+  const patch = projection.indexOf("await applyCommittedCanvasPatch");
+  const settlement = projection.indexOf("await settleProjectWorkspaceMutation");
+
+  assert.ok(start >= 0 && end > start);
+  assert.ok(patch >= 0 && settlement > patch);
+  assert.doesNotMatch(projection, /projectionMode|deferredCommittedStructuralSettlement/);
 });
 
 test("receipt-ul Workbench este validat și proiectat înaintea topologiei", () => {
@@ -245,7 +264,7 @@ test("receipt-ul Workbench este validat și proiectat înaintea topologiei", () 
       revisionBefore: 4,
       revisionAfter: 5,
       snapshot: {
-        schemaVersion: 1,
+        schemaVersion: WORKBENCH_SCHEMA_VERSION,
         projectRoot: "/project-a",
         projectSessionId: "session-a",
         runtimeSessionId: "session-a:runtime-1",
@@ -267,6 +286,7 @@ test("receipt-ul Workbench este validat și proiectat înaintea topologiei", () 
           activeDocumentId: null,
         }],
         bottomPanel: { open: false, activeView: "problems" },
+        contentWorkspace: { mode: "list", pagePath: null },
         selectedProjectEntry: null,
       },
     },
@@ -277,7 +297,7 @@ test("receipt-ul Workbench este validat și proiectat înaintea topologiei", () 
   );
 
   const service = readFileSync(resolve(process.cwd(), "src/lib/versioning/workspace-history-service.svelte.ts"), "utf8");
-  const assignment = service.indexOf("this.dependencies.workbench.snapshot = receipt.workbench.snapshot");
+  const assignment = service.indexOf("this.dependencies.workbench.acceptSnapshot(receipt.workbench.snapshot)");
   const topology = service.indexOf("await reconcileProjectWorkspaceTopologyAfterHistory");
   assert.ok(assignment >= 0 && topology > assignment);
 });

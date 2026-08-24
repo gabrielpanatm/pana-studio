@@ -2260,6 +2260,53 @@ impl CanvasResourceManifest {
             entries,
         })
     }
+
+    pub(crate) fn from_revisioned_artifact_root<F>(
+        preview_revision: &str,
+        root: &Path,
+        mut write_revision: F,
+    ) -> Result<Self, String>
+    where
+        F: FnMut(&Path, &[u8]) -> Result<(), String>,
+    {
+        let mut manifest = Self::from_artifact_root(preview_revision, root)?;
+        let revisions = crate::preview::resource_url::revision_stylesheet_artifacts(
+            root,
+            preview_revision,
+            &manifest.entries,
+        )?;
+        for revision in revisions {
+            write_revision(&revision.artifact_path, &revision.body).map_err(|error| {
+                format!(
+                    "Versionarea resurselor CSS nu a putut scrie {}: {error}",
+                    revision.artifact_path.display()
+                )
+            })?;
+            let entry = manifest
+                .entries
+                .iter_mut()
+                .find(|entry| entry.url == revision.url)
+                .ok_or_else(|| {
+                    format!(
+                        "Versionarea CSS nu a mai găsit {} în manifestul Canvas.",
+                        revision.url
+                    )
+                })?;
+            manifest.total_bytes = manifest
+                .total_bytes
+                .checked_sub(entry.size_bytes)
+                .and_then(|total| total.checked_add(revision.size_bytes))
+                .ok_or_else(|| "Versionarea CSS a depășit contorul de bytes Canvas.".to_string())?;
+            if manifest.total_bytes > MAX_CANVAS_RESOURCE_BYTES {
+                return Err(format!(
+                    "Manifestul Canvas depășește limita de {MAX_CANVAS_RESOURCE_BYTES} bytes după versionarea CSS."
+                ));
+            }
+            entry.content_hash = revision.content_hash;
+            entry.size_bytes = revision.size_bytes;
+        }
+        Ok(manifest)
+    }
 }
 
 fn resource_kind(path: &Path) -> CanvasResourceKind {

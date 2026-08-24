@@ -3,6 +3,7 @@
   import type { DesignClassInventorySnapshot } from "$lib/css/design-system-contract";
   import type { ScssVariable } from "$lib/css/contracts";
   import { FontManagerState } from "$lib/fonts/manager-state.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import type { FileExplorerSnapshot } from "$lib/project/file-explorer-contract";
   import type { ProjectWorkspaceIdentity } from "$lib/project/workspace-contract";
@@ -136,8 +137,8 @@
       {#each designViews as view, index (view.id)}<button id={`design-tab-${view.id}`} type="button" role="tab" aria-selected={activeView === view.id ? "true" : "false"} aria-controls={`design-panel-${view.id}`} tabindex={activeView === view.id ? 0 : -1} class="ui-tab" class:active={activeView === view.id} onclick={() => selectView(view.id)} onkeydown={(event) => handleViewKeydown(event, index)}>{view.label}</button>{/each}
     </div>
     <div class="toolbar-query-group" class:with-filter={activeView === "global-styles" || activeView === "tokens"}>
-      {#if activeView === "global-styles"}<label class="toolbar-filter"><span class="sr-only">{t("design-style-category")}</span><select class="ui-field toolbar" bind:value={styleCategory} aria-label={t("design-style-category")}><option value="all">{t("design-all-categories")}</option>{#each themeStyleCatalog.snapshot?.categories ?? [] as entry (entry.id)}<option value={entry.id}>{entry.label} ({entry.targetCount})</option>{/each}</select></label>
-      {:else if activeView === "tokens"}<label class="toolbar-filter"><span class="sr-only">{t("design-token-category")}</span><select class="ui-field toolbar" bind:value={tokenCategory} aria-label={t("design-token-category")}><option value="all">{t("design-all-categories")}</option>{#each tokenCatalog.snapshot?.categories ?? [] as entry (entry.id)}<option value={entry.id}>{entry.label} ({entry.tokenCount})</option>{/each}</select></label>{/if}
+      {#if activeView === "global-styles"}<div class="toolbar-filter"><SelectControl size="toolbar" value={styleCategory} options={[{ value: "all", label: t("design-all-categories") }, ...(themeStyleCatalog.snapshot?.categories ?? []).map((entry) => ({ value: entry.id, label: `${entry.label} (${entry.targetCount})` }))]} ariaLabel={t("design-style-category")} onchange={(value) => { styleCategory = value; }} /></div>
+      {:else if activeView === "tokens"}<div class="toolbar-filter"><SelectControl size="toolbar" value={tokenCategory} options={[{ value: "all", label: t("design-all-categories") }, ...(tokenCatalog.snapshot?.categories ?? []).map((entry) => ({ value: entry.id, label: `${entry.label} (${entry.tokenCount})` }))]} ariaLabel={t("design-token-category")} onchange={(value) => { tokenCategory = value; }} /></div>{/if}
       <label class="search-field"><span class="sr-only">{t("design-search-label")}</span><IconSearch size={14} stroke={1.9} /><input class="ui-field toolbar" bind:value={query} type="search" placeholder={activeView === "global-styles" ? t("design-search-styles") : t("design-search-resources")} /></label>
     </div>
     {#if activeView !== "global-styles"}<button class="ui-button primary toolbar toolbar-action" type="button" disabled={activeViewBusy} onclick={() => { createRequest += 1; }}><IconPlus size={14} stroke={2} /> {t("design-add")}</button>{/if}

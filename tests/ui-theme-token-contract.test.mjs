@@ -74,7 +74,7 @@ test("interfața folosește tokenul canonic --brand pentru accente", () => {
   );
 });
 
-test("design system-ul oferă o variantă compactă reutilizabilă pentru micro-acțiuni", () => {
+test("design system-ul oferă o variantă mini reutilizabilă pentru micro-acțiuni", () => {
   const designSystemCss = readFileSync(new URL("../src/routes/design-system.css", import.meta.url), "utf8");
   const navigationSource = readFileSync(
     new URL("../src/lib/components/project/EditorNavigationTree.svelte", import.meta.url),
@@ -84,9 +84,10 @@ test("design system-ul oferă o variantă compactă reutilizabilă pentru micro-
   assert.match(designSystemCss, /--control-height-compact:\s*24px/);
   assert.match(designSystemCss, /\.ui-button\.compact,\s*\n\.ui-icon-button\.compact/);
   assert.match(designSystemCss, /\.ui-icon-button\.compact\s*\{/);
+  assert.match(designSystemCss, /button\.ui-icon-button\.mini\s*\{[\s\S]*width:\s*20px;[\s\S]*height:\s*20px;/);
   assert.match(navigationSource, /class="scope-action"/);
-  assert.match(navigationSource, /class="delete-action"/);
-  assert.match(navigationSource, /\.delete-action\s*\{[\s\S]*width:\s*20px;[\s\S]*height:\s*20px;/);
+  assert.match(navigationSource, /class="delete-action ui-icon-button mini danger"/);
+  assert.doesNotMatch(navigationSource, /\.delete-action\s*\{[^}]*width:/);
 });
 
 test("profunzimea skeuomorphic este tokenizată și păstrează fallbackul high contrast", () => {
@@ -189,7 +190,6 @@ test("profunzimea skeuomorphic este tokenizată și păstrează fallbackul high 
     "../src/lib/components/audit/AuditWorkspace.svelte",
     "../src/lib/components/content/ContentWorkspace.svelte",
     "../src/lib/components/creation/AssetsWorkspace.svelte",
-    "../src/lib/components/creation/BlocksWorkspace.svelte",
     "../src/lib/components/creation/ComponentsWorkspace.svelte",
     "../src/lib/components/creation/DesignSystemWorkspace.svelte",
     "../src/lib/components/data/DataWorkspace.svelte",

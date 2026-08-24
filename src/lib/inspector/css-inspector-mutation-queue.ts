@@ -2,6 +2,7 @@ import type { CssViewport, PageCssTarget } from "$lib/css/contracts";
 import {
   createCssRequestIdentity,
   cssRequestIdentityMatches,
+  isCssMutationTransientError,
   setCssRuleAtViewport,
   setPageCssRuleAtViewport,
   setReusableCssRuleAtViewport,
@@ -18,7 +19,7 @@ import {
   restoreCssPendingValueBaseline,
 } from "$lib/inspector/css-property-edit";
 import type { CssInspectorState } from "$lib/inspector/css-inspector-state.svelte";
-import type { CssInspectorCodeTarget } from "$lib/inspector/css-inspector-reader";
+import { CssEditSessionCoordinator } from "$lib/inspector/css-edit-session-coordinator";
 import {
   cssSemanticSelectionKey,
   sameCssSemanticSelection,
@@ -27,11 +28,12 @@ import type { SelectionMutationIdentity } from "$lib/preview/contracts";
 import { flushFileBufferDraftSync } from "$lib/session/file-buffer-draft-sync";
 
 export type CssInspectorMutationStatus =
-  | Readonly<{ kind: "saved"; label: string }>
-  | Readonly<{ kind: "liveFailed"; label: string; error: string }>
-  | Readonly<{ kind: "mutationFailed"; label: string; error: string }>
-  | Readonly<{ kind: "previewChanged"; property: string }>
-  | Readonly<{ kind: "editCancelled"; property: string }>;
+  | Readonly<{ kind: "saved"; label: string; interactionId: string }>
+  | Readonly<{ kind: "liveFailed"; label: string; error: string; interactionId: string }>
+  | Readonly<{ kind: "mutationFailed"; label: string; error: string; interactionId: string }>
+  | Readonly<{ kind: "previewChanged"; property: string; interactionId: string }>
+  | Readonly<{ kind: "targetUnavailable"; property: string; interactionId: null }>
+  | Readonly<{ kind: "editCancelled"; property: string; interactionId: string | null }>;
 
 export type CssInspectorMutationContext = Readonly<{
   projectRoot: string;
@@ -52,7 +54,7 @@ export type CssInspectorMutationQueueDependencies = Readonly<{
   mutateExisting?: typeof setCssRuleAtViewport;
   mutatePage?: typeof setPageCssRuleAtViewport;
   mutateReusable?: typeof setReusableCssRuleAtViewport;
-  changeCodeTarget?: (target: CssInspectorCodeTarget) => boolean | Promise<boolean>;
+  editSession?: CssEditSessionCoordinator;
   applyLiveProperties?: (
     selector: string | null,
     properties: Record<string, string>,
@@ -81,6 +83,7 @@ type StagedCssRuleMutation = {
   key: string;
   identity: CssRequestIdentity;
   label: string;
+  interactionId: string;
   liveEpoch: number | null;
   properties: Record<string, string>;
   baselines: Record<string, CssPendingValueBaseline>;
@@ -103,6 +106,8 @@ export class CssInspectorMutationQueue {
   >>;
   private readonly staged = new Map<string, StagedCssRuleMutation>();
   private readonly continuousBindings = new Map<string, CssContinuousEditHandlers>();
+  private readonly editSession: CssEditSessionCoordinator;
+  private unavailableDraftGesture = "";
   private flushPromise: Promise<void> | null = null;
   private flushScheduled = false;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -123,6 +128,7 @@ export class CssInspectorMutationQueue {
       mutatePage: dependencies.mutatePage ?? setPageCssRuleAtViewport,
       mutateReusable: dependencies.mutateReusable ?? setReusableCssRuleAtViewport,
     };
+    this.editSession = dependencies.editSession ?? new CssEditSessionCoordinator();
     this.edit = Object.freeze({
       draft: (property, value) => this.draftProperty(property, value),
       draftMany: (properties) => this.draftProperties(properties),
@@ -159,6 +165,7 @@ export class CssInspectorMutationQueue {
     const sessionKey = `${projectRoot}\u0000${runtimeSessionId}`;
     if (sessionKey === this.sessionKey) return;
     this.sessionKey = sessionKey;
+    this.editSession.syncRuntime(projectRoot, runtimeSessionId);
     this.resetQueue();
   }
 
@@ -199,17 +206,31 @@ export class CssInspectorMutationQueue {
   }
 
   private draftProperties(properties: Readonly<Record<string, string>>) {
-    const target = this.captureTarget();
-    if (!target) return;
     const entries = Object.entries(properties);
     if (!entries.length) return;
     const focusedProperty = entries.length === 1 ? entries[0][0] : "background-image";
-    void this.dependencies.changeCodeTarget?.({
+    const target = this.captureTarget();
+    if (!target) {
+      const gestureKey = this.unavailableDraftGestureKey(focusedProperty);
+      if (this.unavailableDraftGesture !== gestureKey) {
+        this.unavailableDraftGesture = gestureKey;
+        this.dependencies.reportStatus?.({
+          kind: "targetUnavailable",
+          property: focusedProperty,
+          interactionId: null,
+        });
+      }
+      return;
+    }
+    this.unavailableDraftGesture = "";
+    const gesture = this.editSession.beginGesture({
+      projectRoot: target.identity.expectedProjectRoot,
+      runtimeSessionId: target.identity.expectedSessionId,
       selector: target.selector,
       file: target.file,
-      property: focusedProperty,
-      expectedSelectionRevision: target.expectedSelection.selectionRevision,
-    });
+      viewport: target.viewport,
+      expectedSelection: target.expectedSelection,
+    }, focusedProperty);
     const baselines = Object.fromEntries(entries.map(([property]) => [
       property,
       captureCssPendingValueBaseline(this.state.pendingValues, property),
@@ -222,11 +243,17 @@ export class CssInspectorMutationQueue {
       target.viewport,
     );
     const liveEpoch = typeof appliedLiveEpoch === "number" ? appliedLiveEpoch : null;
-    const mutation = this.createStagedMutation(target, liveEpoch);
+    const mutation = this.createStagedMutation(target, liveEpoch, gesture.interactionId);
     for (const [property, value] of entries) {
       this.stage(mutation, property, value, baselines[property]);
     }
-    this.dependencies.reportStatus?.({ kind: "previewChanged", property: focusedProperty });
+    if (gesture.started) {
+      this.dependencies.reportStatus?.({
+        kind: "previewChanged",
+        property: focusedProperty,
+        interactionId: gesture.interactionId,
+      });
+    }
   }
 
   private draftProperty(property: string, value: string) {
@@ -237,16 +264,20 @@ export class CssInspectorMutationQueue {
     if (value !== undefined && this.state.pendingValues[property] !== value) {
       this.draftProperty(property, value);
     }
+    this.finishDraftGesture();
     this.scheduleFlush();
   }
 
   private commitProperties(properties: Readonly<Record<string, string>> = {}) {
     if (Object.keys(properties).length) this.draftProperties(properties);
+    this.finishDraftGesture();
     this.scheduleFlush();
   }
 
   private cancelProperty(property: string) {
     const target = this.captureTarget();
+    const interactionId = this.editSession.snapshot?.latestInteractionId ?? null;
+    this.abandonDraftGesture();
     if (!target) return;
     const staged = this.staged.get(target.targetKey);
     const baseline = staged?.baselines[property];
@@ -292,7 +323,7 @@ export class CssInspectorMutationQueue {
       });
     }
     this.updatePending();
-    this.dependencies.reportStatus?.({ kind: "editCancelled", property });
+    this.dependencies.reportStatus?.({ kind: "editCancelled", property, interactionId });
   }
 
   private cancelProperties(properties: readonly string[]) {
@@ -309,6 +340,28 @@ export class CssInspectorMutationQueue {
     });
     this.continuousBindings.set(property, bindings);
     return bindings;
+  }
+
+  private unavailableDraftGestureKey(property: string) {
+    const context = this.dependencies.context();
+    return [
+      "unavailable",
+      this.sessionKey,
+      this.state.effectiveSelector ?? "",
+      context.targetCssFile,
+      context.previewDevice,
+      property,
+    ].join("\u0000");
+  }
+
+  private finishDraftGesture() {
+    this.unavailableDraftGesture = "";
+    this.editSession.finishGesture();
+  }
+
+  private abandonDraftGesture() {
+    this.unavailableDraftGesture = "";
+    this.editSession.abandonGesture();
   }
 
   private captureTarget(): CssMutationTarget | null {
@@ -358,6 +411,7 @@ export class CssInspectorMutationQueue {
   private createStagedMutation(
     target: CssMutationTarget,
     liveEpoch: number | null,
+    interactionId: string,
   ): Omit<StagedCssRuleMutation, "properties" | "baselines"> {
     const { identity, expectedSelection, file, selector, viewport, pageTarget } = target;
     if (pageTarget?.targetKind === "reusable" && pageTarget.templatePath) {
@@ -366,6 +420,7 @@ export class CssInspectorMutationQueue {
         key: target.targetKey,
         identity,
         label: `CSS reutilizabil ${selector}`,
+        interactionId,
         liveEpoch,
         run: (properties) => this.dependencies.mutateReusable({
           templatePath,
@@ -374,6 +429,7 @@ export class CssInspectorMutationQueue {
           properties,
           viewport,
           expectedSelection,
+          interactionId,
         }, identity),
       };
     }
@@ -383,6 +439,7 @@ export class CssInspectorMutationQueue {
         key: target.targetKey,
         identity,
         label: `CSS ${selector}`,
+        interactionId,
         liveEpoch,
         run: (properties) => this.dependencies.mutatePage({
           templatePath,
@@ -391,6 +448,7 @@ export class CssInspectorMutationQueue {
           properties,
           viewport,
           expectedSelection,
+          interactionId,
         }, identity),
       };
     }
@@ -398,6 +456,7 @@ export class CssInspectorMutationQueue {
       key: target.targetKey,
       identity,
       label: `CSS ${selector}`,
+      interactionId,
       liveEpoch,
       run: (properties) => this.dependencies.mutateExisting({
         relativePath: file,
@@ -405,6 +464,7 @@ export class CssInspectorMutationQueue {
         properties,
         viewport,
         expectedSelection,
+        interactionId,
       }, identity),
     };
   }
@@ -448,31 +508,47 @@ export class CssInspectorMutationQueue {
       if (!this.entryIsCurrent(entry.identity, generation)) return;
       const receipt = await entry.run(entry.properties);
       if (!this.entryIsCurrent(entry.identity, generation)) return;
+      const authority = this.editSession.acceptAuthority(entry.interactionId, receipt.authority);
       this.mutationFailure = "";
-      this.dependencies.reportStatus?.({ kind: "saved", label: entry.label });
+      if (authority.kind !== "superseded") {
+        this.dependencies.reportStatus?.({
+          kind: "saved",
+          label: entry.label,
+          interactionId: entry.interactionId,
+        });
+      }
       if (!this.dependencies.projectCommittedMutation) return;
       try {
         await this.dependencies.projectCommittedMutation(receipt.authority, entry.liveEpoch);
       } catch (cause) {
-        if (!this.entryIsCurrent(entry.identity, generation)) return;
+        if (!this.entryIsCurrent(entry.identity, generation) || authority.kind === "superseded") {
+          return;
+        }
         this.dependencies.reportStatus?.({
           kind: "liveFailed",
           label: entry.label,
           error: cause instanceof Error ? cause.message : String(cause),
+          interactionId: entry.interactionId,
         });
       }
     });
     this.mutationTail = task
       .catch((cause) => {
         if (!this.entryIsCurrent(entry.identity, generation)) return;
+        this.editSession.rejectAuthority(entry.interactionId);
         if (entry.liveEpoch !== null) {
           this.dependencies.rejectLiveProperties?.(entry.liveEpoch);
+        }
+        if (isCssMutationTransientError(cause)) {
+          this.mutationFailure = "";
+          return;
         }
         this.mutationFailure = cause instanceof Error ? cause.message : String(cause);
         this.dependencies.reportStatus?.({
           kind: "mutationFailed",
           label: entry.label,
           error: this.mutationFailure,
+          interactionId: entry.interactionId,
         });
       })
       .finally(() => {
@@ -505,6 +581,8 @@ export class CssInspectorMutationQueue {
     this.mutationFailure = "";
     this.queued = 0;
     this.continuousBindings.clear();
+    this.unavailableDraftGesture = "";
+    this.editSession.finishGesture();
     this.updatePending();
   }
 

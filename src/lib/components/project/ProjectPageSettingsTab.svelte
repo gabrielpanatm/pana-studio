@@ -1,5 +1,8 @@
 <script lang="ts">
   import { IconFileText } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import {
     legacyTranslator,
@@ -87,92 +90,89 @@
     <div class="metadata-groups" aria-label={t("content-settings-frontmatter-group")}>
       {#if view === "settings"}<section class="metadata-group">
         <h4>{t("content-settings-general")}</h4>
-        <label class="field">
-          <span>{t("content-settings-field-title")}</span>
-          <input value={values.title} onchange={(event) => setField("title", event.currentTarget.value)} />
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-field-title")}</span>
+          <input class="ui-input compact" value={values.title} onchange={(event) => setField("title", event.currentTarget.value)} />
         </label>
-        <label class="field">
-          <span>{t("content-settings-field-description")}</span>
-          <textarea rows="3" value={values.description} onchange={(event) => setField("description", event.currentTarget.value)}></textarea>
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-field-description")}</span>
+          <textarea class="ui-textarea" rows="3" value={values.description} onchange={(event) => setField("description", event.currentTarget.value)}></textarea>
         </label>
         <div class="field-grid" class:section-grid={isSection}>
-          {#if !isSection}<label class="field">
-            <span>{t("content-settings-field-date")}</span>
-            <input type="date" value={values.date} onchange={(event) => setField("date", event.currentTarget.value)} />
+          {#if !isSection}<label class="ui-form-field">
+            <span class="ui-form-label">{t("content-settings-field-date")}</span>
+            <input class="ui-input compact" type="date" value={values.date} onchange={(event) => setField("date", event.currentTarget.value)} />
           </label>{/if}
-          <label class="field">
-            <span>{t("content-settings-field-weight")}</span>
-            <input type="number" min="0" step="1" value={values.weight} onchange={(event) => setField("weight", event.currentTarget.value)} />
+          <label class="ui-form-field">
+            <span class="ui-form-label">{t("content-settings-field-weight")}</span>
+            <input class="ui-input compact" type="number" min="0" step="1" value={values.weight} onchange={(event) => setField("weight", event.currentTarget.value)} />
           </label>
-          {#if isSection}<label class="field">
-            <span>{t("content-settings-field-paginate-by")}</span>
-            <input type="number" min="1" step="1" required value={values.paginateBy || "6"} onchange={(event) => setField("paginateBy", event.currentTarget.value)} />
+          {#if isSection}<label class="ui-form-field">
+            <span class="ui-form-label">{t("content-settings-field-paginate-by")}</span>
+            <input class="ui-input compact" type="number" min="1" step="1" required value={values.paginateBy || "6"} onchange={(event) => setField("paginateBy", event.currentTarget.value)} />
           </label>{/if}
         </div>
-        <label class="field">
-          <span>{t("content-settings-field-template")}</span>
-          <input list="page-template-options" value={values.template} onchange={(event) => setField("template", event.currentTarget.value)} />
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-field-template")}</span>
+          <input class="ui-input compact" list="page-template-options" value={values.template} onchange={(event) => setField("template", event.currentTarget.value)} />
           <datalist id="page-template-options">
             {#each scannedTemplates.filter((template) => isActiveThemeTemplatePath(template.relativePath, activeTheme)) as template}
               <option value={templateNameForPath(template.relativePath)}></option>
             {/each}
           </datalist>
         </label>
-        {#if !isSection}<label class="field">
-          <span>{t("content-settings-field-slug")}</span>
-          <input value={values.slug} onchange={(event) => setField("slug", event.currentTarget.value)} />
+        {#if !isSection}<label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-field-slug")}</span>
+          <input class="ui-input compact" value={values.slug} onchange={(event) => setField("slug", event.currentTarget.value)} />
         </label>{/if}
-        <label class="toggle-field">
-          <input type="checkbox" checked={values.draft} onchange={(event) => setField("draft", event.currentTarget.checked)} />
-          <span>{t("content-settings-field-draft")}</span>
-        </label>
+        <CheckboxControl compact label={t("content-settings-field-draft")} checked={values.draft} onchange={(checked) => setField("draft", checked)} />
       </section>{/if}
 
       {#if view === "seo"}<section class="metadata-group">
         <h4>SEO</h4>
-        <label class="field">
-          <span>{t("content-settings-seo-title")}</span>
-          <input value={values.seoTitle} onchange={(event) => setField("seoTitle", event.currentTarget.value)} />
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-seo-title")}</span>
+          <input class="ui-input compact" value={values.seoTitle} onchange={(event) => setField("seoTitle", event.currentTarget.value)} />
         </label>
-        <label class="field">
-          <span>{t("content-settings-seo-description")}</span>
-          <textarea rows="3" value={values.seoDescription} onchange={(event) => setField("seoDescription", event.currentTarget.value)}></textarea>
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-seo-description")}</span>
+          <textarea class="ui-textarea" rows="3" value={values.seoDescription} onchange={(event) => setField("seoDescription", event.currentTarget.value)}></textarea>
         </label>
-        <label class="field">
-          <span>{t("content-settings-canonical-url")}</span>
-          <input type="url" value={values.canonicalUrl} onchange={(event) => setField("canonicalUrl", event.currentTarget.value)} />
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-canonical-url")}</span>
+          <input class="ui-input compact" type="url" value={values.canonicalUrl} onchange={(event) => setField("canonicalUrl", event.currentTarget.value)} />
         </label>
-        <label class="field">
-          <span>{t("content-settings-robots")}</span>
-          <input placeholder="index, follow" value={values.robots} onchange={(event) => setField("robots", event.currentTarget.value)} />
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-robots")}</span>
+          <input class="ui-input compact" placeholder="index, follow" value={values.robots} onchange={(event) => setField("robots", event.currentTarget.value)} />
         </label>
       </section>
 
       <section class="metadata-group">
         <h4>OpenGraph</h4>
-        <label class="field">
-          <span>{t("content-settings-og-title")}</span>
-          <input value={values.ogTitle} onchange={(event) => setField("ogTitle", event.currentTarget.value)} />
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-og-title")}</span>
+          <input class="ui-input compact" value={values.ogTitle} onchange={(event) => setField("ogTitle", event.currentTarget.value)} />
         </label>
-        <label class="field">
-          <span>{t("content-settings-og-description")}</span>
-          <textarea rows="3" value={values.ogDescription} onchange={(event) => setField("ogDescription", event.currentTarget.value)}></textarea>
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-og-description")}</span>
+          <textarea class="ui-textarea" rows="3" value={values.ogDescription} onchange={(event) => setField("ogDescription", event.currentTarget.value)}></textarea>
         </label>
-        <label class="field">
-          <span>{t("content-settings-og-image")}</span>
-          <input value={values.ogImage} onchange={(event) => setField("ogImage", event.currentTarget.value)} />
+        <label class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-og-image")}</span>
+          <input class="ui-input compact" value={values.ogImage} onchange={(event) => setField("ogImage", event.currentTarget.value)} />
         </label>
-        <label class="field">
-          <span>{t("content-settings-og-type")}</span>
+        <div class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-og-type")}</span>
           <SelectControl value={values.ogType} options={ogTypeOptions} ariaLabel={t("content-settings-og-type")} onchange={(value) => setField("ogType", value)} />
-        </label>
+        </div>
       </section>{/if}
     </div>
-    {#if mutationError}<p class="mutation-error" role="alert">{mutationError}</p>{/if}
+    {#if mutationError}<InlineMessage tone="error" message={mutationError} />{/if}
   {:else if activePage && parsed.kind === "yaml"}
-    <p class="empty-text">{t("content-settings-yaml-help")}</p>
+    <EmptyState title={t("content-settings-yaml-help")} compact />
   {:else}
-    <p class="empty-text">{t("content-settings-select-page")}</p>
+    <EmptyState title={t("content-settings-select-page")} compact />
   {/if}
 </section>
 
@@ -198,8 +198,7 @@
   }
 
   .section-heading h3,
-  .metadata-groups h4,
-  .empty-text {
+  .metadata-groups h4 {
     margin: 0;
   }
 
@@ -216,7 +215,7 @@
     border: 1px solid var(--border-3);
     border-radius: 999px;
     color: var(--text-muted);
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 800;
   }
@@ -236,7 +235,7 @@
   .page-file-chip span {
     min-width: 0;
     overflow: hidden;
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -264,84 +263,10 @@
     font-weight: 800;
   }
 
-  .field,
-  .toggle-field {
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
   .field-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 82px;
     gap: 6px;
   }
 
-  .field input,
-  .field textarea {
-    width: 100%;
-    min-width: 0;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    color: var(--text);
-    font-size: 12px;
-    letter-spacing: 0;
-    text-transform: none;
-    background: var(--surface-5);
-    outline: none;
-  }
-
-  .field input {
-    min-height: 28px;
-    padding: 0 7px;
-  }
-
-  .field textarea {
-    resize: vertical;
-    min-height: 58px;
-    padding: 7px;
-    line-height: 1.45;
-  }
-
-  .field input:focus,
-  .field textarea:focus {
-    border-color: var(--brand);
-  }
-
-  .toggle-field {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-  }
-
-  .toggle-field input {
-    width: 15px;
-    height: 15px;
-    accent-color: var(--brand);
-  }
-
-  .empty-text {
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  .mutation-error {
-    margin: 0;
-    padding: 7px 8px;
-    border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border-2));
-    border-radius: 6px;
-    color: var(--danger);
-    background: color-mix(in srgb, var(--danger) 7%, var(--surface-3));
-    font-size: 12px;
-    line-height: 1.4;
-  }
 </style>

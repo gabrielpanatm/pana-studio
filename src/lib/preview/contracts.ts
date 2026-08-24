@@ -116,21 +116,7 @@ type ProjectTeraInsertItem = {
   target?: string | null;
   name?: string | null;
   expression?: string | null;
-  dynamicBinding?: ProjectDynamicFieldBinding | null;
   dynamicWidget?: DynamicWidgetProperties | null;
-};
-
-export type ProjectDynamicFieldBinding = {
-  modelId: string;
-  fieldId: string;
-  path: string;
-  scope: "page" | "item";
-  itemPath: string | null;
-  presentation: "text" | "image" | "link" | "button" | "list" | "condition";
-  prefix: string;
-  suffix: string;
-  fallback: string;
-  text: string;
 };
 
 type ProjectTeraInsertIntent = {

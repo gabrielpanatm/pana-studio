@@ -196,7 +196,11 @@
       liveEpoch: number | null,
     ) => void | Promise<void>;
     onInspectorLivePropertiesRejected?: (liveEpoch: number) => void;
-    onStatusUpdate?: (text: string, kind: string) => void;
+    onStatusUpdate?: (
+      text: string,
+      kind: string,
+      options?: import("$lib/status/global-status").GlobalStatusPublishOptions,
+    ) => void;
     onPendingChange?: (area: InspectorPendingArea, pending: boolean) => void;
     onInspectorTabChange?: (tab: InspectorTab) => void;
     beforeInspectorTabChange?: (from: InspectorTab, to: InspectorTab) => void | Promise<void>;
@@ -205,6 +209,7 @@
       file: string;
       property?: string | null;
       expectedSelectionRevision?: number | null;
+      expectedSelection?: import("$lib/preview/contracts").SelectionMutationIdentity | null;
     }) => boolean | Promise<boolean>;
     getOpenCssRuleContext?: (file: string, selector: string, viewport: CssViewport) => CssRuleContext | null;
     applyNativeBlockOption: (request: ApplyNativeBlockOptionRequest) => Promise<EditorActionOutcome>;

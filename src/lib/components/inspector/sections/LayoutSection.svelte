@@ -24,7 +24,7 @@
     IconLayoutGridAdd,
   } from "@tabler/icons-svelte";
   import InspectorSection from "../InspectorSection.svelte";
-  import SegmentedControl from "../controls/SegmentedControl.svelte";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
   import PropInput from "../controls/PropInput.svelte";
   import GridBuilder from "../controls/GridBuilder.svelte";
   import type { CssGrid } from "$lib/inspector/grid-model";
@@ -194,7 +194,7 @@
     />
   {/if}
 
-  <div class="grid-item-placement" class:active={Boolean(getValue("grid-column") || getValue("grid-row") || getValue("grid-area"))}>
+  <div class="grid-item-placement ui-card" class:active={Boolean(getValue("grid-column") || getValue("grid-row") || getValue("grid-area"))}>
     <div class="grid-item-heading">
       <strong>{t("inspector-grid-item-title")}</strong>
       <span>{t("inspector-grid-item-hint")}</span>
@@ -237,13 +237,10 @@
     gap: 6px;
     margin-top: 2px;
     padding: 7px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--surface-4);
   }
   .grid-item-placement.active {
     border-color: color-mix(in srgb, var(--brand) 48%, var(--border-subtle));
-    background: color-mix(in srgb, var(--surface-4) 88%, var(--brand-soft));
+    background: var(--brand-soft);
   }
   .grid-item-heading {
     display: grid;

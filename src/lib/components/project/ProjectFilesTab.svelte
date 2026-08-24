@@ -483,7 +483,7 @@
     if (event.button !== 0) return;
     if (!projectRoot || !runtimeSessionId) return;
     if (!node.entry?.capabilities.moveEntry.allowed) return;
-    if (event.target instanceof HTMLElement && event.target.closest(".icon-action, .inline-rename")) return;
+    if (event.target instanceof HTMLElement && event.target.closest("[data-file-action], .inline-rename")) return;
     if (pendingRename) return;
     cleanupPointerListeners();
     dragCandidate = {
@@ -731,25 +731,25 @@
 
 {#if scannedProject}
   <div class="file-tree-header">
-    <span class="file-tree-title">{t("project-files-explorer")}</span>
+    <span class="file-tree-title">{t("project-files-heading")}</span>
     <div class="file-tree-header-actions">
       <button
         type="button"
-        class="icon-action"
+        class="ui-icon-button mini"
         disabled={!snapshot?.rootCapabilities.createChild.allowed}
         title={t("project-files-new-root-file")}
         onclick={(event) => startCreate("", 0, "file", event)}
       >
-        <IconFilePlus size={14} stroke={1.8} />
+        <IconFilePlus size={12} stroke={1.8} />
       </button>
       <button
         type="button"
-        class="icon-action"
+        class="ui-icon-button mini"
         disabled={!snapshot?.rootCapabilities.createChild.allowed}
         title={t("project-files-new-root-folder")}
         onclick={(event) => startCreate("", 0, "dir", event)}
       >
-        <IconFolderPlus size={14} stroke={1.8} />
+        <IconFolderPlus size={12} stroke={1.8} />
       </button>
     </div>
   </div>
@@ -776,7 +776,7 @@
         onkeydown={handleCreateKeydown}
       />
       <button type="button" class="create-confirm" onclick={confirmCreate}>{t("common-confirm")}</button>
-      <button type="button" class="create-cancel" onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
+      <button type="button" class="ui-icon-button mini" aria-label={t("project-files-cancel")} onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
     </div>
   {/if}
 
@@ -791,7 +791,7 @@
         aria-hidden="true"
         style="--depth: 0;"
       >
-        <button class="file-row-btn" type="button" tabindex="-1">
+        <button class="file-row-btn ui-entity-trigger" type="button" tabindex="-1">
           <span class="file-chevron"></span>
           <span class="file-icon dir"><IconFolderOpen size={14} stroke={1.6} /></span>
           <span class="file-name">{t("project-files-root")}</span>
@@ -821,7 +821,7 @@
           onkeydown={handleCreateKeydown}
         />
         <button type="button" class="create-confirm" onclick={confirmCreate}>{t("common-confirm")}</button>
-        <button type="button" class="create-cancel" onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
+        <button type="button" class="ui-icon-button mini" aria-label={t("project-files-cancel")} onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
       </div>
     {/if}
 
@@ -863,7 +863,7 @@
         {#if node.type === "dir"}
           <svelte:element
             this={isRenaming(node) ? "div" : "button"}
-            class="file-row-btn"
+            class="file-row-btn ui-entity-trigger"
             class:renaming-row={isRenaming(node)}
             type={isRenaming(node) ? undefined : "button"}
             tabindex={isRenaming(node) ? undefined : -1}
@@ -898,7 +898,7 @@
                   aria-label={t("project-files-new-name", { name: node.name })}
                 />
                 <button type="button" class="rename-confirm" disabled={renaming} onclick={confirmRename}>{t("common-confirm")}</button>
-                <button type="button" class="rename-cancel" disabled={renaming} onclick={cancelRename}><IconX size={11} stroke={2} /></button>
+                <button type="button" class="rename-cancel ui-icon-button mini" aria-label={t("project-files-cancel")} disabled={renaming} onclick={cancelRename}><IconX size={11} stroke={2} /></button>
               </span>
             {:else}
               <span class="file-name">{node.name}</span>
@@ -914,7 +914,8 @@
             <div class="row-actions">
               <button
                 type="button"
-                class="icon-action small"
+                class="ui-icon-button mini"
+                data-file-action
                 disabled={!node.entry?.capabilities.rename.allowed || isRenaming(node)}
                 title={renameTitle()}
                 onclick={(event) => startRename(node, event)}
@@ -923,7 +924,8 @@
               </button>
               <button
                 type="button"
-                class="icon-action small"
+                class="ui-icon-button mini"
+                data-file-action
                 disabled={!node.entry?.capabilities.createChild.allowed || isRenaming(node)}
                 title={t("project-files-new-file")}
                 onclick={(event) => startCreate(node.path, node.depth + 1, "file", event)}
@@ -932,7 +934,8 @@
               </button>
               <button
                 type="button"
-                class="icon-action small"
+                class="ui-icon-button mini"
+                data-file-action
                 disabled={!node.entry?.capabilities.createChild.allowed || isRenaming(node)}
                 title={t("project-files-new-folder")}
                 onclick={(event) => startCreate(node.path, node.depth + 1, "dir", event)}
@@ -941,7 +944,8 @@
               </button>
               <button
                 type="button"
-                class="icon-action small danger"
+                class="ui-icon-button mini danger"
+                data-file-action
                 disabled={!node.entry?.capabilities.delete.allowed || isRenaming(node)}
                 title={deleteTitle(node)}
                 onclick={(event) => requestDelete(node, event)}
@@ -953,7 +957,7 @@
         {:else}
           <svelte:element
             this={isRenaming(node) ? "div" : "button"}
-            class="file-row-btn"
+            class="file-row-btn ui-entity-trigger"
             class:renaming-row={isRenaming(node)}
             type={isRenaming(node) ? undefined : "button"}
             tabindex={isRenaming(node) ? undefined : -1}
@@ -986,7 +990,7 @@
                   aria-label={t("project-files-new-name", { name: node.name })}
                 />
                 <button type="button" class="rename-confirm" disabled={renaming} onclick={confirmRename}>{t("common-confirm")}</button>
-                <button type="button" class="rename-cancel" disabled={renaming} onclick={cancelRename}><IconX size={11} stroke={2} /></button>
+                <button type="button" class="rename-cancel ui-icon-button mini" aria-label={t("project-files-cancel")} disabled={renaming} onclick={cancelRename}><IconX size={11} stroke={2} /></button>
               </span>
             {:else}
               <span class="file-name">{node.name}</span>
@@ -999,7 +1003,8 @@
             <div class="row-actions">
               <button
                 type="button"
-                class="icon-action small"
+                class="ui-icon-button mini"
+                data-file-action
                 disabled={!node.entry?.capabilities.rename.allowed || isRenaming(node)}
                 title={renameTitle()}
                 onclick={(event) => startRename(node, event)}
@@ -1008,7 +1013,8 @@
               </button>
               <button
                 type="button"
-                class="icon-action small danger"
+                class="ui-icon-button mini danger"
+                data-file-action
                 disabled={!node.entry?.capabilities.delete.allowed || isRenaming(node)}
                 title={deleteTitle(node)}
                 onclick={(event) => requestDelete(node, event)}
@@ -1037,7 +1043,7 @@
             onkeydown={handleCreateKeydown}
           />
           <button type="button" class="create-confirm" onclick={confirmCreate}>{t("common-confirm")}</button>
-          <button type="button" class="create-cancel" onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
+          <button type="button" class="ui-icon-button mini" aria-label={t("project-files-cancel")} onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
         </div>
       {/if}
     {/each}
@@ -1127,47 +1133,6 @@
   .file-tree-header-actions {
     display: flex;
     gap: 4px;
-  }
-
-  .icon-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 5px;
-    color: var(--text-muted);
-    background: transparent;
-    cursor: pointer;
-    transition: color 80ms, background 80ms, border-color 80ms;
-  }
-
-  .icon-action:hover {
-    border-color: var(--border-3);
-    color: var(--text-strong);
-    background: var(--surface-4);
-  }
-
-  .icon-action:disabled {
-    opacity: 0.42;
-    cursor: not-allowed;
-  }
-
-  .icon-action.small {
-    width: 20px;
-    height: 20px;
-  }
-
-  .icon-action.danger {
-    color: color-mix(in srgb, #cf4a4a 82%, var(--text-muted));
-  }
-
-  .icon-action.danger:hover:not(:disabled) {
-    border-color: color-mix(in srgb, #cf4a4a 42%, var(--border-3));
-    color: #cf4a4a;
-    background: color-mix(in srgb, #cf4a4a 12%, var(--surface-4));
   }
 
   .file-tree {
@@ -1314,8 +1279,7 @@
     box-shadow: 0 0 0 1px var(--brand);
   }
 
-  .rename-confirm,
-  .rename-cancel {
+  .rename-confirm {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1331,16 +1295,12 @@
     cursor: pointer;
   }
 
-  .rename-cancel {
-    min-width: 20px;
-    padding: 0;
-  }
-
-  .rename-confirm:disabled,
-  .rename-cancel:disabled {
+  .rename-confirm:disabled {
     opacity: 0.55;
     cursor: wait;
   }
+
+  .rename-cancel:disabled { cursor: wait; }
 
   .file-drop-label {
     flex: 0 0 auto;
@@ -1368,7 +1328,7 @@
     gap: 2px;
     padding: 1px;
     border-radius: 4px;
-    background: var(--surface-4);
+    background: transparent;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -1412,7 +1372,7 @@
     border: none;
     border-radius: 3px;
     color: var(--text);
-    font-family: "JetBrains Mono", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     background: var(--surface);
     outline: none;
@@ -1431,20 +1391,6 @@
     color: #ffffff;
     font-size: 12px;
     background: var(--brand);
-    cursor: pointer;
-  }
-
-  .create-cancel {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid var(--border-3);
-    border-radius: 3px;
-    color: var(--text-muted);
-    background: var(--surface-4);
     cursor: pointer;
   }
 
@@ -1573,7 +1519,7 @@
     background: #991b1b;
   }
 
-  button:disabled {
+  button:not(.ui-icon-button):disabled {
     opacity: 0.45;
     cursor: not-allowed;
   }

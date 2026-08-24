@@ -211,40 +211,6 @@ pub(super) fn field_path_by_id(
     visit(fields, field_id, &mut path).then_some(path)
 }
 
-pub(super) fn field_item_path_by_id(
-    fields: &[ContentFieldDefinition],
-    field_id: &str,
-) -> Option<Vec<String>> {
-    fn visit(
-        fields: &[ContentFieldDefinition],
-        field_id: &str,
-        item_parent: Option<&[String]>,
-    ) -> Option<Vec<String>> {
-        for field in fields {
-            let item_path = item_parent.map(|parent| {
-                let mut path = parent.to_vec();
-                path.push(field.key.clone());
-                path
-            });
-            if field.id == field_id {
-                return item_path;
-            }
-            let empty = Vec::new();
-            let next_item_parent = if field.kind == ContentFieldKind::Repeater {
-                Some(empty.as_slice())
-            } else {
-                item_path.as_deref()
-            };
-            if let Some(found) = visit(&field.fields, field_id, next_item_parent) {
-                return Some(found);
-            }
-        }
-        None
-    }
-
-    visit(fields, field_id, None)
-}
-
 pub(super) fn field_parent_id_by_id(
     fields: &[ContentFieldDefinition],
     field_id: &str,

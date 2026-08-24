@@ -1,6 +1,7 @@
 import type { CssProperty } from "$lib/css/property-contract";
 import type { CssBackground } from "$lib/inspector/background-model";
 import type { CssGrid } from "$lib/inspector/grid-model";
+import type { FileBufferCommandReceipt } from "$lib/project/workspace-contract";
 
 export type CssViewport = "desktop" | "tablet" | "mobile";
 
@@ -110,3 +111,28 @@ export type CssInspectorContextResolution = {
   ruleContext: CssRuleContext | null;
   candidates: CssInspectorSourceCandidate[];
 };
+
+export type CssInspectorContextCommandOutcome =
+  | {
+      kind: "applied";
+      interactionId: string | null;
+      receipt: FileBufferCommandReceipt<CssInspectorContextResolution>;
+    }
+  | {
+      kind: "superseded";
+      interactionId: string | null;
+      reason: string;
+      message: string;
+    }
+  | {
+      kind: "retryableStale";
+      interactionId: string | null;
+      reason: string;
+      message: string;
+    }
+  | {
+      kind: "rejected";
+      interactionId: string | null;
+      reason: string;
+      message: string;
+    };

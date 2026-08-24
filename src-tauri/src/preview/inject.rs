@@ -5,12 +5,14 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use percent_encoding::percent_decode_str;
 use sha2::{Digest, Sha256};
 use tauri_utils::html::{parse, serialize_node, NodeRef};
 
 use crate::{
-    preview::CanvasProjectionIdentity,
+    preview::{
+        resource_url::{local_resource_path, replace_internal_resource_query},
+        CanvasProjectionIdentity,
+    },
     project_model::html_editor_schema::{
         has_active_script_scheme, is_forbidden_attribute_name, is_forbidden_element,
         is_forbidden_meta_http_equiv,
@@ -720,89 +722,6 @@ fn revise_resource_url(
     replace_internal_resource_query(trimmed, "__pana_preview_revision", preview_revision)
 }
 
-fn replace_internal_resource_query(value: &str, name: &str, identity: &str) -> String {
-    let (without_fragment, fragment) = value
-        .split_once('#')
-        .map(|(head, tail)| (head, Some(tail)))
-        .unwrap_or((value, None));
-    let (path, query) = without_fragment
-        .split_once('?')
-        .map(|(path, query)| (path, Some(query)))
-        .unwrap_or((without_fragment, None));
-    let mut pairs = query
-        .into_iter()
-        .flat_map(|query| query.split('&'))
-        .filter(|pair| {
-            let key = pair.split_once('=').map(|(key, _)| key).unwrap_or(pair);
-            !matches!(key, "__pana_preview_revision" | "__pana_resource_hash")
-        })
-        .filter(|pair| !pair.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    pairs.push(format!("{name}={identity}"));
-    let mut revised = format!("{path}?{}", pairs.join("&"));
-    if let Some(fragment) = fragment {
-        revised.push('#');
-        revised.push_str(fragment);
-    }
-    revised
-}
-
-fn local_resource_path(document_route: &str, value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    let without_query = trimmed.split(['?', '#']).next().unwrap_or_default();
-    if without_query.is_empty() || without_query.starts_with("//") {
-        return None;
-    }
-    let resource_path = if let Some(scheme) = without_query.find("://") {
-        let origin = &without_query[..scheme].to_ascii_lowercase();
-        let authority_and_path = &without_query[scheme + 3..];
-        let (authority, path) = authority_and_path
-            .split_once('/')
-            .map(|(authority, path)| (authority, format!("/{path}")))
-            .unwrap_or((authority_and_path, "/".to_string()));
-        let local_http = origin == "http"
-            && (authority.starts_with("127.0.0.1:") || authority.starts_with("localhost:"));
-        if !local_http {
-            return None;
-        }
-        path
-    } else {
-        let first_separator = without_query.find('/').unwrap_or(without_query.len());
-        if without_query[..first_separator].contains(':') {
-            return None;
-        }
-        without_query.to_string()
-    };
-    let decoded = percent_decode_str(&resource_path).decode_utf8().ok()?;
-    let absolute = if decoded.starts_with('/') {
-        decoded.into_owned()
-    } else {
-        let route = if document_route.starts_with('/') {
-            document_route
-        } else {
-            "/"
-        };
-        let base = if route.ends_with('/') {
-            route
-        } else {
-            route.rsplit_once('/').map(|(base, _)| base).unwrap_or("")
-        };
-        format!("{base}/{decoded}")
-    };
-    let mut segments = Vec::new();
-    for segment in absolute.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
-            }
-            value => segments.push(value),
-        }
-    }
-    Some(format!("/{}", segments.join("/")))
-}
-
 fn sanitize_document_tree(document: &NodeRef) {
     let mut nodes_to_detach = Vec::new();
 
@@ -1295,6 +1214,12 @@ mod tests {
             scripts.last().unwrap().as_node().text_contents(),
             INTERACTIVE_RUNTIME_SCRIPT
         );
+        assert!(INTERACTIVE_RUNTIME_SCRIPT.contains("data-pana-motion-preview"));
+        assert!(INTERACTIVE_RUNTIME_SCRIPT
+            .contains("document.addEventListener(\"click\", preventMotionNavigation, true)"));
+        assert!(INTERACTIVE_RUNTIME_SCRIPT
+            .contains("document.addEventListener(\"submit\", preventMotionFormSubmission, true)"));
+        assert!(!INTERACTIVE_RUNTIME_SCRIPT.contains("addEventListener(\"wheel\""));
         assert!(!prepared.motion.contains("while(true)"));
         assert!(!prepared.motion.contains("/manual.js"));
         assert!(!prepared.motion.contains("/js/pana-index.js"));

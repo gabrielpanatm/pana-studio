@@ -1,6 +1,5 @@
 <script lang="ts">
   import {
-    IconAlertTriangle,
     IconEdit,
     IconExternalLink,
     IconFile,
@@ -13,6 +12,10 @@
     IconUpload,
     IconX,
   } from "@tabler/icons-svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import InlineMessage from "$lib/components/ui/InlineMessage.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
+  import TextFieldControl from "$lib/components/ui/TextFieldControl.svelte";
   import {
   chooseAssetFile,
   importProjectAsset,
@@ -392,18 +395,14 @@
       {/each}
     </div>
     <div class="toolbar-query-group with-filter">
-      <label class="toolbar-filter">
+      <div class="toolbar-filter">
         <span class="sr-only">{t("assets-usage-filter")}</span>
-        <select
-          class="ui-field toolbar"
-          bind:value={usageFilter}
-          aria-label={t("assets-usage-filter")}
-        >
-          <option value="all">{t("assets-usage-all")}</option>
-          <option value="used">{t("assets-usage-used")}</option>
-          <option value="unused">{t("assets-usage-unused")}</option>
-        </select>
-      </label>
+        <SelectControl size="toolbar" value={usageFilter} options={[
+          { value: "all", label: t("assets-usage-all") },
+          { value: "used", label: t("assets-usage-used") },
+          { value: "unused", label: t("assets-usage-unused") },
+        ]} ariaLabel={t("assets-usage-filter")} onchange={(value) => { usageFilter = value as UsageFilter; }} />
+      </div>
       <label class="search-field">
         <span class="sr-only">{t("assets-search-label")}</span>
         <IconSearch size={14} stroke={1.9} />
@@ -451,11 +450,7 @@
           </span>
         </button>
       {:else}
-        <div class="workspace-state">
-          <IconPhoto size={28} stroke={1.5} />
-          <strong>{assets.length === 0 ? t("assets-empty-project") : t("assets-no-results")}</strong>
-          <span>{t("assets-empty-description")}</span>
-        </div>
+        <EmptyState title={assets.length === 0 ? t("assets-empty-project") : t("assets-no-results")} description={t("assets-empty-description")} />
       {/each}
     </div>
 
@@ -474,11 +469,11 @@
             <IconFolderOpen size={16} />
             <span><strong>{fileName || t("assets-choose-file")}</strong><small>{sourcePath || t("assets-source-preserved")}</small></span>
           </button>
-          <label><span>{t("assets-project-name")}</span><input bind:value={fileName} disabled={importing} placeholder="image.webp" /></label>
-          <label><span>{t("assets-destination-directory")}</span><input bind:value={destinationDirectory} disabled={importing} placeholder="static/images" /></label>
-          {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+          <TextFieldControl label={t("assets-project-name")} bind:value={fileName} disabled={importing} placeholder="image.webp" />
+          <TextFieldControl label={t("assets-destination-directory")} bind:value={destinationDirectory} disabled={importing} placeholder="static/images" />
+          {#if formError}<InlineMessage message={formError} tone="error" />{/if}
           <div class="form-actions">
-            <button type="button" disabled={importing} onclick={resetPanel}>{t("assets-cancel")}</button>
+            <button class="ui-button compact" type="button" disabled={importing} onclick={resetPanel}>{t("assets-cancel")}</button>
             <button class="ui-button primary" type="submit" disabled={importing || !sourcePath || !fileName.trim()}>
               <IconUpload size={14} /> {importing ? t("assets-importing") : t("assets-import-session")}
             </button>
@@ -497,9 +492,9 @@
           <strong>{selectedImageTarget ? t("assets-selected-image") : t("assets-no-selected-image")}</strong>
           <span>{selectedImageTarget?.sourceLocation?.file ?? t("assets-select-img-help")}</span>
         </div>
-        {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
+        {#if formError}<InlineMessage message={formError} tone="error" />{/if}
         <div class="form-actions">
-          <button type="button" disabled={applying} onclick={resetPanel}>{t("assets-cancel")}</button>
+          <button class="ui-button compact" type="button" disabled={applying} onclick={resetPanel}>{t("assets-cancel")}</button>
           <button
             class="ui-button primary"
             type="button"
@@ -534,12 +529,12 @@
           <button class="ui-button secondary-action" type="button" onclick={() => { void commands.openInBrowser(sourceValue(selectedAsset)); }}>
             {t("assets-open")} <IconExternalLink size={13} stroke={1.9} />
           </button>
-          <button class="ui-button delete-action" type="button" onclick={() => requestDelete(selectedAsset)}>
+          <button class="ui-button danger delete-action" type="button" onclick={() => requestDelete(selectedAsset)}>
             <IconTrash size={14} /> {t("assets-delete")}
           </button>
         </div>
       {:else}
-        <div class="workspace-state">{t("assets-select-help")}</div>
+        <EmptyState title={t("assets-select-help")} />
       {/if}
     </aside>
   </div>
@@ -564,11 +559,11 @@
         {#if assetKind(pendingDeleteAsset) === "other"}
           <p class="delete-modal-note neutral">{t("assets-delete-auxiliary-note")}</p>
         {/if}
-        {#if deleteError}<p class="form-error delete-error" role="alert"><IconAlertTriangle size={14} /> {deleteError}</p>{/if}
+        {#if deleteError}<div class="delete-error"><InlineMessage message={deleteError} tone="error" /></div>{/if}
       </div>
       <div class="delete-modal-actions">
-        <button type="button" class="delete-cancel-button" disabled={deleting} onclick={cancelDelete}>{t("assets-cancel")}</button>
-        <button type="button" class="delete-confirm-button" disabled={deleting} onclick={() => { void confirmDelete(); }}>
+        <button type="button" class="ui-button delete-cancel-button" disabled={deleting} onclick={cancelDelete}>{t("assets-cancel")}</button>
+        <button type="button" class="ui-button danger delete-confirm-button" disabled={deleting} onclick={() => { void confirmDelete(); }}>
           {deleting
             ? t("assets-deleting")
             : pendingDeleteUsages.length > 0
@@ -584,9 +579,10 @@
   .workspace-header > dl div.warning { border-color: color-mix(in srgb, var(--wb-warning) 45%, var(--wb-border-subtle)); }
   dt { color: var(--wb-text-muted); font-size: 12px; font-weight: 650; text-transform: uppercase; }
   dd { margin: 3px 0 0; color: var(--text-strong); font-size: 15px; font-weight: 650; }
-  .detail-heading, .file-picker, .form-error, .form-actions, .detail-actions, .primary-action, .secondary-action, .delete-action { display: flex; align-items: center; }
+  .detail-heading, .file-picker, .form-actions, .detail-actions, .primary-action, .secondary-action, .delete-action { display: flex; align-items: center; }
   .workspace-body { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(300px, .52fr); min-width: 0; min-height: 0; }
   .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-content: start; gap: 8px; min-width: 0; min-height: 0; padding: 9px; overflow: auto; border-right: 1px solid var(--wb-border-subtle); }
+  .asset-grid :global(.ui-empty-state) { grid-column: 1 / -1; }
   .asset-card { --ui-entity-background: var(--wb-surface-chrome); --ui-entity-border-color: var(--wb-border-subtle); display: grid; grid-template-rows: 98px auto auto; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-chrome); text-align: left; }
   .asset-preview { display: grid; min-width: 0; overflow: hidden; place-items: center; color: var(--wb-text-muted); background: var(--surface-7); }
   .asset-preview img { width: 100%; height: 100%; object-fit: contain; }
@@ -601,7 +597,6 @@
   .detail-heading { align-items: flex-start; justify-content: space-between; gap: 12px; }
   .detail-heading h2 { margin-top: 5px; }
   .detail-heading p { margin: 5px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.45; }
-  .detail-heading > button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-muted); background: var(--wb-surface-document); }
   .detail-preview { display: grid; height: 180px; margin-top: 12px; overflow: hidden; place-items: center; border: 1px solid var(--wb-border-subtle); border-radius: 8px; background: var(--surface-7); }
   .detail-preview img { width: 100%; height: 100%; object-fit: contain; }
   .asset-metadata { display: grid; gap: 6px; margin: 11px 0 0; }
@@ -609,8 +604,6 @@
   .asset-metadata dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 500; }
   .pending-note { margin: 9px 0 0; padding: 8px; border: 1px dashed var(--wb-border-subtle); border-radius: 6px; color: var(--wb-text-muted); background: var(--wb-surface-document); font-size: 12px; line-height: 1.4; }
   .import-form { display: grid; gap: 11px; }
-  .import-form > label { display: grid; gap: 5px; color: var(--wb-text-muted); font-size: 12px; font-weight: 700; }
-  .import-form > label input { width: 100%; height: 34px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; color: var(--text-strong); background: var(--wb-surface-document); font-size: 12px; }
   .file-picker { width: 100%; gap: 9px; min-height: 52px; padding: 8px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; color: var(--wb-accent-strong); background: var(--wb-surface-document); text-align: left; }
   .file-picker > span { display: grid; gap: 3px; min-width: 0; }
   .file-picker strong, .file-picker small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -619,13 +612,11 @@
   .target-card { display: grid; gap: 3px; margin-top: 12px; padding: 9px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; background: var(--wb-surface-document); }
   .target-card strong { color: var(--text-strong); font-size: 12px; }
   .target-card span { overflow: hidden; color: var(--wb-text-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-  .form-error { align-items: flex-start; gap: 6px; margin: 0; padding: 8px; border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--wb-border-subtle)); border-radius: 6px; color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--wb-surface-document)); font-size: 12px; line-height: 1.4; }
   .form-actions { justify-content: flex-end; gap: 7px; margin-top: 4px; }
-  .form-actions button, .primary-action, .secondary-action, .delete-action { justify-content: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; font-weight: 600; }
-  .form-actions button.primary, .primary-action { border-color: var(--wb-accent); color: #fff; background: var(--wb-accent); }
+  .primary-action, .secondary-action, .delete-action { justify-content: center; }
   .detail-actions { flex-wrap: wrap; align-items: stretch; gap: 7px; margin-top: 10px; }
   .detail-actions .primary-action, .detail-actions .secondary-action { flex: 1; }
-  .detail-actions .delete-action { flex: 1 0 100%; border-color: color-mix(in srgb, var(--danger) 35%, var(--wb-border-subtle)); color: var(--danger); }
+  .detail-actions .delete-action { flex: 1 0 100%; }
   .delete-modal-backdrop { position: fixed; z-index: 12000; inset: 0; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgb(0 0 0 / 48%); }
   .delete-modal { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; width: min(460px, 100%); max-height: min(620px, calc(100vh - 36px)); padding: 14px; overflow: auto; border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--wb-border-subtle)); border-radius: 8px; background: var(--wb-surface-document); box-shadow: 0 24px 70px rgb(0 0 0 / 36%); }
   .delete-modal-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 8px; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--wb-surface-chrome)); }
@@ -637,15 +628,7 @@
   .delete-usage-list { display: grid; gap: 4px; max-height: 130px; margin: 7px 0 0; padding: 7px 7px 7px 25px; overflow: auto; border: 1px solid var(--wb-border-subtle); border-radius: 6px; color: var(--wb-text-primary); background: var(--wb-surface-chrome); font-size: 12px; }
   .delete-error { margin-top: 9px; }
   .delete-modal-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
-  .delete-cancel-button, .delete-confirm-button { min-width: 92px; min-height: 32px; padding: 0 10px; border-radius: var(--radius-control); font-size: 12px; font-weight: 800; }
-  .delete-cancel-button { border: 1px solid var(--wb-border-subtle); color: var(--wb-text-primary); background: var(--wb-surface-chrome); }
-  .delete-confirm-button { border: 1px solid var(--danger); color: #fff; background: var(--danger); }
-  button:disabled { opacity: .5; }
-  button:not(:disabled) { cursor: pointer; }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }
-  .workspace-state { display: grid; grid-column: 1 / -1; min-height: 220px; place-items: center; align-content: center; gap: 6px; color: var(--wb-text-muted); font-size: 12px; text-align: center; }
-  .workspace-state strong { color: var(--text-strong); font-size: 12px; }
-  .workspace-state span { max-width: 360px; }
+  .delete-cancel-button, .delete-confirm-button { min-width: 92px; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   @media (max-width: 900px) { .workspace-body { grid-template-columns: 1fr; } .asset-detail { display: none; } .asset-grid { border-right: 0; } }
 </style>

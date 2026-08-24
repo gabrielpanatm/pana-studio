@@ -8,7 +8,7 @@ import type {
 
 type BlockOrigin = "native" | "application" | "theme" | "project";
 
-export type BlockScale = "element" | "section" | "composition";
+type BlockScale = "element" | "section" | "composition";
 
 type BlockResolutionStatus = "resolved" | "unknownProvider" | "invalidContract";
 
@@ -62,7 +62,7 @@ type BlockSlotDefinition = {
   maximumItems: number | null;
 };
 
-export type BlockDefinition = {
+type BlockDefinition = {
   id: string;
   schemaVersion: number;
   providerId: string;
@@ -202,36 +202,6 @@ export type UiBlockGraphSnapshot = {
   sourceInstances: UiBlockSourceInstance[];
   renderedInstances: RenderedBlockInstance[];
   diagnostics: LocalizedDiagnostic[];
-};
-
-export type NativeBlockRegistryItem = {
-  id: string;
-  schemaVersion: number;
-  familyId: string;
-  variantId: string;
-  scale: BlockScale;
-  kind: "css" | "js" | "static";
-  label: string;
-  description: string;
-  tag: string;
-  text: string;
-  className: string;
-  html: string;
-  capabilities: BlockCapabilities;
-  requirements: BlockRequirement[];
-  options: BlockOptionDefinition[];
-  slots: BlockSlotDefinition[];
-};
-
-type NativeBlockRegistryGroup = {
-  label: string;
-  elements: NativeBlockRegistryItem[];
-};
-
-export type NativeBlockRegistrySnapshot = {
-  schemaVersion: number;
-  blocks: NativeBlockRegistryItem[];
-  groups: NativeBlockRegistryGroup[];
 };
 
 export const INSERT_CATALOG_SCHEMA_VERSION = 2 as const;

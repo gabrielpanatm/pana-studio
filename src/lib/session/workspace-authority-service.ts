@@ -11,7 +11,9 @@ import type { AiCoordinationState } from "$lib/ai/coordination-state.svelte";
 import type { ExternalDiskState } from "$lib/session/external-disk-state.svelte";
 import type { GlobalStatusState } from "$lib/status/state.svelte";
 import {
+  joinProjectWorkspacePreviewProjection,
   projectLatestProjectWorkspacePreview,
+  resumeScheduledProjectWorkspaceDerivedPreviewProjection,
   type ProjectWorkspacePreviewHost,
   type ProjectWorkspacePreviewProjectionOptions,
 } from "$lib/kernel/project-workspace-preview-coordinator";
@@ -80,11 +82,31 @@ export class WorkspaceAuthorityService {
   }
 
   previewHost(): ProjectWorkspacePreviewHost {
-    const { session, preview, status } = this.dependencies;
+    return this.authorityHost();
+  }
+
+  settlementHost(): WorkspaceMutationSettlementHost {
+    return this.authorityHost();
+  }
+
+  structuralHost(): PreviewStructuralCanonicalProjectionHost {
+    return this.authorityHost();
+  }
+
+  /**
+   * Builds one descriptor-safe adapter over the live application state.
+   * Returning type-narrowed views of this adapter avoids object spread, which
+   * would evaluate accessors and silently replace their setters with snapshots.
+   */
+  private authorityHost(): PreviewStructuralCanonicalProjectionHost {
+    const { session, preview, selection, locks, status } = this.dependencies;
     return {
       get sessionProjectRoot() { return session.project.root; },
       get kernelProjectSessionId() { return session.project.runtimeSessionId; },
       get scannedProject() { return session.project.project; },
+      get structuralWriteBoundaryActive() {
+        return preview.workspace.structuralWriteBoundaryActive;
+      },
       get previewWorkspaceRevision() { return preview.workspace.workspaceRevision; },
       set previewWorkspaceRevision(revision) { preview.workspace.workspaceRevision = revision; },
       get pendingCanvasProjection() { return preview.workspace.pendingProjection; },
@@ -94,19 +116,10 @@ export class WorkspaceAuthorityService {
       deferWorkspacePreviewProjection: () => preview.workspace.deferSurfaceProjection(),
       get templateWorkbenchActive() { return session.documents.templateActive; },
       reprojectActiveTemplateWorkbench: this.dependencies.reprojectTemplate,
-      setGlobalStatus: (text, kind) => status.set(text, kind),
       requestPreviewRefresh: (reason) => preview.workspace.requestRefresh(reason),
       requestWorkspaceProjectionPreviewRefresh: (reason) => (
         preview.workspace.requestWorkspaceProjectionRefresh(reason)
       ),
-    };
-  }
-
-  settlementHost(): WorkspaceMutationSettlementHost {
-    const { session, status } = this.dependencies;
-    const preview = this.previewHost();
-    return {
-      ...preview,
       get projectWorkspaceSnapshot() { return session.project.workspace; },
       set projectWorkspaceSnapshot(snapshot) { session.project.workspace = snapshot; },
       get activeScannedPath() { return session.documents.activeScannedPath; },
@@ -117,15 +130,6 @@ export class WorkspaceAuthorityService {
       set sourceCache(cache) { session.source.sourceCache = cache; },
       setGlobalStatus: (text, kind) => status.set(text, kind),
       reconcileWorkspaceDerivedState: this.dependencies.reconcileDerived,
-    };
-  }
-
-  structuralHost(): PreviewStructuralCanonicalProjectionHost {
-    const { session, preview, selection, locks } = this.dependencies;
-    return {
-      ...this.settlementHost(),
-      get sessionProjectRoot() { return session.project.root; },
-      get kernelProjectSessionId() { return session.project.runtimeSessionId; },
       get projectSessionEpoch() { return session.project.epoch; },
       get projectTransitionFrontendLeaseActive() { return locks.transition.isActive; },
       get kernelUndoRedoFrontendLeaseActive() { return locks.history.leaseActive; },
@@ -163,6 +167,17 @@ export class WorkspaceAuthorityService {
     return projectLatestProjectWorkspacePreview(
       this.previewHost() as ProjectWorkspacePreviewHost<TReason>,
       options,
+    );
+  }
+
+  joinProjection(workspaceRevision: number, workspaceTransactionId?: string | null) {
+    const { project } = this.dependencies.session;
+    if (!project.root || !project.runtimeSessionId) return null;
+    return joinProjectWorkspacePreviewProjection(
+      project.root,
+      project.runtimeSessionId,
+      workspaceRevision,
+      workspaceTransactionId,
     );
   }
 
@@ -225,6 +240,7 @@ export class WorkspaceAuthorityService {
     const resumesMonitoring = preview.workspace.structuralWriteBoundaryResumesMonitoring;
     preview.workspace.structuralWriteBoundaryActive = false;
     preview.workspace.structuralWriteBoundaryResumesMonitoring = false;
+    resumeScheduledProjectWorkspaceDerivedPreviewProjection();
     if (resumesMonitoring) disk.resumeAfterSave();
   }
 }

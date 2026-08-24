@@ -6,10 +6,11 @@ mod storage;
 pub use model::{
     ContentWorkspaceMode, ContentWorkspaceSnapshot, WorkbenchActivity,
     WorkbenchBottomPanelSnapshot, WorkbenchBottomPanelView, WorkbenchCommandReceipt,
-    WorkbenchDocumentSnapshot, WorkbenchGroupId, WorkbenchGroupSnapshot, WorkbenchIdentity,
-    WorkbenchIntent, WorkbenchProjectEntryKind, WorkbenchProjectEntryRemap,
-    WorkbenchProjectEntrySelection, WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface,
-    WORKBENCH_COMMAND_SCHEMA_VERSION, WORKBENCH_MAX_OPEN_DOCUMENTS, WORKBENCH_SCHEMA_VERSION,
+    WorkbenchDocumentPresentation, WorkbenchDocumentPresentationEntry, WorkbenchDocumentSnapshot,
+    WorkbenchGroupId, WorkbenchGroupSnapshot, WorkbenchIdentity, WorkbenchIntent,
+    WorkbenchProjectEntryKind, WorkbenchProjectEntryRemap, WorkbenchProjectEntrySelection,
+    WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface, WORKBENCH_COMMAND_SCHEMA_VERSION,
+    WORKBENCH_MAX_OPEN_DOCUMENTS, WORKBENCH_SCHEMA_VERSION,
 };
 pub use projection_persistence::WorkbenchProjectionPersistence;
 pub use runtime::WorkbenchRuntime;

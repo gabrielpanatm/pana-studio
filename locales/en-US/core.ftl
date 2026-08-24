@@ -17,3 +17,5 @@ common-close = Close
 common-choose = Choose
 common-choose-option = Choose an option
 common-confirm = OK
+common-enabled = Enabled
+common-disabled = Disabled

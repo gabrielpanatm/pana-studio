@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const WORKBENCH_SCHEMA_VERSION: u32 = 1;
+pub const WORKBENCH_SCHEMA_VERSION: u32 = 3;
 pub const WORKBENCH_COMMAND_SCHEMA_VERSION: u32 = 1;
 pub const WORKBENCH_MAX_OPEN_DOCUMENTS: usize = 64;
 pub const WORKBENCH_DEFAULT_SPLIT_RATIO_BASIS_POINTS: u16 = 5_000;
@@ -19,12 +19,11 @@ fn default_split_ratio_basis_points() -> u16 {
 #[serde(rename_all = "snake_case")]
 pub enum WorkbenchActivity {
     #[default]
-    #[serde(alias = "themes")]
+    #[serde(alias = "themes", alias = "blocks")]
     Editor,
     #[serde(alias = "site")]
     Templates,
     Components,
-    Blocks,
     DesignSystem,
     Assets,
     Content,
@@ -34,6 +33,7 @@ pub enum WorkbenchActivity {
     Versioning,
     Audit,
     Publish,
+    ProjectSettings,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -43,6 +43,48 @@ pub enum WorkbenchSurface {
     Visual,
     #[serde(alias = "markdown")]
     Code,
+}
+
+/// Describes whether a project document owns a visual Workbench surface.
+/// This value is resolved by Rust from the authoritative project file kind;
+/// frontend consumers only project the resulting capability.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkbenchDocumentPresentation {
+    Html,
+    #[default]
+    CodeOnly,
+}
+
+impl WorkbenchDocumentPresentation {
+    pub fn supports_visual(self) -> bool {
+        self == Self::Html
+    }
+
+    pub fn from_project_file_kind(kind: crate::project::ProjectFileKind) -> Self {
+        if kind == crate::project::ProjectFileKind::Html {
+            Self::Html
+        } else {
+            Self::CodeOnly
+        }
+    }
+
+    pub fn from_text_language(
+        language: crate::kernel::file_buffer_store::TextBufferLanguage,
+    ) -> Self {
+        if language == crate::kernel::file_buffer_store::TextBufferLanguage::Html {
+            Self::Html
+        } else {
+            Self::CodeOnly
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbenchDocumentPresentationEntry {
+    pub relative_path: String,
+    pub presentation: WorkbenchDocumentPresentation,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -104,10 +146,10 @@ pub enum WorkbenchGroupId {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkbenchBottomPanelView {
-    #[default]
     #[serde(alias = "timeline")]
     Problems,
     Output,
+    #[default]
     Terminal,
 }
 
@@ -143,6 +185,8 @@ pub struct WorkbenchDocumentSnapshot {
     pub document_id: String,
     pub relative_path: String,
     pub title: String,
+    #[serde(default)]
+    pub presentation: WorkbenchDocumentPresentation,
     pub surface: WorkbenchSurface,
     pub pinned: bool,
 }
@@ -221,6 +265,8 @@ pub enum WorkbenchIntent {
         #[serde(default)]
         surface: WorkbenchSurface,
         #[serde(default)]
+        presentation: WorkbenchDocumentPresentation,
+        #[serde(default)]
         pinned: bool,
     },
     SelectProjectEntry {
@@ -228,6 +274,8 @@ pub enum WorkbenchIntent {
         entry_kind: WorkbenchProjectEntryKind,
         #[serde(default)]
         open_surface: Option<WorkbenchSurface>,
+        #[serde(default)]
+        open_presentation: Option<WorkbenchDocumentPresentation>,
     },
     ReconcileProjectEntries {
         #[serde(default)]
@@ -236,6 +284,11 @@ pub enum WorkbenchIntent {
         deleted_prefixes: Vec<String>,
         #[serde(default)]
         selection_override: Option<WorkbenchProjectEntrySelection>,
+        #[serde(default)]
+        document_presentations: Vec<WorkbenchDocumentPresentationEntry>,
+    },
+    ReconcileDocumentPresentations {
+        documents: Vec<WorkbenchDocumentPresentationEntry>,
     },
     ActivateDocument {
         document_id: String,
@@ -264,6 +317,7 @@ pub enum WorkbenchIntent {
         split: WorkbenchSplit,
         relative_path: String,
         secondary_surface: WorkbenchSurface,
+        presentation: WorkbenchDocumentPresentation,
     },
     SetSplitRatio {
         ratio_basis_points: u16,
@@ -320,6 +374,27 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&activity).expect("editor activity"),
             r#""editor""#,
+        );
+    }
+
+    #[test]
+    fn removed_blocks_activity_migrates_to_editor() {
+        let activity: WorkbenchActivity =
+            serde_json::from_str(r#""blocks""#).expect("removed blocks activity");
+
+        assert_eq!(activity, WorkbenchActivity::Editor);
+        assert_eq!(
+            serde_json::to_string(&activity).expect("editor activity"),
+            r#""editor""#,
+        );
+    }
+
+    #[test]
+    fn project_settings_activity_has_a_stable_wire_value() {
+        assert_eq!(
+            serde_json::to_string(&WorkbenchActivity::ProjectSettings)
+                .expect("project settings activity"),
+            r#""project_settings""#,
         );
     }
 

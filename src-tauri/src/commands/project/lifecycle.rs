@@ -263,6 +263,7 @@ fn reattach_project_session_impl(
 /// FileBufferStore, reset Undo/Redo, or touch the disk.
 #[tauri::command]
 pub fn reattach_project_session(
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<Option<ProjectOpenBootstrapReceipt>, String> {
     let Some(scan) = reattach_project_session_impl(state.inner())? else {
@@ -337,11 +338,9 @@ pub fn reattach_project_session(
         }
         _ => None,
     };
-    Ok(Some(bootstrap.finish(
-        lifecycle,
-        workbench,
-        initial_surface,
-    )))
+    let receipt = bootstrap.finish(lifecycle, workbench, initial_surface);
+    crate::synchronize_main_window_title(&app, Some(Path::new(&session.project_root)));
+    Ok(Some(receipt))
 }
 
 fn project_session_root_identity(session: &ProjectSessionSnapshot) -> Result<(u64, u64), String> {
@@ -523,6 +522,7 @@ pub fn close_project(
         stop_source_browser(&app, state.inner());
         stop_project_preview(&app, state.inner());
         state.startup_flow.reset()?;
+        crate::synchronize_main_window_title(&app, None);
         return Ok(());
     };
 
@@ -547,6 +547,7 @@ pub fn close_project(
     }
     state.startup_flow.reset()?;
     state.project_lifecycle.clear_active("project_closed")?;
+    crate::synchronize_main_window_title(&app, None);
 
     Ok(())
 }
@@ -721,6 +722,7 @@ pub fn open_project(
                 }
                 workbench = prepare_bootstrap_workbench_for_file(
                     &session,
+                    &authoritative_scan,
                     Some(file),
                     Some(WorkbenchSurface::Code),
                 )?;
@@ -960,6 +962,10 @@ pub fn open_project(
         .project_lifecycle
         .commit_session(&operation_id, &opened_session_for_event)?;
     lifecycle_guard.mark_committed();
+    crate::synchronize_main_window_title(
+        &app,
+        Some(Path::new(&opened_session_for_event.project_root)),
+    );
     drop(lifecycle_commit_transition);
     let mut commit_event = with_performance_sample(
         KernelLogEvent::new(

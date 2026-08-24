@@ -49,7 +49,7 @@ export type ProjectDerivedStateHost = {
       deferPreviewRefresh?: boolean;
     },
   ) => Promise<void>;
-  refreshSourceGraph: (options?: { strict?: boolean }) => Promise<void>;
+  refreshSourceGraph: (options?: { strict?: boolean }) => Promise<boolean>;
   requestPreviewRefresh: (reason: "project-rescan") => Promise<boolean>;
   requireProjectTransitionFrontendLease: (lease: ProjectTransitionFrontendLease) => void;
   runWithProjectTransitionFrontendLease: <T>(
@@ -311,8 +311,9 @@ async function runWorkspaceDerivedStateReconciliation(
 
   if (options.refreshSourceGraph ?? true) {
     try {
-      await host.refreshSourceGraph({ strict: true });
+      const refreshed = await host.refreshSourceGraph({ strict: true });
       if (!current()) return supersedeDerivedProjection(outcome);
+      if (!refreshed) outcome.sourceGraph = "superseded";
     } catch (error) {
       outcome.sourceGraph = current() ? "degraded" : "superseded";
       outcome.warnings.push(

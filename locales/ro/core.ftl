@@ -17,3 +17,5 @@ common-close = Închide
 common-choose = Alege
 common-choose-option = Alege o opțiune
 common-confirm = OK
+common-enabled = Activat
+common-disabled = Dezactivat

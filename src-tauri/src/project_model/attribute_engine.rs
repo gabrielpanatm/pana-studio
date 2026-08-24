@@ -1348,6 +1348,8 @@ mod tests {
             .expect("committed model file");
         committed_file.contents = first_patch.contents;
         committed_file.revision = first_patch.after_revision;
+        committed_file.source_hash =
+            crate::kernel::file_buffer_store::hash_text(&committed_file.contents);
         let second = plan_html_attributes(&committed_model, &intent);
 
         fs::remove_dir_all(&root).unwrap();

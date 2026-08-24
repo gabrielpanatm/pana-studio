@@ -1,6 +1,5 @@
 import type { DropPosition } from "$lib/ui/drag";
 import type { DynamicWidgetProperties } from "$lib/content-models/contracts";
-import type { ProjectDynamicFieldBinding } from "$lib/preview/contracts";
 import type { SourceGraphNode } from "$lib/source-graph/contracts";
 
 export type TeraConstructKind =
@@ -31,7 +30,6 @@ export type TeraPaletteItem = {
   name?: string;
   expression?: string;
   sourceNodeId?: string;
-  dynamicBinding?: ProjectDynamicFieldBinding;
   dynamicWidget?: DynamicWidgetProperties;
 };
 

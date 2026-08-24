@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import {
+  coordinateTemplateWorkbenchProjection,
+  joinProjectWorkspacePreviewProjection,
   markProjectWorkspacePreviewPublished,
   projectLatestProjectWorkspacePreview,
   resetProjectWorkspacePreviewCoordinator,
+  resumeScheduledProjectWorkspaceDerivedPreviewProjection,
   scheduleProjectWorkspaceDerivedPreviewProjection,
 } from "$lib/kernel/project-workspace-preview-coordinator";
 import {
@@ -33,6 +36,7 @@ function host(overrides = {}) {
     sessionProjectRoot: "/project",
     kernelProjectSessionId: "session:a",
     scannedProject: {},
+    structuralWriteBoundaryActive: false,
     previewWorkspaceRevision: null,
     pendingCanvasProjection: null,
     canvasSurfaceAvailable: true,
@@ -102,6 +106,66 @@ test("one coordinator projects, publishes and deduplicates a workspace revision"
   assert.deepEqual(target.refreshes, ["workspace-mutation"]);
   assert.deepEqual(published, { status: "published", workspaceRevision: 7 });
   assert.deepEqual(cached, { status: "already_current", workspaceRevision: 7 });
+});
+
+test("concurrent exact consumers join one ProjectWorkspace and Canvas transaction", async () => {
+  const target = host();
+  const gate = deferred();
+  let projections = 0;
+  mockIPC(async (command, args) => {
+    if (command === "read_project_workspace_state") return snapshot(7);
+    if (command === "project_project_workspace_preview") {
+      projections += 1;
+      await gate.promise;
+      return projectionReceipt(args.input);
+    }
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+
+  const first = projectLatestProjectWorkspacePreview(target, {
+    reason: "workspace-mutation",
+    expectedWorkspaceRevision: 7,
+    expectedWorkspaceTransactionId: "workspace-7",
+  });
+  const joined = joinProjectWorkspacePreviewProjection("/project", "session:a", 7);
+  const duplicate = projectLatestProjectWorkspacePreview(target, {
+    reason: "manual",
+    expectedWorkspaceRevision: 7,
+    expectedWorkspaceTransactionId: "workspace-7",
+  });
+
+  assert.equal(joined, first);
+  assert.equal(duplicate, first);
+  gate.resolve();
+  const outcomes = await Promise.all([first, joined, duplicate]);
+
+  assert.equal(projections, 1);
+  assert.deepEqual(target.refreshes, ["workspace-mutation"]);
+  assert.ok(outcomes.every((outcome) => outcome.status === "published"));
+  assert.equal(joinProjectWorkspacePreviewProjection("/project", "session:a", 7), null);
+});
+
+test("Template Workbench consumers are serialized behind one projection owner", async () => {
+  const gate = deferred();
+  const events = [];
+  const first = coordinateTemplateWorkbenchProjection(async () => {
+    events.push("first:start");
+    await gate.promise;
+    events.push("first:end");
+    return 1;
+  });
+  const second = coordinateTemplateWorkbenchProjection(async () => {
+    events.push("second:start");
+    events.push("second:end");
+    return 2;
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(events, ["first:start"]);
+  gate.resolve();
+  assert.deepEqual(await Promise.all([first, second]), [1, 2]);
+  assert.deepEqual(events, ["first:start", "first:end", "second:start", "second:end"]);
 });
 
 test("cache-ul Preview deduplică numai cu dovada exactă a tranzacției Canvas", async () => {
@@ -359,6 +423,64 @@ test("an exact receipt-bound projection consumes the derived mutation timer", as
 
   assert.deepEqual(projectedRevisions, [18]);
   assert.deepEqual(target.refreshes, ["workspace-mutation"]);
+});
+
+test("a derived projection fallback waits behind the structural write boundary", async () => {
+  const projectedRevisions = [];
+  const target = host({ structuralWriteBoundaryActive: true });
+  mockIPC((command, args) => {
+    if (command === "read_project_workspace_state") return snapshot(20);
+    if (command === "project_project_workspace_preview") {
+      projectedRevisions.push(args.input.expectedWorkspaceRevision);
+      return projectionReceipt(args.input);
+    }
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+
+  scheduleProjectWorkspaceDerivedPreviewProjection(target, "workspace-mutation", 20);
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  assert.deepEqual(projectedRevisions, []);
+
+  target.structuralWriteBoundaryActive = false;
+  resumeScheduledProjectWorkspaceDerivedPreviewProjection();
+  await new Promise((resolve) => setTimeout(resolve, 180));
+
+  assert.deepEqual(projectedRevisions, [20]);
+  assert.deepEqual(target.refreshes, ["workspace-mutation"]);
+});
+
+test("the exact structural projection consumes a fallback parked behind its boundary", async () => {
+  const projectedRevisions = [];
+  const target = host({ structuralWriteBoundaryActive: true });
+  // Production exposes separate adapters for the lifecycle listener and for
+  // the originating structural settlement, backed by the same session.
+  const exactTarget = host({ structuralWriteBoundaryActive: true });
+  mockIPC((command, args) => {
+    if (command === "read_project_workspace_state") return snapshot(21);
+    if (command === "project_project_workspace_preview") {
+      projectedRevisions.push(args.input.expectedWorkspaceRevision);
+      return projectionReceipt(args.input);
+    }
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+
+  scheduleProjectWorkspaceDerivedPreviewProjection(target, "workspace-mutation", 21);
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  assert.deepEqual(projectedRevisions, []);
+
+  await projectLatestProjectWorkspacePreview(exactTarget, {
+    reason: "html-structural",
+    minimumWorkspaceRevision: 21,
+    expectedWorkspaceRevision: 21,
+    expectedWorkspaceTransactionId: "workspace-21",
+  });
+  target.structuralWriteBoundaryActive = false;
+  resumeScheduledProjectWorkspaceDerivedPreviewProjection();
+  await new Promise((resolve) => setTimeout(resolve, 180));
+
+  assert.deepEqual(projectedRevisions, [21]);
+  assert.deepEqual(target.refreshes, []);
+  assert.deepEqual(exactTarget.refreshes, ["html-structural"]);
 });
 
 test("an event received after its exact receipt cannot project the revision twice", async () => {

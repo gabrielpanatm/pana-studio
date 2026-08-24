@@ -40,9 +40,7 @@ use commands::{
     },
     app_home::read_app_home,
     audit::{apply_audit_fix, read_project_audit},
-    blocks::{
-        read_icon_catalog, read_native_block_registry, read_ui_block_graph, search_icon_catalog,
-    },
+    blocks::{read_icon_catalog, read_ui_block_graph, search_icon_catalog},
     command_center::search_command_center,
     components::apply_component_mutation,
     config::{
@@ -189,6 +187,23 @@ use state::AppState;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const NATIVE_WINDOW_CLOSE_REQUESTED_EVENT: &str = "pana-native-window-close-requested";
+
+pub(crate) fn synchronize_main_window_title(
+    app: &tauri::AppHandle,
+    project_root: Option<&std::path::Path>,
+) {
+    let title = project_root
+        .and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("Pană Studio");
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    if let Err(error) = window.set_title(title) {
+        eprintln!("[Pană Studio] Titlul ferestrei nu a putut fi actualizat: {error}");
+    }
+}
 
 fn apply_main_window_icon(app: &tauri::App) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {

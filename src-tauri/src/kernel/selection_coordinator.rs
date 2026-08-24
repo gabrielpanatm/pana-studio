@@ -221,6 +221,10 @@ pub enum SelectionIntent {
         focus: SelectionFocus,
         #[serde(default)]
         expected_selection_revision: Option<u64>,
+        #[serde(default)]
+        expected_selection: Option<SelectionMutationIdentity>,
+        #[serde(default)]
+        intent_sequence: Option<u64>,
     },
     ClearSelection,
     Rebase,
@@ -357,6 +361,7 @@ struct SelectionCoordinatorState {
     hover: Option<HoverSnapshot>,
     active_inspector_document: Option<CanvasInteractionIdentity>,
     inspector_facts: Option<AcceptedInspectorSelectionFacts>,
+    last_focus_intent_sequence: u64,
 }
 
 #[derive(Clone)]
@@ -377,6 +382,20 @@ pub struct SelectionCoordinatorRuntime {
 enum SelectionRevisionPolicy {
     Exact,
     StableSemanticAnchor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SelectionTargetFailureKind {
+    Superseded,
+    RetryableStale,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectionTargetFailure {
+    pub kind: SelectionTargetFailureKind,
+    pub reason: &'static str,
+    pub message: String,
 }
 
 impl SelectionCoordinatorRuntime {
@@ -637,27 +656,46 @@ impl SelectionCoordinatorRuntime {
         expected: &SelectionMutationIdentity,
         execute: impl FnOnce() -> Result<R, String>,
     ) -> Result<R, String> {
-        self.with_resolved_target(
+        self.require_stable_semantic_mutation_target(runtime_session_id, expected)
+            .map_err(|failure| failure.message)?;
+        execute()
+    }
+
+    pub fn require_stable_semantic_mutation_target(
+        &self,
+        runtime_session_id: &str,
+        expected: &SelectionMutationIdentity,
+    ) -> Result<(), SelectionTargetFailure> {
+        let state = self.state.lock().map_err(|_| SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::Rejected,
+            reason: "selection_coordinator_unavailable",
+            message: "SelectionCoordinator este indisponibil.".to_string(),
+        })?;
+        validate_resolved_target(
             "Mutația CSS",
             runtime_session_id,
             expected,
             SelectionRevisionPolicy::StableSemanticAnchor,
-            execute,
+            &state,
         )
     }
 
-    pub fn with_selection_target<R>(
+    pub fn require_selection_target(
         &self,
         runtime_session_id: &str,
         expected: &SelectionMutationIdentity,
-        execute: impl FnOnce() -> Result<R, String>,
-    ) -> Result<R, String> {
-        self.with_resolved_target(
+    ) -> Result<(), SelectionTargetFailure> {
+        let state = self.state.lock().map_err(|_| SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::Rejected,
+            reason: "selection_coordinator_unavailable",
+            message: "SelectionCoordinator este indisponibil.".to_string(),
+        })?;
+        validate_resolved_target(
             "Operația dependentă de selecție",
             runtime_session_id,
             expected,
             SelectionRevisionPolicy::Exact,
-            execute,
+            &state,
         )
     }
 
@@ -669,52 +707,19 @@ impl SelectionCoordinatorRuntime {
         revision_policy: SelectionRevisionPolicy,
         execute: impl FnOnce() -> Result<R, String>,
     ) -> Result<R, String> {
-        if expected.selection_revision == 0 || expected.members.is_empty() {
-            return Err(format!(
-                "SelectionCoordinator a refuzat {operation}: amprenta selecției este incompletă."
-            ));
-        }
         {
             let state = self
                 .state
                 .lock()
                 .map_err(|_| "SelectionCoordinator este indisponibil.".to_string())?;
-            let selection = state.selection.as_ref().ok_or_else(|| {
-                format!("{operation} a fost anulată deoarece selecția semantică nu mai există.")
-            })?;
-            if selection.runtime_session_id != runtime_session_id {
-                return Err(format!(
-                    "{operation} a fost anulată deoarece ProjectSession-ul selecției s-a schimbat."
-                ));
-            }
-            if selection.canvas_identity.workspace_revision != expected.workspace_revision {
-                return Err(format!(
-                    "{operation} a fost anulată deoarece ProjectWorkspace s-a schimbat (revizia capturată {}, revizia selecției {}).",
-                    expected.workspace_revision,
-                    selection.canvas_identity.workspace_revision
-                ));
-            }
-            let requires_exact_revision = matches!(revision_policy, SelectionRevisionPolicy::Exact);
-            if selection.selection_revision < expected.selection_revision
-                || (requires_exact_revision
-                    && selection.selection_revision != expected.selection_revision)
-            {
-                return Err(format!(
-                    "{operation} a fost anulată deoarece selecția s-a schimbat (revizia capturată {}, revizia activă {}).",
-                    expected.selection_revision,
-                    selection.selection_revision
-                ));
-            }
-            if aggregate_selection_resolution(&selection.members) != SelectionResolution::Resolved {
-                return Err(format!(
-                    "{operation} a fost anulată deoarece selecția nu mai are o rezoluție unică."
-                ));
-            }
-            if !mutation_identity_matches(selection, expected) {
-                return Err(format!(
-                    "{operation} a fost anulată deoarece setul de ancore al selecției s-a schimbat."
-                ));
-            }
+            validate_resolved_target(
+                operation,
+                runtime_session_id,
+                expected,
+                revision_policy,
+                &state,
+            )
+            .map_err(|failure| failure.message)?;
         }
         // Nu ținem mutexul SelectionCoordinator peste parse, I/O sau commit.
         // ProjectWorkspace face al doilea CAS folosind revizia capturată.
@@ -808,14 +813,20 @@ impl SelectionCoordinatorRuntime {
             SelectionIntent::SetFocus {
                 focus,
                 expected_selection_revision,
+                expected_selection,
+                intent_sequence,
             } => {
                 set_focus(
                     &mut state,
                     snapshot,
                     active_document_path,
                     source_graph,
-                    focus,
-                    expected_selection_revision,
+                    FocusRequest {
+                        focus,
+                        expected_selection_revision,
+                        expected_selection: expected_selection.as_ref(),
+                        intent_sequence,
+                    },
                 )?;
             }
             SelectionIntent::ClearSelection => {
@@ -946,8 +957,102 @@ impl SelectionCoordinatorRuntime {
             state.hover = None;
             state.active_inspector_document = None;
             state.inspector_facts = None;
+            state.last_focus_intent_sequence = 0;
         }
     }
+}
+
+fn validate_resolved_target(
+    operation: &str,
+    runtime_session_id: &str,
+    expected: &SelectionMutationIdentity,
+    revision_policy: SelectionRevisionPolicy,
+    state: &SelectionCoordinatorState,
+) -> Result<(), SelectionTargetFailure> {
+    if expected.selection_revision == 0 || expected.members.is_empty() {
+        return Err(SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::Rejected,
+            reason: "selection_identity_incomplete",
+            message: format!(
+                "SelectionCoordinator a refuzat {operation}: amprenta selecției este incompletă."
+            ),
+        });
+    }
+    let selection = state
+        .selection
+        .as_ref()
+        .ok_or_else(|| SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::Superseded,
+            reason: "selection_missing",
+            message: format!(
+                "{operation} a fost anulată deoarece selecția semantică nu mai există."
+            ),
+        })?;
+    if selection.runtime_session_id != runtime_session_id {
+        return Err(SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::Superseded,
+            reason: "selection_session_superseded",
+            message: format!(
+                "{operation} a fost anulată deoarece ProjectSession-ul selecției s-a schimbat."
+            ),
+        });
+    }
+    let workspace_revision_is_stale = match revision_policy {
+        SelectionRevisionPolicy::Exact => {
+            selection.canvas_identity.workspace_revision != expected.workspace_revision
+        }
+        // Mutațiile CSS sunt serializate și pot fi capturate înainte ca
+        // proiecția commit-ului precedent să rebazeze SelectionCoordinator.
+        // O revizie mai nouă este sigură numai după verificarea aceleiași
+        // ancore semantice de mai jos; o revizie încă mai veche rămâne pending.
+        SelectionRevisionPolicy::StableSemanticAnchor => {
+            selection.canvas_identity.workspace_revision < expected.workspace_revision
+        }
+    };
+    if workspace_revision_is_stale {
+        return Err(SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::RetryableStale,
+            reason: "selection_workspace_pending",
+            message: format!(
+                "{operation} a fost anulată deoarece ProjectWorkspace s-a schimbat (revizia capturată {}, revizia selecției {}).",
+                expected.workspace_revision,
+                selection.canvas_identity.workspace_revision
+            ),
+        });
+    }
+    let requires_exact_revision = matches!(revision_policy, SelectionRevisionPolicy::Exact);
+    if selection.selection_revision < expected.selection_revision
+        || (requires_exact_revision && selection.selection_revision != expected.selection_revision)
+    {
+        return Err(SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::RetryableStale,
+            reason: "selection_revision_pending",
+            message: format!(
+                "{operation} a fost anulată deoarece selecția s-a schimbat (revizia capturată {}, revizia activă {}).",
+                expected.selection_revision,
+                selection.selection_revision
+            ),
+        });
+    }
+    if aggregate_selection_resolution(&selection.members) != SelectionResolution::Resolved {
+        return Err(SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::RetryableStale,
+            reason: "selection_resolution_pending",
+            message: format!(
+                "{operation} a fost anulată deoarece selecția nu mai are o rezoluție unică."
+            ),
+        });
+    }
+    if !mutation_identity_matches(selection, expected) {
+        return Err(SelectionTargetFailure {
+            kind: SelectionTargetFailureKind::Superseded,
+            reason: "selection_anchor_superseded",
+            message: format!(
+                "{operation} a fost anulată deoarece setul de ancore al selecției s-a schimbat."
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn mutation_members(selection: &SelectionSnapshot) -> Vec<SelectionMutationMemberIdentity> {
@@ -984,6 +1089,7 @@ fn ensure_session(
         state.selection = None;
         state.hover = None;
         state.inspector_facts = None;
+        state.last_focus_intent_sequence = 0;
     }
     if state.selection.is_none() {
         let revision = next_selection_revision(state)?;
@@ -1193,16 +1299,59 @@ fn set_primary_editor_node(
     Ok(())
 }
 
+struct FocusRequest<'a> {
+    focus: SelectionFocus,
+    expected_selection_revision: Option<u64>,
+    expected_selection: Option<&'a SelectionMutationIdentity>,
+    intent_sequence: Option<u64>,
+}
+
 fn set_focus(
     state: &mut SelectionCoordinatorState,
     snapshot: &EditorNavigationSnapshot,
     active_document_path: Option<&str>,
     source_graph: Option<&SourceGraph>,
-    focus: SelectionFocus,
-    expected_selection_revision: Option<u64>,
+    request: FocusRequest<'_>,
 ) -> Result<(), String> {
+    let FocusRequest {
+        focus,
+        expected_selection_revision,
+        expected_selection,
+        intent_sequence,
+    } = request;
     validate_focus(&focus)?;
-    if let Some(expected_revision) = expected_selection_revision {
+    if let Some(sequence) = intent_sequence {
+        if sequence == 0 {
+            return Err("Focusul a primit o secvență de intenție invalidă.".to_string());
+        }
+        if sequence <= state.last_focus_intent_sequence {
+            return Ok(());
+        }
+    }
+    if state
+        .selection
+        .as_ref()
+        .is_some_and(|selection| selection.focus == focus)
+    {
+        if let Some(sequence) = intent_sequence {
+            state.last_focus_intent_sequence = sequence;
+        }
+        return Ok(());
+    }
+    if let Some(expected) = expected_selection {
+        let current = state.selection.as_ref().ok_or_else(|| {
+            "Focusul a fost blocat deoarece selecția semantică nu mai există.".to_string()
+        })?;
+        if expected.selection_revision == 0 || expected.members.is_empty() {
+            return Err("Focusul a primit o amprentă semantică incompletă.".to_string());
+        }
+        if current.canvas_identity.workspace_revision != expected.workspace_revision
+            || current.selection_revision < expected.selection_revision
+            || !mutation_identity_matches(current, expected)
+        {
+            return Err("Focusul a fost blocat deoarece ținta semantică s-a schimbat.".to_string());
+        }
+    } else if let Some(expected_revision) = expected_selection_revision {
         let current_revision = state
             .selection
             .as_ref()
@@ -1215,6 +1364,9 @@ fn set_focus(
                 "Focusul a fost blocat deoarece selecția s-a schimbat (revizia așteptată {expected_revision}, revizia activă {current_revision})."
             ));
         }
+    }
+    if let Some(sequence) = intent_sequence {
+        state.last_focus_intent_sequence = sequence;
     }
     let current_is_css_source = state
         .selection
@@ -3015,6 +3167,8 @@ mod tests {
                         range: None,
                     },
                     expected_selection_revision: None,
+                    expected_selection: None,
+                    intent_sequence: None,
                 },
             )
             .unwrap();
@@ -3213,6 +3367,8 @@ mod tests {
                         range: None,
                     },
                     expected_selection_revision: None,
+                    expected_selection: None,
+                    intent_sequence: None,
                 },
             )
             .unwrap_err();
@@ -3447,6 +3603,8 @@ mod tests {
                         range: None,
                     },
                     expected_selection_revision: Some(accepted.selection_revision),
+                    expected_selection: None,
+                    intent_sequence: None,
                 },
             )
             .unwrap();
@@ -3476,6 +3634,8 @@ mod tests {
                         range: None,
                     },
                     expected_selection_revision: Some(accepted.selection_revision),
+                    expected_selection: None,
+                    intent_sequence: None,
                 },
             )
             .unwrap_err();
@@ -3956,6 +4116,8 @@ mod tests {
                         range: None,
                     },
                     expected_selection_revision: Some(captured.selection_revision),
+                    expected_selection: None,
+                    intent_sequence: None,
                 },
             )
             .unwrap()
@@ -3969,6 +4131,239 @@ mod tests {
                 || Ok(()),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn css_focus_is_idempotent_for_the_same_exact_focus() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-focus-idempotent",
+            vec![node(
+                "editor_render:a",
+                "source:a",
+                "render:a",
+                None,
+                range(10, 30),
+            )],
+        );
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        let expected = mutation_identity(&selected, snapshot.identity.workspace_revision);
+        let focus = SelectionFocus::CssRule {
+            file: "sass/index.scss".to_string(),
+            selector: ".hero-title".to_string(),
+            viewport: None,
+            range: None,
+        };
+        let first = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SetFocus {
+                    focus: focus.clone(),
+                    expected_selection_revision: None,
+                    expected_selection: Some(expected.clone()),
+                    intent_sequence: Some(1),
+                },
+            )
+            .unwrap()
+            .selection;
+        let repeated = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SetFocus {
+                    focus,
+                    expected_selection_revision: None,
+                    expected_selection: Some(expected),
+                    intent_sequence: Some(2),
+                },
+            )
+            .unwrap()
+            .selection;
+
+        assert_eq!(repeated.selection_revision, first.selection_revision);
+    }
+
+    #[test]
+    fn css_focus_ignores_an_older_intent_that_arrives_after_the_latest() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-focus-latest",
+            vec![node(
+                "editor_render:a",
+                "source:a",
+                "render:a",
+                None,
+                range(10, 30),
+            )],
+        );
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        let expected = mutation_identity(&selected, snapshot.identity.workspace_revision);
+        let latest = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SetFocus {
+                    focus: SelectionFocus::CssRule {
+                        file: "sass/index.scss".to_string(),
+                        selector: ".latest".to_string(),
+                        viewport: None,
+                        range: None,
+                    },
+                    expected_selection_revision: None,
+                    expected_selection: Some(expected.clone()),
+                    intent_sequence: Some(2),
+                },
+            )
+            .unwrap()
+            .selection;
+        let late_old = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SetFocus {
+                    focus: SelectionFocus::CssRule {
+                        file: "sass/index.scss".to_string(),
+                        selector: ".old".to_string(),
+                        viewport: None,
+                        range: None,
+                    },
+                    expected_selection_revision: None,
+                    expected_selection: Some(expected),
+                    intent_sequence: Some(1),
+                },
+            )
+            .unwrap()
+            .selection;
+
+        assert_eq!(late_old.selection_revision, latest.selection_revision);
+        assert_eq!(late_old.focus, latest.focus);
+    }
+
+    #[test]
+    fn exact_css_read_reports_focus_revisions_as_retryable_stale() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-read-stale",
+            vec![node(
+                "editor_render:a",
+                "source:a",
+                "render:a",
+                None,
+                range(10, 30),
+            )],
+        );
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        let expected = mutation_identity(&selected, snapshot.identity.workspace_revision);
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SetFocus {
+                    focus: SelectionFocus::CssRule {
+                        file: "sass/index.scss".to_string(),
+                        selector: ".hero-title".to_string(),
+                        viewport: None,
+                        range: None,
+                    },
+                    expected_selection_revision: None,
+                    expected_selection: Some(expected.clone()),
+                    intent_sequence: Some(1),
+                },
+            )
+            .unwrap();
+
+        let failure = runtime
+            .require_selection_target(&snapshot.identity.runtime_session_id, &expected)
+            .unwrap_err();
+        assert_eq!(failure.kind, SelectionTargetFailureKind::RetryableStale);
+        assert_eq!(failure.reason, "selection_revision_pending");
+    }
+
+    #[test]
+    fn serialized_css_mutation_rebases_an_older_workspace_on_the_same_semantic_anchor() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let nodes = vec![node(
+            "editor_render:a",
+            "source:a",
+            "render:a",
+            None,
+            range(10, 30),
+        )];
+        let original_snapshot = snapshot("tx-before-css", nodes.clone());
+        let selected = runtime
+            .apply(
+                &original_snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        let captured = mutation_identity(&selected, original_snapshot.identity.workspace_revision);
+
+        let mut rebased_snapshot = snapshot("tx-after-css", nodes);
+        rebased_snapshot.identity.workspace_revision += 1;
+        runtime
+            .apply(
+                &rebased_snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::Rebase,
+            )
+            .unwrap();
+
+        runtime
+            .with_stable_semantic_mutation_target(
+                &rebased_snapshot.identity.runtime_session_id,
+                &captured,
+                || Ok(()),
+            )
+            .unwrap();
+        assert_eq!(
+            runtime
+                .require_selection_target(&rebased_snapshot.identity.runtime_session_id, &captured,)
+                .unwrap_err()
+                .reason,
+            "selection_workspace_pending",
+        );
     }
 
     #[test]

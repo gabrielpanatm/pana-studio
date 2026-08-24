@@ -23,6 +23,10 @@
     FileExplorerSnapshot,
   } from "$lib/project/file-explorer-contract";
   import type { ProjectFile } from "$lib/project/lifecycle-contract";
+  import {
+    availableProjectPaneTabs,
+    reconcileProjectPaneTab,
+  } from "$lib/workbench/project-pane-policy";
   import ProjectFilesTab from "$lib/components/project/ProjectFilesTab.svelte";
   import EditorNavigationTree from "$lib/components/project/EditorNavigationTree.svelte";
   import InsertCatalogPanel from "$lib/components/project/InsertCatalogPanel.svelte";
@@ -39,6 +43,7 @@
   export let workspaceRevision = 0;
   export let allProjectFiles: ProjectFile[] = [];
   export let activeScannedPath: string | null = null;
+  export let layersAvailable = true;
   export let fileExplorerSnapshot: FileExplorerSnapshot | null = null;
   export let fileExplorerLoading = false;
   export let fileExplorerError = "";
@@ -69,6 +74,7 @@
   let editorNavigationCallers: Array<{ caller: string; target: string }> = [];
 
   async function setElementPaletteOpen(open: boolean, restoreFocus = true) {
+    if (open && !layersAvailable) return;
     elementPaletteOpen = open;
     await tick();
     if (open) elementPaletteDialog?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
@@ -100,11 +106,12 @@
   }
 
   function selectProjectPaneTab(tab: ProjectPaneTab) {
+    if (tab === "layers" && !layersAvailable) return;
     projectPaneTab = tab;
     if (elementPaletteOpen) void setElementPaletteOpen(false, false);
   }
 
-  const projectPaneTabs: ProjectPaneTab[] = ["layers", "files"];
+  let projectPaneTabs: ProjectPaneTab[] = ["layers", "files"];
   async function focusProjectPaneTab(tab: ProjectPaneTab) {
     selectProjectPaneTab(tab);
     await tick();
@@ -128,6 +135,12 @@
     fileKnownDirPaths = new Set<string>();
     fileRevealedEntryKey = "";
     fileTreeMemorySessionKey = `${projectRoot}::${runtimeSessionId}`;
+  }
+
+  $: projectPaneTabs = availableProjectPaneTabs(layersAvailable);
+  $: if (reconcileProjectPaneTab(projectPaneTab, layersAvailable) !== projectPaneTab) {
+    projectPaneTab = reconcileProjectPaneTab(projectPaneTab, layersAvailable);
+    if (elementPaletteOpen) void setElementPaletteOpen(false, false);
   }
 
   $: {
@@ -227,10 +240,11 @@
     class="ui-button primary pane-add-element-btn"
     class:active={elementPaletteOpen}
     type="button"
-    title={t("project-pane-open-add-element")}
+    title={t(layersAvailable ? "project-pane-open-add-element" : "project-pane-add-element-unavailable")}
     aria-haspopup="dialog"
     aria-expanded={elementPaletteOpen}
     aria-controls="element-palette-dialog"
+    disabled={!layersAvailable}
     onclick={() => { void setElementPaletteOpen(!elementPaletteOpen); }}
   >
     <IconPlus size={15} stroke={2} />
@@ -238,8 +252,10 @@
   </button>
 
   <div class="ui-tabs pane-tabs" role="tablist" aria-label={t("project-pane-areas")}>
-    <button id="project-pane-tab-layers" class="ui-tab tab-btn" class:active={projectPaneTab === "layers"} type="button" role="tab" title={t("project-pane-layers")}
-      aria-selected={projectPaneTab === "layers"} aria-controls="project-pane-panel-layers" tabindex={projectPaneTab === "layers" ? 0 : -1}
+    <button id="project-pane-tab-layers" class="ui-tab tab-btn" class:active={projectPaneTab === "layers"} type="button" role="tab"
+      title={t(layersAvailable ? "project-pane-layers" : "project-pane-layers-unavailable")}
+      aria-selected={projectPaneTab === "layers"} aria-controls="project-pane-panel-layers"
+      tabindex={layersAvailable && projectPaneTab === "layers" ? 0 : -1} disabled={!layersAvailable}
       onclick={() => selectProjectPaneTab("layers")} onkeydown={(event) => handleProjectPaneTabKeydown(event, "layers")}>
       <IconStack2 size={15} stroke={1.8} /><span>{t("project-pane-layers")}</span>
     </button>
@@ -251,7 +267,7 @@
   </div>
 
   <!-- ── LAYERS TAB ── -->
-  {#if projectPaneTab === "layers"}
+  {#if layersAvailable && projectPaneTab === "layers"}
     <div
       class="pane-tab-panel"
       id="project-pane-panel-layers"
@@ -413,5 +429,4 @@
 
   .element-palette-body { display: flex; flex: 1 1 auto; min-height: 0; padding: 8px; overflow: hidden; }
 
-  button:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

@@ -1,0 +1,10 @@
+/*
+ * Fonturile interfeței sunt livrate în bundle-ul aplicației prin Fontsource.
+ * Nu declara surse din sistem aici: randarea trebuie să fie identică indiferent de
+ * fonturile instalate pe sistemul de operare.
+ */
+@import "@fontsource-variable/inter/wght.css";
+@import "@fontsource-variable/inter/wght-italic.css";
+@import "@fontsource-variable/urbanist/wght.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
+@import "@fontsource-variable/jetbrains-mono/wght-italic.css";

@@ -9,6 +9,7 @@ use crate::{
         WorkspaceEntryMutationReceipt,
     },
     kernel::{
+        file_buffer_store::language_for_relative_path,
         file_explorer::{
             initial_text_for_path, FileExplorerCommitPlan, FileExplorerEntryKind,
             FileExplorerOperationPlan, FileExplorerOperationReason, FileExplorerOperationRequest,
@@ -21,8 +22,8 @@ use crate::{
         },
         workbench::{
             persist_workbench, read_persisted_workbench, WorkbenchCommandReceipt,
-            WorkbenchIdentity, WorkbenchIntent, WorkbenchProjectEntryRemap, WorkbenchSnapshot,
-            WorkbenchSurface,
+            WorkbenchDocumentPresentation, WorkbenchIdentity, WorkbenchIntent,
+            WorkbenchProjectEntryRemap, WorkbenchSnapshot, WorkbenchSurface,
         },
     },
     project::resolve_project_write_path,
@@ -84,7 +85,7 @@ pub fn read_file_explorer_snapshot(
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<FileExplorerSnapshot, String> {
-    let (projection, session) = {
+    let (projection, session, document_presentations) = {
         let workspace = state
             .project_workspace
             .lock()
@@ -96,6 +97,7 @@ pub fn read_file_explorer_snapshot(
         (
             workspace.capture_projection_snapshot()?,
             workspace.session.clone(),
+            workbench_presentations_for_documents(&workspace.documents),
         )
     };
     let mut workbench = state
@@ -113,6 +115,7 @@ pub fn read_file_explorer_snapshot(
                     remaps: Vec::new(),
                     deleted_prefixes: missing_paths,
                     selection_override: None,
+                    document_presentations,
                 },
                 |snapshot| persist_workbench(&app, &session, snapshot),
             )?
@@ -186,6 +189,9 @@ pub fn select_file_explorer_entry(
             relative_path: entry.relative_path.clone(),
             entry_kind: entry.kind.into(),
             open_surface: entry.open_surface,
+            open_presentation: entry
+                .open_surface
+                .map(|_| WorkbenchDocumentPresentation::from_project_file_kind(entry.file_kind)),
         },
         |snapshot: &WorkbenchSnapshot| persist_workbench(&app, &session, snapshot),
     )?;
@@ -334,6 +340,7 @@ pub fn commit_file_explorer_operation(
         )?;
     }
     let after_projection = workspace.capture_projection_snapshot()?;
+    let document_presentations = workbench_presentations_for_documents(&workspace.documents);
     drop(workspace_slot);
 
     if let (Some(source), Some(destination)) = (
@@ -356,12 +363,14 @@ pub fn commit_file_explorer_operation(
                 }],
                 deleted_prefixes: Vec::new(),
                 selection_override: None,
+                document_presentations,
             }
         } else {
             WorkbenchIntent::ReconcileProjectEntries {
                 remaps: Vec::new(),
                 deleted_prefixes: vec![source],
                 selection_override: None,
+                document_presentations,
             }
         }
     } else {
@@ -576,15 +585,42 @@ fn workbench_intent_after_create_commit(
                     .to_string(),
             ),
         };
-    let open_surface = match entry_kind {
+    let open_presentation = match entry_kind {
         FileExplorerEntryKind::Directory | FileExplorerEntryKind::Binary => None,
-        FileExplorerEntryKind::Text => Some(projected_surface.unwrap_or(WorkbenchSurface::Code)),
+        FileExplorerEntryKind::Text => Some(
+            language_for_relative_path(&destination)
+                .map(WorkbenchDocumentPresentation::from_text_language)
+                .unwrap_or(WorkbenchDocumentPresentation::CodeOnly),
+        ),
+    };
+    let open_surface = match open_presentation {
+        None => None,
+        Some(WorkbenchDocumentPresentation::Html) => {
+            Some(projected_surface.unwrap_or(WorkbenchSurface::Visual))
+        }
+        Some(WorkbenchDocumentPresentation::CodeOnly) => Some(WorkbenchSurface::Code),
     };
     Ok(WorkbenchIntent::SelectProjectEntry {
         relative_path: destination,
         entry_kind: entry_kind.into(),
         open_surface,
+        open_presentation,
     })
+}
+
+fn workbench_presentations_for_documents(
+    documents: &crate::kernel::file_buffer_store::FileBufferStore,
+) -> Vec<crate::kernel::workbench::WorkbenchDocumentPresentationEntry> {
+    documents
+        .files
+        .values()
+        .map(
+            |entry| crate::kernel::workbench::WorkbenchDocumentPresentationEntry {
+                relative_path: entry.relative_path.clone(),
+                presentation: WorkbenchDocumentPresentation::from_text_language(entry.language),
+            },
+        )
+        .collect()
 }
 
 fn require_schema(schema_version: u32) -> Result<(), String> {
@@ -723,6 +759,7 @@ mod tests {
                 relative_path: "static/assets".to_string(),
                 entry_kind: FileExplorerEntryKind::Directory.into(),
                 open_surface: None,
+                open_presentation: None,
             }
         );
 
@@ -742,6 +779,7 @@ mod tests {
                 relative_path: "static/CNAME".to_string(),
                 entry_kind: FileExplorerEntryKind::Text.into(),
                 open_surface: Some(WorkbenchSurface::Code),
+                open_presentation: Some(WorkbenchDocumentPresentation::CodeOnly),
             }
         );
     }

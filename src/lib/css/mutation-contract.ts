@@ -46,3 +46,28 @@ export type CssMutationAuthorityReceipt = {
 export type CssMutationCommandReceipt<T> = FileBufferCommandReceipt<T> & {
   authority: CssMutationAuthorityReceipt;
 };
+
+export type CssMutationCommandOutcome<T> =
+  | {
+      kind: "applied" | "noop";
+      interactionId: string | null;
+      receipt: CssMutationCommandReceipt<T>;
+    }
+  | {
+      kind: "superseded";
+      interactionId: string | null;
+      reason: string;
+      message: string;
+    }
+  | {
+      kind: "retryableStale";
+      interactionId: string | null;
+      reason: string;
+      message: string;
+    }
+  | {
+      kind: "rejected";
+      interactionId: string | null;
+      reason: string;
+      message: string;
+    };

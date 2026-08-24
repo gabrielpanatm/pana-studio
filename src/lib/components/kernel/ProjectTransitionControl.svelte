@@ -203,7 +203,7 @@
         <p>{t("project-transition-control-description")}</p>
       </div>
     </div>
-    <button type="button" disabled={loading || mutating} onclick={() => void refresh()} title={t("project-transition-control-refresh")}>
+    <button class="ui-icon-button toolbar" type="button" disabled={loading || mutating} onclick={() => void refresh()} title={t("project-transition-control-refresh")} aria-label={t("project-transition-control-refresh")}>
       <IconRefresh size={15} stroke={1.9} />
     </button>
   </header>
@@ -312,7 +312,6 @@
   article small,
   .decision-summary span,
   .decision-summary small { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
-  header button { width: 36px; height: 34px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
   .policies { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .policies article,
   .audit article,
@@ -329,7 +328,7 @@
   .decisions label span { color: var(--text-muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
   textarea { width: 100%; box-sizing: border-box; resize: vertical; }
   .action { justify-self: start; min-height: 32px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-3); color: var(--text); }
-  button:disabled { opacity: 0.55; }
+  button:not(.ui-icon-button):disabled { opacity: 0.55; }
   .error { color: #ef4444; font-size: 12px; }
   @media (max-width: 900px) { .policies { grid-template-columns: 1fr; } }
 </style>

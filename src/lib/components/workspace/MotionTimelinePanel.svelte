@@ -17,6 +17,7 @@
     IconZoomIn,
     IconZoomOut,
   } from "@tabler/icons-svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import type { MotionWorkspaceState } from "$lib/motion/workspace.svelte";
   import {
@@ -645,24 +646,24 @@
               playback: { ...interaction.playback, infinite: !interaction.playback.infinite },
             }); }}
           ><IconRepeat size={14} /></button>
-          <label class="speed-field" title={t("motion-timeline-playback-speed")}>
+          <div class="speed-field" title={t("motion-timeline-playback-speed")}>
             <span>{t("motion-speed")}</span>
-            <select value={interaction.playback.playbackRate} onchange={(event) => {
+            <SelectControl size="toolbar" value={String(interaction.playback.playbackRate)} options={[
+              { value: "0.25", label: "0.25×" },
+              { value: "0.5", label: "0.5×" },
+              { value: "1", label: "1×" },
+              { value: "1.5", label: "1.5×" },
+              { value: "2", label: "2×" },
+            ]} ariaLabel={t("motion-timeline-playback-speed")} onchange={(value) => {
               void updateInteraction({
                 ...structuredClone(interaction),
                 playback: {
                   ...interaction.playback,
-                  playbackRate: Number(event.currentTarget.value),
+                  playbackRate: Number(value),
                 },
               });
-            }}>
-              <option value={0.25}>0.25×</option>
-              <option value={0.5}>0.5×</option>
-              <option value={1}>1×</option>
-              <option value={1.5}>1.5×</option>
-              <option value={2}>2×</option>
-            </select>
-          </label>
+            }} />
+          </div>
           <button type="button" class:active={workspace.timelineSnap} title={t("motion-timeline-snap")} onclick={() => {
             workspace.timelineSnap = !workspace.timelineSnap;
           }}>{t("motion-timeline-snap")}</button>
@@ -826,7 +827,6 @@
 
 <style>
   .motion-timeline-panel { display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; min-width:0; min-height:0; overflow:hidden; border:1px solid var(--border-2); border-radius:var(--radius-panel); background:var(--surface-panel); color:var(--text); }
-  button, select { color:inherit; font:inherit; }
   button { cursor:pointer; }
   .timeline-header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:36px; padding:4px 7px 4px 10px; border-bottom:1px solid var(--border-3); background:var(--surface-2); }
   .timeline-identity { display:flex; align-items:baseline; gap:7px; min-width:0; }
@@ -837,9 +837,9 @@
   .timeline-window-actions button, .timeline-toolbar button, .selection-toolbar button { display:grid; place-items:center; min-width:27px; min-height:27px; padding:0 6px; border:1px solid var(--border-2); border-radius:5px; background:var(--surface); font-size:11px; }
   .timeline-toolbar button.active, .timeline-toolbar button.primary { border-color:var(--brand); background:var(--brand-soft); color:var(--brand-strong); }
   .timeline-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:38px; padding:4px 7px; border-bottom:1px solid var(--border-3); }
-  .time-readout { min-width:96px; color:var(--text-muted); font:11px "JetBrains Mono",monospace; }
+  .time-readout { min-width:96px; color:var(--text-muted); font:11px var(--font-mono); }
   .speed-field { display:flex; align-items:center; gap:4px; color:var(--text-muted); font-size:11px; }
-  .speed-field select { min-height:27px; border:1px solid var(--border-2); border-radius:5px; background:var(--surface); font-size:11px; }
+  .speed-field :global(.select-control-root) { width:72px; }
   .timeline-tools { flex-wrap:wrap; justify-content:flex-end; }
   .timeline-tools .add-action { color:var(--brand-strong); font-weight:800; }
   .timeline-scroll {
@@ -893,14 +893,14 @@
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
-    font:11px "JetBrains Mono",monospace;
+    font:11px var(--font-mono);
   }
   .ruler-label { min-height:28px; }
   .timeline-canvas { position:relative; z-index:1; min-width:600px; }
   .timeline-ruler { min-height:28px; overflow:hidden; border-bottom:1px solid var(--border-2); background:var(--surface-3); cursor:crosshair; touch-action:none; }
   .ruler-tick { position:absolute; top:0; bottom:0; border-left:1px solid var(--border-3); pointer-events:none; }
   .ruler-tick i { display:block; height:6px; border-left:1px solid var(--text-muted); }
-  .ruler-tick b { position:absolute; top:7px; left:4px; color:var(--text-muted); font:11px "JetBrains Mono",monospace; white-space:nowrap; }
+  .ruler-tick b { position:absolute; top:7px; left:4px; color:var(--text-muted); font:11px var(--font-mono); white-space:nowrap; }
   .ruler-tick.end b { right:4px; left:auto; }
   .track { min-height:45px; border-bottom:1px solid var(--border-3); cursor:crosshair; overflow:hidden; touch-action:none; }
   .action-clip { --ui-entity-background:color-mix(in srgb,var(--brand-soft) 78%,var(--surface)); --ui-entity-border-color:color-mix(in srgb,var(--brand) 68%,var(--border)); --ui-entity-color:var(--brand-strong); position:absolute; z-index:2; top:8px; height:29px; min-width:8px; overflow:hidden; padding:0 14px 0 7px; border:1px solid var(--ui-entity-border-color); border-radius:5px; background:var(--ui-entity-background); color:var(--ui-entity-color); text-align:left; font-size:11px; font-weight:800; cursor:grab; touch-action:none; }
@@ -920,7 +920,7 @@
   .marker { position:absolute; z-index:3; top:0; bottom:0; width:7px; margin-left:-3px; padding:0; border:0; border-left:1px dashed #d99735; background:transparent; cursor:pointer; }
   .selection-toolbar { min-height:34px; padding:3px 7px; border-top:1px solid var(--border-2); background:var(--surface-2); }
   .selection-toolbar strong { font-size:11px; }
-  .selection-toolbar > span { flex:1; color:var(--text-muted); font:11px "JetBrains Mono",monospace; }
+  .selection-toolbar > span { flex:1; color:var(--text-muted); font:11px var(--font-mono); }
   .selection-toolbar .danger { color:var(--danger); }
   .timeline-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; min-height:110px; padding:18px; text-align:center; color:var(--text-muted); }
   .timeline-empty strong { color:var(--text); font-size:11px; }

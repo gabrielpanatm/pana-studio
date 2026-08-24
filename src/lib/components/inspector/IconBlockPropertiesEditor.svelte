@@ -1,5 +1,8 @@
 <script lang="ts">
   import { IconChevronLeft, IconChevronRight, IconSearch } from "@tabler/icons-svelte";
+  import CheckboxControl from "$lib/components/ui/CheckboxControl.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
   import { t } from "$lib/i18n/runtime.svelte";
   import {
@@ -135,29 +138,24 @@
   <div class="catalog-controls">
     <label class="search-field">
       <span>{t("inspector-icon-search")}</span>
-      <span class="search-input"><IconSearch size={14} /><input
+      <span class="search-input"><IconSearch size={14} /><input class="ui-input compact"
         value={query}
         placeholder={t("inspector-icon-search-placeholder")}
         oninput={(event) => { query = event.currentTarget.value; offset = 0; }}
       /></span>
     </label>
-    <label>
+    <div class="ui-form-field">
       <span>{t("inspector-icon-category")}</span>
-      <select value={category} onchange={(event) => { category = event.currentTarget.value; offset = 0; }}>
-        <option value="">{t("inspector-icon-all-categories")}</option>
-        {#each summary?.categories ?? [] as item}
-          <option value={item}>{item}</option>
-        {/each}
-      </select>
-    </label>
+      <SelectControl value={category} options={[{ value: "", label: t("inspector-icon-all-categories") }, ...(summary?.categories ?? [])]} ariaLabel={t("inspector-icon-category")} onchange={(value) => { category = value; offset = 0; }} />
+    </div>
   </div>
 
   {#if loadError}
     <p class="diagnostic" role="alert">{loadError}</p>
   {:else if !page || loading}
-    <p class="empty">{t("inspector-icon-loading")}</p>
+    <EmptyState compact title={t("inspector-icon-loading")} />
   {:else if page.items.length === 0}
-    <p class="empty">{t("inspector-icon-empty")}</p>
+    <EmptyState compact title={t("inspector-icon-empty")} />
   {:else}
     <div class="icon-grid" aria-label={t("inspector-icon-results")}>
       {#each page.items as item (item.id)}
@@ -183,35 +181,32 @@
       {/each}
     </div>
     <div class="pagination">
-      <button type="button" disabled={offset === 0 || loading} onclick={previousPage} aria-label={t("inspector-icon-previous")}><IconChevronLeft size={15} /></button>
+      <button class="ui-icon-button mini" type="button" disabled={offset === 0 || loading} onclick={previousPage} aria-label={t("inspector-icon-previous")}><IconChevronLeft size={15} /></button>
       <span>{offset + 1}–{Math.min(offset + page.items.length, page.total)} / {page.total}</span>
-      <button type="button" disabled={!page.hasMore || loading} onclick={nextPage} aria-label={t("inspector-icon-next")}><IconChevronRight size={15} /></button>
+      <button class="ui-icon-button mini" type="button" disabled={!page.hasMore || loading} onclick={nextPage} aria-label={t("inspector-icon-next")}><IconChevronRight size={15} /></button>
     </div>
   {/if}
 
   <div class="property-grid">
     <label>
       <span>{t("inspector-icon-size")}</span>
-      <input type="number" min="8" max="512" step="1" bind:value={size} disabled={disabled || pending} />
+      <input class="ui-input compact" type="number" min="8" max="512" step="1" bind:value={size} disabled={disabled || pending} />
     </label>
     <label>
       <span>{t("inspector-icon-stroke")}</span>
-      <input type="number" min="0.5" max="4" step="0.25" value={strokeWidth} oninput={(event) => { strokeWidth = event.currentTarget.value; }} disabled={disabled || pending} />
+      <input class="ui-input compact" type="number" min="0.5" max="4" step="0.25" value={strokeWidth} oninput={(event) => { strokeWidth = event.currentTarget.value; }} disabled={disabled || pending} />
     </label>
   </div>
-  <label class="toggle-row">
-    <input type="checkbox" bind:checked={decorative} disabled={disabled || pending} />
-    <span>{t("inspector-icon-decorative")}</span>
-  </label>
+  <CheckboxControl compact label={t("inspector-icon-decorative")} bind:checked={decorative} disabled={disabled || pending} />
   {#if !decorative}
     <label>
       <span>{t("inspector-icon-accessible-label")}</span>
-      <input maxlength="160" bind:value={accessibleLabel} disabled={disabled || pending} />
+      <input class="ui-input compact" maxlength="160" bind:value={accessibleLabel} disabled={disabled || pending} />
     </label>
   {/if}
   <div class="apply-row">
     <code>{iconIdentity}</code>
-    <button type="button" disabled={disabled || pending || !iconIdentity || (!decorative && !accessibleLabel.trim())} onclick={apply}>
+    <button class="ui-button primary compact" type="button" disabled={disabled || pending || !iconIdentity || (!decorative && !accessibleLabel.trim())} onclick={apply}>
       {pending ? t("inspector-icon-applying") : t("inspector-icon-apply")}
     </button>
   </div>
@@ -222,7 +217,6 @@
   .icon-editor { display: grid; gap: 10px; }
   .catalog-controls, .property-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 0.55fr); gap: 8px; }
   label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 700; }
-  input, select { min-width: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text); padding: 6px 7px; font: inherit; }
   .search-input { display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 6px; padding-left: 7px; background: var(--surface-1); }
   .search-input input { width: 100%; border: 0; background: transparent; padding-left: 0; }
   .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 5px; max-height: 176px; overflow: auto; }
@@ -230,12 +224,9 @@
   .icon-grid button:hover, .icon-grid button.selected { border-color: var(--brand); color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, var(--surface-1)); }
   .icon-grid svg { width: 21px; height: 21px; }
   .pagination, .apply-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .pagination button, .apply-row button { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text); padding: 5px 8px; }
   .pagination span { color: var(--muted); font-size: 11px; }
-  .toggle-row { display: flex; grid-template-columns: none; align-items: center; gap: 7px; }
   .apply-row code { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 11px; }
-  .apply-row button { border-color: var(--brand); background: var(--brand); color: white; font-weight: 800; }
-  button:disabled, input:disabled { opacity: 0.55; cursor: not-allowed; }
-  .empty, .diagnostic, .status { margin: 0; font-size: 11px; color: var(--muted); }
+  input:disabled { opacity: 0.55; cursor: not-allowed; }
+  .diagnostic, .status { margin: 0; font-size: 11px; color: var(--muted); }
   .diagnostic { color: var(--danger); }
 </style>

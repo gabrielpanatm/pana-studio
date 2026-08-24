@@ -82,7 +82,10 @@ test("theme style draft previews are read-only and Apply is one Rust workspace m
   assert.match(commands, /"design_system\.theme_styles"/);
   assert.match(commands, /expected_workspace_revision/);
   assert.match(cssCommands, /theme_style_stale_workspace/);
-  assert.match(cssCommands, /coalesce_prefix: Option<&str>/);
+  assert.match(
+    cssCommands,
+    /struct CssWorkspaceMutationMetadata<'a>[\s\S]*coalesce_prefix: Option<&'a str>/,
+  );
   assert.match(io, /"preview_theme_style_draft"/);
   assert.match(io, /"apply_theme_style_draft"/);
   assert.doesNotMatch(component, /!important/);

@@ -12,9 +12,7 @@ pub(super) fn editor_source_provenance(
             invocation.source_node_id.as_deref() == Some(source.id.as_str())
                 && matches!(
                     invocation.kind,
-                    ComponentInvocationKind::Include
-                        | ComponentInvocationKind::MacroCall
-                        | ComponentInvocationKind::Shortcode
+                    ComponentInvocationKind::Include | ComponentInvocationKind::TeraComponent
                 )
         })
     });

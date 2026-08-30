@@ -1,12 +1,10 @@
-use tera::Template;
-
 use crate::source_graph::tera_semantics::TeraSemanticDocument;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TeraCstDocument {
     source: String,
     pub(crate) nodes: Vec<TeraCstNode>,
-    pub(crate) parsed_template: Option<Template>,
+    pub(crate) structurally_valid: bool,
     pub(crate) semantics: Option<TeraSemanticDocument>,
     pub(crate) validation_error: Option<String>,
 }
@@ -17,7 +15,7 @@ impl TeraCstDocument {
     }
 
     pub(crate) fn is_valid_tera(&self) -> bool {
-        self.parsed_template.is_some() && self.validation_error.is_none()
+        self.structurally_valid && self.validation_error.is_none()
     }
 
     pub(crate) fn validation_error(&self) -> Option<&str> {
@@ -88,11 +86,15 @@ pub(crate) enum TeraCstKind {
 pub(crate) enum TeraTagKind {
     Extends,
     Include,
-    Import,
     Block,
     EndBlock,
-    Macro,
-    EndMacro,
+    ComponentDefinition,
+    EndComponentDefinition,
+    ComponentCall,
+    EndComponentCall,
+    LegacyImport,
+    LegacyDefinition,
+    EndLegacyDefinition,
     For,
     EndFor,
     If,
@@ -101,6 +103,8 @@ pub(crate) enum TeraTagKind {
     EndIf,
     Set,
     SetGlobal,
+    SetBlock,
+    EndSetBlock,
     Filter,
     EndFilter,
     Break,
@@ -113,13 +117,23 @@ pub(crate) enum TeraTagKind {
 impl TeraTagKind {
     pub(crate) fn scope_action(&self) -> TeraScopeAction {
         match self {
-            Self::Block | Self::Macro | Self::For | Self::If | Self::Filter => {
-                TeraScopeAction::Open
-            }
+            Self::Block
+            | Self::ComponentDefinition
+            | Self::ComponentCall
+            | Self::LegacyDefinition
+            | Self::For
+            | Self::If
+            | Self::SetBlock
+            | Self::Filter => TeraScopeAction::Open,
             Self::Elif | Self::Else => TeraScopeAction::Branch,
-            Self::EndBlock | Self::EndMacro | Self::EndFor | Self::EndIf | Self::EndFilter => {
-                TeraScopeAction::Close
-            }
+            Self::EndBlock
+            | Self::EndComponentDefinition
+            | Self::EndComponentCall
+            | Self::EndLegacyDefinition
+            | Self::EndFor
+            | Self::EndIf
+            | Self::EndSetBlock
+            | Self::EndFilter => TeraScopeAction::Close,
             _ => TeraScopeAction::None,
         }
     }
@@ -208,22 +222,92 @@ pub(crate) fn parse_tera_cst(source: &str, template_name: &str) -> TeraCstDocume
         cursor = end;
     }
 
-    let parsed = Template::new(template_name, None, source);
-    let (parsed_template, semantics, validation_error) = match parsed {
-        Ok(template) => {
-            let semantics = TeraSemanticDocument::from_template(&template);
-            (Some(template), Some(semantics), None)
-        }
-        Err(error) => (None, None, Some(error.to_string())),
-    };
+    let _ = template_name;
+    let validation_error = structural_validation_error(source, &nodes);
+    let structurally_valid = validation_error.is_none();
+    let semantics = Some(TeraSemanticDocument::from_cst(source, &nodes));
 
     TeraCstDocument {
         source: source.to_string(),
         nodes,
-        parsed_template,
+        structurally_valid,
         semantics,
         validation_error,
     }
+}
+
+fn structural_validation_error(source: &str, nodes: &[TeraCstNode]) -> Option<String> {
+    let mut scopes = Vec::new();
+    let mut component_calls = Vec::new();
+    for node in nodes {
+        match &node.kind {
+            TeraCstKind::Opaque => return Some("Expresie Tera neînchisă.".to_string()),
+            TeraCstKind::Tag(TeraTagKind::Unknown(keyword)) => {
+                return Some(format!("Tag Tera necunoscut: {keyword}."));
+            }
+            TeraCstKind::Tag(tag) => match tag.scope_action() {
+                TeraScopeAction::Open => scopes.push(tag),
+                TeraScopeAction::Branch => match tag {
+                    TeraTagKind::Elif if !matches!(scopes.last(), Some(TeraTagKind::If)) => {
+                        return Some("Ramură Tera elif în afara unui scope if.".to_string());
+                    }
+                    TeraTagKind::Else
+                        if !matches!(scopes.last(), Some(TeraTagKind::If | TeraTagKind::For)) =>
+                    {
+                        return Some("Ramură Tera else în afara unui scope if/for.".to_string());
+                    }
+                    _ => {}
+                },
+                TeraScopeAction::Close => {
+                    let Some(open) = scopes.pop() else {
+                        return Some("Închidere Tera fără scope părinte.".to_string());
+                    };
+                    if !scope_close_matches(open, tag) {
+                        return Some(format!(
+                            "Închiderea Tera {tag:?} nu corespunde scope-ului {open:?}."
+                        ));
+                    }
+                }
+                _ => {}
+            },
+            TeraCstKind::Variable => {
+                let content = node.content(source).trim();
+                if content.starts_with("</") {
+                    if component_calls.pop().is_none() {
+                        return Some("Închidere de componentă fără apel părinte.".to_string());
+                    }
+                } else if content.starts_with('<') && !content.ends_with("/>") {
+                    component_calls.push(content);
+                }
+            }
+            _ => {}
+        }
+    }
+    if scopes.is_empty() && component_calls.is_empty() {
+        None
+    } else {
+        Some("Scope Tera neînchis.".to_string())
+    }
+}
+
+fn scope_close_matches(open: &TeraTagKind, close: &TeraTagKind) -> bool {
+    matches!(
+        (open, close),
+        (TeraTagKind::Block, TeraTagKind::EndBlock)
+            | (
+                TeraTagKind::ComponentDefinition,
+                TeraTagKind::EndComponentDefinition
+            )
+            | (TeraTagKind::ComponentCall, TeraTagKind::EndComponentCall)
+            | (
+                TeraTagKind::LegacyDefinition,
+                TeraTagKind::EndLegacyDefinition
+            )
+            | (TeraTagKind::For, TeraTagKind::EndFor)
+            | (TeraTagKind::If, TeraTagKind::EndIf)
+            | (TeraTagKind::SetBlock, TeraTagKind::EndSetBlock)
+            | (TeraTagKind::Filter, TeraTagKind::EndFilter)
+    )
 }
 
 fn push_text(nodes: &mut Vec<TeraCstNode>, start: usize, end: usize) {
@@ -309,23 +393,33 @@ fn find_raw_close(source: &str, mut cursor: usize) -> Option<(usize, usize)> {
 }
 
 fn classify_tag(content: &str) -> TeraTagKind {
+    if content.trim_start().starts_with("</") {
+        return TeraTagKind::EndComponentCall;
+    }
+    if content.trim_start().starts_with('<') {
+        return TeraTagKind::ComponentCall;
+    }
     let keyword = content.split_whitespace().next().unwrap_or("");
     match keyword {
         "extends" => TeraTagKind::Extends,
         "include" => TeraTagKind::Include,
-        "import" => TeraTagKind::Import,
+        "import" => TeraTagKind::LegacyImport,
         "block" => TeraTagKind::Block,
         "endblock" => TeraTagKind::EndBlock,
-        "macro" => TeraTagKind::Macro,
-        "endmacro" => TeraTagKind::EndMacro,
+        "component" => TeraTagKind::ComponentDefinition,
+        "endcomponent" => TeraTagKind::EndComponentDefinition,
+        "macro" => TeraTagKind::LegacyDefinition,
+        "endmacro" => TeraTagKind::EndLegacyDefinition,
         "for" => TeraTagKind::For,
         "endfor" => TeraTagKind::EndFor,
         "if" => TeraTagKind::If,
         "elif" => TeraTagKind::Elif,
         "else" => TeraTagKind::Else,
         "endif" => TeraTagKind::EndIf,
-        "set" => TeraTagKind::Set,
+        "set" if content.contains('=') => TeraTagKind::Set,
+        "set" => TeraTagKind::SetBlock,
         "set_global" => TeraTagKind::SetGlobal,
+        "endset" => TeraTagKind::EndSetBlock,
         "filter" => TeraTagKind::Filter,
         "endfilter" => TeraTagKind::EndFilter,
         "break" => TeraTagKind::Break,
@@ -354,7 +448,7 @@ mod tests {
         assert!(document.is_lossless());
         assert_eq!(document.reconstruct(), source);
         assert!(document.validation_error.is_none());
-        assert!(document.parsed_template.is_some());
+        assert!(document.structurally_valid);
     }
 
     #[test]
@@ -394,7 +488,7 @@ mod tests {
         let document = parse_tera_cst("{% with value = 1 %}{% endwith %}", "with.html");
 
         assert!(document.is_lossless());
-        assert!(document.parsed_template.is_none());
+        assert!(!document.structurally_valid);
         assert!(document.validation_error.is_some());
     }
 }

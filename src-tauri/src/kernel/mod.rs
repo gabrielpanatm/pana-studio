@@ -3,7 +3,6 @@ pub mod audit;
 mod bounded_journal_reader;
 pub mod canvas_interaction;
 pub mod command_center;
-pub mod component_legacy_migration;
 pub mod component_mutation;
 pub mod content_models;
 mod content_schema;

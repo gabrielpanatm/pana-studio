@@ -25,7 +25,6 @@ const canonicalActivityWorkspaces = {
 
 const tabbedActivityWorkspaces = {
   design: canonicalActivityWorkspaces.design,
-  components: canonicalActivityWorkspaces.components,
   content: canonicalActivityWorkspaces.content,
   assets: canonicalActivityWorkspaces.assets,
   data: canonicalActivityWorkspaces.data,
@@ -56,13 +55,22 @@ test("workspaces-urile folosesc același model catalog plus panou contextual", (
       assert.match(implementation, /type DetailMode = "info" \| "create"/, name);
       assert.match(implementation, /contentWorkspace\?\.mode === "edit"/, name);
       assert.match(implementation, /commands\.openPageEditor\(page\.file\)/, name);
+    } else if (name === "components") {
+      assert.match(implementation, /type DetailMode = "info" \| "create" \| "edit" \| "rename"/, name);
+      assert.match(implementation, /detailMode === "edit"/, name);
     } else {
       assert.match(implementation, /type DetailMode = "info" \| "create" \| "edit"/, name);
       assert.match(implementation, /detailMode === "edit"/, name);
     }
     assert.match(workspace, /class="workspace-header"/, name);
     assert.match(workspace, /class="workspace-toolbar"/, name);
-    assert.match(workspace, /role="tablist"/, name);
+    if (name === "components") {
+      assert.doesNotMatch(workspace, /role="tablist"/, name);
+      assert.match(workspace, /namespaceFilter/, name);
+      assert.match(workspace, /originFilter/, name);
+    } else {
+      assert.match(workspace, /role="tablist"/, name);
+    }
     assert.match(workspace, /type="search"/, name);
     assert.match(workspace, /class="[^"]*\btoolbar-action\b[^"]*"/, name);
     assert.match(implementation, /detailMode === "create"/, name);

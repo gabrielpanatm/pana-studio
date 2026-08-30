@@ -525,7 +525,7 @@ fn component_group(graph: &SourceGraph, base: &InsertCatalogCapabilities) -> Ins
         id: "components".into(),
         category: InsertCatalogCategory::Component,
         label: "Componente".into(),
-        description: "Partialuri active și macrocomenzi reprezentabile în siguranță.".into(),
+        description: "Partialuri și componente Tera 2 active, reprezentabile în siguranță.".into(),
         items: definitions,
     }
 }
@@ -562,12 +562,7 @@ fn component_item(
                 },
             })
         }
-        ComponentDefinitionKind::Macro => {
-            let owner = definition.owner_definition_id.as_deref()?;
-            let library = definition
-                .template_name
-                .clone()
-                .or_else(|| definition.file.as_deref().and_then(template_name_for_file))?;
+        ComponentDefinitionKind::TeraComponent => {
             let name = definition
                 .symbol
                 .clone()
@@ -583,17 +578,17 @@ fn component_item(
                 category: InsertCatalogCategory::Component,
                 origin,
                 label: definition.display_name.clone(),
-                description: format!("Macrocomandă din {library} ({owner})."),
+                description: "Apel de componentă Tera 2.".to_string(),
                 capabilities: merge_capability(
                     base,
                     safe,
-                    "insert_catalog_macro_requires_arguments",
+                    "insert_catalog_component_requires_arguments",
                 ),
                 payload: InsertCatalogPayload::Component {
                     component_id: definition.id.clone(),
-                    tera_kind: "macroCall".into(),
+                    tera_kind: "componentCall".into(),
                     family: "reuse".into(),
-                    target: library,
+                    target: name.clone(),
                     name: Some(name),
                     expression: None,
                 },
@@ -601,14 +596,6 @@ fn component_item(
         }
         _ => None,
     }
-}
-
-fn template_name_for_file(file: &str) -> Option<String> {
-    let normalized = normalize_path(file);
-    normalized
-        .strip_prefix("templates/")
-        .map(str::to_string)
-        .or_else(|| normalized.ends_with(".html").then_some(normalized))
 }
 
 fn tera_group(base: &InsertCatalogCapabilities) -> InsertCatalogGroup {
@@ -641,16 +628,6 @@ fn tera_group(base: &InsertCatalogCapabilities) -> InsertCatalogGroup {
             "Include un partial Tera.",
             Some("partials/cta.html"),
             None,
-            None,
-        ),
-        (
-            "import:macros",
-            "import",
-            "composition",
-            "Import macro",
-            "Importă o bibliotecă de macrocomenzi.",
-            Some("macros.html"),
-            Some("macros"),
             None,
         ),
         (
@@ -694,11 +671,11 @@ fn tera_group(base: &InsertCatalogCapabilities) -> InsertCatalogGroup {
             Some("value"),
         ),
         (
-            "macro:component",
-            "macro",
+            "component:definition",
+            "componentDefinition",
             "reuse",
-            "Macrocomandă",
-            "Definește o macrocomandă Tera.",
+            "Componentă Tera",
+            "Definește o componentă Tera 2.",
             None,
             Some("component"),
             None,

@@ -440,15 +440,15 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
         (
             WorkbenchActivity::Templates,
             "Șabloane",
-            "Pagini, layout-uri, fragmente și macro-uri Tera",
-            "templates tera layouts partials macros sabloane",
+            "Pagini, layout-uri, fragmente și componente Tera",
+            "templates tera layouts partials components sabloane",
             830,
         ),
         (
             WorkbenchActivity::Components,
             "Componente",
-            "Parțiale, macro-uri, shortcode-uri și liste Tera",
-            "components tera partials macros shortcodes loops componente",
+            "Parțiale, componente și liste Tera",
+            "components tera partials loops componente",
             820,
         ),
         (
@@ -838,7 +838,12 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
                 "tera template partial component {} {} {}",
                 template.file,
                 template.blocks.join(" "),
-                template.macros.join(" ")
+                template
+                    .component_definitions
+                    .iter()
+                    .map(|component| component.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
             ),
             template.file.clone(),
             WorkbenchSurface::Visual,
@@ -853,22 +858,23 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
                 .with_argument("path", template.file.clone()),
             ),
         ));
-        for macro_name in &template.macros {
+        for component in &template.component_definitions {
+            let component_name = &component.name;
             candidates.push(document_candidate(
-                format!("symbol.macro.{}.{}", template.id, macro_name),
+                format!("symbol.component.{}.{}", template.id, component_name),
                 CommandCenterItemKind::Symbol,
-                format!("Macro {macro_name}"),
-                format!("{} · macro Tera", template.file),
-                format!("macro tera {macro_name} {}", template.file),
+                format!("Componentă {component_name}"),
+                format!("{} · componentă Tera", template.file),
+                format!("componentă tera {component_name} {}", template.file),
                 template.file.clone(),
                 WorkbenchSurface::Code,
                 540,
                 Some(
-                    LocalizedDiagnostic::new("command-center-resource-macro-title")
-                        .with_argument("name", macro_name.clone()),
+                    LocalizedDiagnostic::new("command-center-resource-component-title")
+                        .with_argument("name", component_name.clone()),
                 ),
                 Some(
-                    LocalizedDiagnostic::new("command-center-resource-macro-subtitle")
+                    LocalizedDiagnostic::new("command-center-resource-component-subtitle")
                         .with_argument("path", template.file.clone()),
                 ),
             ));
@@ -1245,7 +1251,6 @@ mod tests {
                     extends: None,
                     includes: Vec::new(),
                     include_groups: Vec::new(),
-                    imports: Vec::new(),
                     get_pages: Vec::new(),
                     get_sections: Vec::new(),
                     internal_links: Vec::new(),
@@ -1258,7 +1263,8 @@ mod tests {
                     image_metadata: Vec::new(),
                     image_resizes: Vec::new(),
                     blocks: vec!["hero".to_string()],
-                    macros: vec!["card".to_string()],
+                    component_definitions: Vec::new(),
+                    component_calls: Vec::new(),
                     semantics: None,
                     markdown_projections: Vec::new(),
                     node_id: "node:index".to_string(),

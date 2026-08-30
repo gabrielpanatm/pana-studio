@@ -51,6 +51,10 @@ test("setările proiectului sunt activitate tehnică separată și DeployPane le
   );
   assert.match(projectSettings, /saveProjectConfiguration/);
   assert.match(projectSettings, /registerEditFlushHandler/);
+  assert.match(projectSettings, /skipContentTemplatingText/);
+  assert.match(projectSettings, /skip_content_templating/);
+  assert.match(projectSettings, /highlightDataAttrPosition/);
+  assert.match(projectSettings, /markdown\.highlighting\.data_attr_position/);
   assert.doesNotMatch(publish, /saveProjectConfiguration|ZolaProjectSettings|cachebustAssets=/);
   assert.equal(existsSync(new URL("../src/lib/components/DeployPane.svelte", import.meta.url)), false);
 });

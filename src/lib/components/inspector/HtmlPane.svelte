@@ -33,6 +33,7 @@
     EditableAttributes,
     InspectorHtmlPhysicalFacts,
     ZolaImageFormat,
+    ZolaImageFilter,
     ZolaImageOperation,
   } from "$lib/canvas/contracts";
   import type {
@@ -129,6 +130,7 @@
   let zolaOperation = $state<ZolaImageOperation>("fit_width");
   let zolaFormat = $state<ZolaImageFormat>("webp");
   let zolaQualityText = $state("82");
+  let zolaFilter = $state<ZolaImageFilter | "">("");
   let zolaSourceDraft = $state("");
   let zolaImagePending = $state(false);
   let zolaDraftSelectionKey = "";
@@ -169,6 +171,7 @@
     zolaOperation = presentation?.operation ?? "fit_width";
     zolaFormat = presentation?.format ?? "webp";
     zolaQualityText = String(presentation?.quality ?? 82);
+    zolaFilter = presentation?.filter ?? "";
     zolaSourceDraft = presentation?.sourceUrl ?? imageSourceValue ?? getAttr("src");
   });
 
@@ -302,6 +305,7 @@
           operation: zolaOperation,
           format: zolaFormat,
           quality,
+          filter: zolaFilter || null,
         });
       }
     } catch (error) {
@@ -405,6 +409,14 @@
     { value: "fill", label: t("inspector-zola-fill") },
   ]);
   const zolaFormatOptions = ["webp", "avif", "auto", "jpg", "png"];
+  const zolaFilterOptions = $derived([
+    { value: "", label: t("inspector-zola-filter-default") },
+    "nearest",
+    "triangle",
+    "catmull_rom",
+    "gaussian",
+    "lanczos3",
+  ]);
   const buttonTypeOptions = $derived([{ value: "", label: t("inspector-default-submit") }, "button", "submit", "reset"]);
   const inputTypeOptions = ["text", "email", "password", "number", "tel", "url", "search", "date", "time", "datetime-local", "month", "week", "checkbox", "radio", "file", "color", "range", "hidden", "submit", "reset", "button"];
   const methodOptions = ["get", "post", "dialog"];
@@ -784,6 +796,19 @@
               onblur={() => { void commitZolaImage(true); }} />
           </div>
         {/if}
+        <div class="hf-row">
+          <span class="hf-label">{t("inspector-zola-filter")}</span>
+          <SelectControl
+            value={zolaFilter}
+            options={zolaFilterOptions}
+            disabled={!canEdit || zolaImagePending}
+            ariaLabel={t("inspector-zola-filter-label")}
+            onchange={(value) => {
+              zolaFilter = value as ZolaImageFilter | "";
+              void commitZolaImage(true);
+            }}
+          />
+        </div>
         <p class="hf-zola-note">{t("inspector-zola-managed-note")}</p>
       {:else}
         <div class="hf-row-2">

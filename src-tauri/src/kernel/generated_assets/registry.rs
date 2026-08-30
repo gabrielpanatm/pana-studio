@@ -125,6 +125,8 @@ pub const ANIME_JS_RUNTIME_CONTRACT: AnimeJsRuntimeContract = AnimeJsRuntimeCont
 mod tests {
     use std::collections::BTreeSet;
 
+    use crate::zola_engine::{EMBEDDED_ZOLA_REVISION, EMBEDDED_ZOLA_VERSION};
+
     use super::{
         anime_module, anime_module_dependency_closure, anime_modules_referenced_by_source,
         ANIME_JS_RUNTIME_CONTRACT, EMBEDDED_ANIME_MODULES,
@@ -144,6 +146,8 @@ mod tests {
     #[test]
     fn third_party_notice_matches_the_declared_contract() {
         let notice = include_str!("../../../../THIRD_PARTY_NOTICES.md");
+        assert!(notice.contains(&format!("## Zola {EMBEDDED_ZOLA_VERSION}")));
+        assert!(notice.contains(&format!("- revizie sursă: `{EMBEDDED_ZOLA_REVISION}`;")));
         assert!(notice.contains(&format!(
             "## Anime.js {}",
             ANIME_JS_RUNTIME_CONTRACT.version

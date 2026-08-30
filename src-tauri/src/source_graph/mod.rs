@@ -14,7 +14,6 @@ pub(crate) mod tera;
 pub(crate) mod tera_cst;
 pub mod tera_semantics;
 pub(crate) mod zola;
-pub mod zola_shortcode;
 
 pub use model::SourceGraph;
 pub use scan::build_source_graph_from_workspace_projection;

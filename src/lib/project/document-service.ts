@@ -39,6 +39,7 @@ export type ProjectFileLoadOptions = {
   activateTemplateWorkbench?: boolean;
   preferredTemplatePagePath?: string | null;
   preferredTemplateRoute?: string | null;
+  preferredComponentName?: string | null;
   syncWorkbench?: boolean;
 };
 

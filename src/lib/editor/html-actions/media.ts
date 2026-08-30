@@ -179,6 +179,7 @@ export async function applyImageSourceToHtml(
       operation: zolaImage.operation,
       format: zolaImage.format,
       quality: zolaImage.quality,
+      filter: zolaImage.filter,
     }));
   }
   if ((target.attributes?.src ?? "").trim() === src) {

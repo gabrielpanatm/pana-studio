@@ -45,7 +45,11 @@ source-graph-data-format-invalid = Document de date { $format } invalid: { $deta
 source-graph-config-toml-invalid = Configurație TOML invalidă: { $details }
 source-graph-content-target-missing = Conținutul Zola referențiat nu a fost găsit: { $target }
 source-graph-template-target-missing = Template-ul referențiat nu a fost găsit: { $target }
-source-graph-shortcode-syntax-invalid = Conținutul Markdown are sintaxă shortcode Zola invalidă: { $details }
+source-graph-content-tera-syntax-invalid = Conținutul Markdown conține sintaxă Tera 2 invalidă: { $details }
+source-graph-legacy-tera-incompatible = Acest template folosește sintaxa macro/import din Tera 1, incompatibilă cu Zola 0.23.4 și Tera 2.
+source-graph-legacy-shortcode-template-incompatible = Directoarele legacy de shortcode-uri sunt incompatibile cu Zola 0.23.4; definește o componentă Tera 2.
+source-graph-legacy-shortcode-incompatible = Apelul legacy „{ $name }” este incompatibil cu Zola 0.23.4; folosește un apel de componentă Tera 2.
+source-graph-zola-runtime-argument-deprecated = Argumentul „{ $argument }” al funcției { $function } este depreciat; folosește „{ $replacement }”.
 source-graph-page-template-missing = Template-ul paginii nu a fost găsit: { $template }
 source-graph-section-page-template-missing = Template-ul page_template al secțiunii nu a fost găsit: { $template }
 source-graph-frontmatter-invalid = Frontmatter { $format } invalid: { $details }
@@ -55,7 +59,6 @@ source-graph-partial-extends-invalid = Parțialele nu trebuie să folosească ex
 source-graph-partial-block-invalid = Parțialul { $name } conține blocul Tera „{ $block }”. Parțialele trebuie să fie fragmente incluse, fără block/endblock.
 source-graph-multiple-extends = Template-ul are mai multe directive extends; Zola/Tera așteaptă una singură.
 source-graph-duplicate-tera-block = Bloc Tera duplicat în același template: { $block }
-source-graph-tera-cst-ast-mismatch = CST-ul lossless și AST-ul Tera nu au reconciliat aceleași blocuri.
 source-graph-dynamic-load-data =
     { $count ->
         [one] Un apel load_data din { $file } folosește o cale dinamică și nu poate fi rezolvat static.

@@ -11,11 +11,9 @@ type ComponentMutationOperation =
   | "delete"
   | "override_theme";
 
-export type ComponentDraftKind =
+type ComponentDraftKind =
   | "partial"
-  | "macro_library"
-  | "shortcode_html"
-  | "shortcode_markdown";
+  | "tera_component";
 
 type ComponentCompanionKind = "style" | "script" | "data";
 
@@ -36,6 +34,7 @@ export type ComponentMutationInput = {
   definitionId: string | null;
   kind: ComponentDraftKind | null;
   name: string | null;
+  symbolName: string | null;
   destinationName: string | null;
   contents: string | null;
   sourceFile: string | null;
@@ -55,11 +54,13 @@ type ComponentMutationDiagnostic = {
 };
 
 type ComponentMutationPlan = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   operation: ComponentMutationOperation;
   definitionId: string | null;
   sourceRelativePath: string | null;
   destinationRelativePath: string | null;
+  sourceSymbol: string | null;
+  destinationSymbol: string | null;
   writes: ComponentPlannedWrite[];
   deletes: string[];
   touchedFiles: string[];

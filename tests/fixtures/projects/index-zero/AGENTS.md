@@ -22,7 +22,7 @@ Public urban 20–45 ani interesat de arte performative, instalații, sunet, des
 
 ## Stack
 
-- **Framework:** Zola embedded compatibil 0.22.1
+- **Framework:** Zola embedded compatibil 0.23.4
 - **Markup:** HTML semantic + Tera + Markdown
 - **Stiluri:** SCSS propriu compilat de Zola, fără nesting
 - **JavaScript:** vanilla local, fără librării externe

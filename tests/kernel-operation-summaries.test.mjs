@@ -132,7 +132,7 @@ test("Preview stages exact ProjectWorkspace revisions and promotes only an exact
   assert.match(engine, /acknowledge_candidate_phase/);
   assert.match(engine, /BuildMode::Memory/);
   assert.match(engine, /site\.reload_templates\(\)/);
-  assert.match(engine, /materialize_official_zola_assets/);
+  assert.doesNotMatch(engine, /materialize_official_zola_assets/);
   assert.match(server, /RwLock<PreviewGenerationRegistry>/);
   assert.match(server, /staged: BTreeMap<String, Arc<ActivePreviewGeneration>>/);
   assert.match(server, /retired: VecDeque<Arc<ActivePreviewGeneration>>/);

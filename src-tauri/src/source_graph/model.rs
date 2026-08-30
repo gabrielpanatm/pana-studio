@@ -9,8 +9,9 @@ use crate::kernel::content_models::ContentModelCatalog;
 use crate::kernel::dynamic_widgets::DynamicWidgetGraph;
 use crate::kernel::listing_items::ListingItemCatalog;
 use crate::localization::LocalizedDiagnostic;
-use crate::source_graph::tera_semantics::{TeraSemanticDocument, TeraSemanticExpression};
-use crate::source_graph::zola_shortcode::ZolaShortcodeInvocation;
+use crate::source_graph::tera_semantics::{
+    TeraComponentCall, TeraComponentDefinition, TeraSemanticDocument, TeraSemanticExpression,
+};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,7 +80,6 @@ pub enum MarkdownProjectionKind {
     Summary,
     Filter,
     Toc,
-    Shortcode,
 }
 
 impl MarkdownProjectionKind {
@@ -89,7 +89,6 @@ impl MarkdownProjectionKind {
             Self::Summary => "Rezumat Markdown",
             Self::Filter => "Filtru Markdown",
             Self::Toc => "Cuprins Markdown",
-            Self::Shortcode => "Shortcode Markdown",
         }
     }
 }
@@ -103,7 +102,6 @@ pub enum MarkdownSourceBindingKind {
     StaticSection,
     RuntimePage,
     RuntimeSection,
-    ShortcodeInvocation,
     Unresolved,
 }
 
@@ -138,8 +136,7 @@ pub struct SourceGraphPage {
     pub frontmatter_parse_error: Option<String>,
     pub frontmatter_nodes: Vec<SourceDataNode>,
     pub taxonomies: BTreeMap<String, Vec<String>>,
-    pub shortcode_parse_error: Option<String>,
-    pub shortcodes: Vec<ZolaShortcodeInvocation>,
+    pub component_calls: Vec<TeraComponentCall>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -162,7 +159,6 @@ pub struct SourceGraphTemplate {
     pub extends: Option<String>,
     pub includes: Vec<String>,
     pub include_groups: Vec<SourceGraphInclude>,
-    pub imports: Vec<String>,
     pub get_pages: Vec<String>,
     pub get_sections: Vec<String>,
     pub internal_links: Vec<String>,
@@ -175,7 +171,8 @@ pub struct SourceGraphTemplate {
     pub image_metadata: Vec<String>,
     pub image_resizes: Vec<String>,
     pub blocks: Vec<String>,
-    pub macros: Vec<String>,
+    pub component_definitions: Vec<TeraComponentDefinition>,
+    pub component_calls: Vec<TeraComponentCall>,
     pub semantics: Option<TeraSemanticDocument>,
     pub markdown_projections: Vec<MarkdownProjection>,
     pub node_id: String,
@@ -372,9 +369,7 @@ pub struct BlockDiagnostic {
 pub enum ComponentDefinitionKind {
     TemplateFile,
     Partial,
-    MacroLibrary,
-    Macro,
-    Shortcode,
+    TeraComponent,
     TemplateBlock,
     InlineRepeat,
     InlineConditional,
@@ -385,8 +380,7 @@ pub enum ComponentDefinitionKind {
 #[serde(rename_all = "camelCase")]
 pub enum ComponentInvocationKind {
     Include,
-    MacroCall,
-    Shortcode,
+    TeraComponent,
     Repeat,
     Conditional,
     Transform,
@@ -437,6 +431,9 @@ pub struct ComponentDefinition {
     pub source_node_id: Option<String>,
     pub owner_definition_id: Option<String>,
     pub symbol: Option<String>,
+    pub range: Option<SourceRange>,
+    pub body_range: Option<SourceRange>,
+    pub rest_parameter: Option<String>,
     pub parameters: Vec<ComponentParameter>,
     pub context_dependencies: Vec<String>,
     pub data_bindings: Vec<ComponentDataBinding>,
@@ -461,6 +458,9 @@ pub struct ComponentInvocation {
     pub target_reference: String,
     pub resolved_definition_ids: Vec<String>,
     pub fallback_references: Vec<String>,
+    pub range: Option<SourceRange>,
+    pub call_range: Option<SourceRange>,
+    pub body_range: Option<SourceRange>,
     pub arguments: Vec<ComponentArgument>,
     pub context_dependencies: Vec<String>,
     pub data_bindings: Vec<ComponentDataBinding>,
@@ -488,15 +488,20 @@ pub struct RenderedComponentInstance {
 #[serde(rename_all = "camelCase")]
 pub struct ComponentParameter {
     pub name: String,
+    pub argument_type: Option<String>,
     pub required: bool,
+    pub rest: bool,
     pub default_value: Option<TeraSemanticExpression>,
+    pub range: Option<SourceRange>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComponentArgument {
-    pub name: String,
+    pub name: Option<String>,
     pub expression: TeraSemanticExpression,
+    pub spread: bool,
+    pub range: Option<SourceRange>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -731,7 +736,6 @@ impl SourceNode {
         let prefix = match self.kind {
             SourceNodeKind::Extends => "extends ",
             SourceNodeKind::Include => "include ",
-            SourceNodeKind::Import => "import ",
             _ => return None,
         };
         self.label.strip_prefix(prefix)
@@ -755,14 +759,13 @@ pub enum SourceNodeKind {
     ConfigFile,
     Html,
     BlockMarker,
-    MacroCall,
+    ComponentCall,
     FunctionCall,
-    Shortcode,
     Extends,
     Block,
     Include,
-    Import,
-    Macro,
+    ComponentDefinition,
+    LegacyTera,
     For,
     If,
     Elif,
@@ -800,8 +803,7 @@ pub enum SourceCapabilityReason {
     TeraExtends,
     TeraBlock,
     TeraInclude,
-    TeraImport,
-    TeraMacro,
+    TeraComponentDefinition,
     TeraFor,
     TeraIf,
     TeraElif,
@@ -813,20 +815,19 @@ pub enum SourceCapabilityReason {
     TeraContinue,
     TeraSuper,
     TeraVariable,
-    TeraMacroCall,
+    TeraComponentCall,
     TeraFunctionCall,
-    ZolaShortcode,
+    LegacyTeraSyntax,
     NativeBlockMarker,
     TeraComment,
     TeraRaw,
     TeraSyntax,
     HtmlInTeraLoop,
     HtmlInTeraCondition,
-    HtmlInTeraMacro,
+    HtmlInTeraComponent,
     HtmlInTeraLocalScope,
     HtmlInTeraRaw,
     MarkdownPage,
-    MarkdownShortcode,
     MarkdownRenderedBoundary,
     MarkdownSourceUnresolved,
     StaticJavaScript,
@@ -850,8 +851,7 @@ impl SourceCapabilityReason {
             Self::TeraExtends => "Tera inheritance directive.",
             Self::TeraBlock => "Tera block.",
             Self::TeraInclude => "Tera include.",
-            Self::TeraImport => "Tera import.",
-            Self::TeraMacro => "Tera macro.",
+            Self::TeraComponentDefinition => "Tera component definition.",
             Self::TeraFor => "Tera loop.",
             Self::TeraIf => "Tera condition.",
             Self::TeraElif => "Tera elif branch.",
@@ -863,9 +863,9 @@ impl SourceCapabilityReason {
             Self::TeraContinue => "Tera continue.",
             Self::TeraSuper => "Tera super() call.",
             Self::TeraVariable => "Tera variable.",
-            Self::TeraMacroCall => "Tera macro call.",
+            Self::TeraComponentCall => "Tera component call.",
             Self::TeraFunctionCall => "Tera or Zola function call.",
-            Self::ZolaShortcode => "Zola shortcode invocation.",
+            Self::LegacyTeraSyntax => "Syntax removed by Tera 2/Zola 0.23.",
             Self::NativeBlockMarker => "Marker supplied by a native Rust block provider.",
             Self::TeraComment => "Tera comment.",
             Self::TeraRaw => "Tera raw block.",
@@ -876,8 +876,8 @@ impl SourceCapabilityReason {
             Self::HtmlInTeraCondition => {
                 "The element is rendered conditionally by Tera; direct visual editing is unsafe."
             }
-            Self::HtmlInTeraMacro => {
-                "The element is defined in a Tera macro; changing it may affect multiple uses."
+            Self::HtmlInTeraComponent => {
+                "The element is defined in a Tera component; changing it may affect multiple uses."
             }
             Self::HtmlInTeraLocalScope => {
                 "The element is in a local Tera scope and must be edited in code."
@@ -886,7 +886,6 @@ impl SourceCapabilityReason {
                 "The element is in a Tera raw block; visual editing is disabled."
             }
             Self::MarkdownPage => "Zola Markdown page.",
-            Self::MarkdownShortcode => "Zola shortcode invocation in Markdown content.",
             Self::MarkdownRenderedBoundary => {
                 "Rendered Markdown is edited only through its Markdown source."
             }
@@ -979,7 +978,6 @@ pub enum SourceRelationKind {
     ImageResize,
     Extends,
     Includes,
-    Imports,
     DefinesBlock,
     OverridesBlock,
     UsesStyle,
@@ -1055,11 +1053,6 @@ mod tests {
                 SourceNodeKind::Include,
                 "include partials/missing.html",
                 Some("partials/missing.html"),
-            ),
-            (
-                SourceNodeKind::Import,
-                "import macros/cards.html",
-                Some("macros/cards.html"),
             ),
         ] {
             node.kind = kind;

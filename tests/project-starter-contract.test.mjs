@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
@@ -32,8 +32,38 @@ test("bundled starters are normalized local Zola projects without theme manageme
     assert.equal(existsSync(new URL("project/content/_index.md", base)), true, id);
     assert.equal(existsSync(new URL("project/templates/index.html", base)), true, id);
     const config = await readFile(new URL("project/zola.toml", base), "utf8");
+    const manifest = await readFile(new URL("starter.toml", base), "utf8");
     assert.doesNotMatch(config, /^theme\s*=/m, id);
+    assert.match(manifest, /^tested = "0\.23\.4"$/m, id);
     assert.equal(existsSync(new URL("project/themes", base)), false, id);
+  }
+});
+
+test("bundled Zola sources are native Tera 2 and Markdown templating is intentional", async () => {
+  const roots = [
+    ...["minimal", "pana-studio", "nord", "cadru", "radacini"].map(
+      (id) => new URL(`../src-tauri/resources/project-starters/${id}/project/`, import.meta.url),
+    ),
+    new URL("../tests/fixtures/projects/index-zero/sursa/", import.meta.url),
+  ];
+
+  for (const root of roots) {
+    const relativePaths = await readdir(root, { recursive: true });
+    assert.equal(relativePaths.some((path) => path.split("/").includes("shortcodes")), false);
+
+    for (const relativePath of relativePaths.filter((path) => /\.(?:html|md)$/.test(path))) {
+      const contents = await readFile(new URL(relativePath, root), "utf8");
+      assert.doesNotMatch(contents, /\{%\s*(?:macro|import)\b/, relativePath);
+      assert.doesNotMatch(contents, /\|\s*slice\s*\(/, relativePath);
+      assert.doesNotMatch(
+        contents,
+        /get_taxonomy_url\s*\([^)]*\bname\s*=/,
+        relativePath,
+      );
+      if (relativePath.endsWith(".md")) {
+        assert.doesNotMatch(contents, /\{\{|\{%/, relativePath);
+      }
+    }
   }
 });
 

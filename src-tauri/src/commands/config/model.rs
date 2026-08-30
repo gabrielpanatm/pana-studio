@@ -182,6 +182,8 @@ pub struct ZolaProjectSettings {
     pub generate_feeds: bool,
     pub feed_filenames: Vec<String>,
     pub feed_limit: Option<u32>,
+    pub skip_content_templating: Vec<String>,
+    pub highlight_data_attr_position: Option<HighlightDataAttrPosition>,
     pub render_emoji: bool,
     pub smart_punctuation: bool,
     pub insert_anchor_links: String,
@@ -199,6 +201,36 @@ pub struct ZolaProjectSettings {
     pub search_include_path: bool,
     pub search_include_content: bool,
     pub search_truncate_content_length: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HighlightDataAttrPosition {
+    Pre,
+    Code,
+    Both,
+    None,
+}
+
+impl HighlightDataAttrPosition {
+    pub(super) fn from_zola_str(value: &str) -> Option<Self> {
+        match value {
+            "pre" => Some(Self::Pre),
+            "code" => Some(Self::Code),
+            "both" => Some(Self::Both),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
+
+    pub(super) const fn as_zola_str(self) -> &'static str {
+        match self {
+            Self::Pre => "pre",
+            Self::Code => "code",
+            Self::Both => "both",
+            Self::None => "none",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]

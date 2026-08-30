@@ -1617,6 +1617,7 @@ mod tests {
                     operation: Some(ZolaImageOperation::FitWidth),
                     format: Some(ZolaImageFormat::Webp),
                     quality: Some(82),
+                    filter: None,
                 }),
                 native_block_option: None,
                 native_icon: None,

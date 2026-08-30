@@ -10,7 +10,7 @@ use super::model::{
 };
 use super::taxonomy_catalog::TaxonomyCatalogSnapshot;
 
-pub const TEMPLATE_CATALOG_SCHEMA_VERSION: u32 = 5;
+pub const TEMPLATE_CATALOG_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -19,8 +19,7 @@ pub enum TemplateCatalogRole {
     Layout,
     Partial,
     ListingItem,
-    MacroLibrary,
-    Shortcode,
+    ComponentLibrary,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -30,6 +29,7 @@ pub enum TemplateSemanticCategory {
     Page,
     Archive,
     Element,
+    Partial,
     ListingItem,
     Taxonomy,
     System,
@@ -61,6 +61,7 @@ pub enum TemplateSemanticRole {
     SpecificPage,
     SectionArchive,
     SectionElement,
+    Partial,
     ListingItem,
     TaxonomyList,
     TaxonomyTerm,
@@ -85,7 +86,6 @@ pub enum TemplateSemanticTargetKind {
 pub enum TemplateCatalogReferenceKind {
     Extends,
     Includes,
-    Imports,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -130,9 +130,8 @@ pub struct TemplateResource {
     pub local_override_path: String,
     pub extends: Option<String>,
     pub includes: Vec<String>,
-    pub imports: Vec<String>,
     pub blocks: Vec<String>,
-    pub macros: Vec<String>,
+    pub components: Vec<String>,
     pub used_by_templates: Vec<TemplateCatalogTemplateUsage>,
     pub affected_pages: Vec<TemplateCatalogPageUsage>,
     pub can_delete: bool,
@@ -252,9 +251,12 @@ pub fn build_template_catalog_with_taxonomies(
                 local_override_path: format!("templates/{}", template.name),
                 extends: template.extends.clone(),
                 includes: template.includes.clone(),
-                imports: template.imports.clone(),
                 blocks: template.blocks.clone(),
-                macros: template.macros.clone(),
+                components: template
+                    .component_definitions
+                    .iter()
+                    .map(|component| component.name.clone())
+                    .collect(),
                 used_by_templates,
                 affected_pages,
                 can_delete: false,
@@ -377,8 +379,7 @@ fn build_semantic_entries(
                     role,
                     TemplateCatalogRole::Partial
                         | TemplateCatalogRole::ListingItem
-                        | TemplateCatalogRole::MacroLibrary
-                        | TemplateCatalogRole::Shortcode
+                        | TemplateCatalogRole::ComponentLibrary
                 )
             })
     }) {
@@ -401,6 +402,40 @@ fn build_semantic_entries(
                 key: Some("extends".to_string()),
                 source: TemplateAssignmentSource::Convention,
                 declared_in: Some(resource.file.clone()),
+                resource_id: Some(resource.id.clone()),
+                resource_name: resource.name.clone(),
+                fallback_name: None,
+            },
+            preview_from_usage(
+                resource.affected_pages.first(),
+                TemplateCatalogContext::Page,
+            ),
+            resource.affected_pages.clone(),
+        ));
+    }
+
+    for resource in resources.iter().filter(|resource| {
+        resource.effective && resource.roles.contains(&TemplateCatalogRole::Partial)
+    }) {
+        represented_resources.insert(resource.id.clone());
+        entries.push(semantic_entry(
+            format!("semantic:partial:{}", resource.id),
+            TemplateSemanticCategory::Partial,
+            TemplateSemanticRole::Partial,
+            semantic_resource_label(&resource.name),
+            None,
+            TemplateSemanticTarget {
+                id: resource.id.clone(),
+                kind: TemplateSemanticTargetKind::Resource,
+                label: Some(resource.name.clone()),
+                label_diagnostic: None,
+                file: Some(resource.file.clone()),
+                url: None,
+            },
+            TemplateAssignment {
+                key: Some("include".to_string()),
+                source: TemplateAssignmentSource::Convention,
+                declared_in: None,
                 resource_id: Some(resource.id.clone()),
                 resource_name: resource.name.clone(),
                 fallback_name: None,
@@ -884,8 +919,7 @@ fn build_semantic_entries(
                     role,
                     TemplateCatalogRole::Partial
                         | TemplateCatalogRole::ListingItem
-                        | TemplateCatalogRole::MacroLibrary
-                        | TemplateCatalogRole::Shortcode
+                        | TemplateCatalogRole::ComponentLibrary
                 )
             })
     }) {
@@ -1033,9 +1067,10 @@ fn semantic_category_rank(category: TemplateSemanticCategory) -> u8 {
         TemplateSemanticCategory::Page => 1,
         TemplateSemanticCategory::Archive => 2,
         TemplateSemanticCategory::Element => 3,
-        TemplateSemanticCategory::ListingItem => 4,
-        TemplateSemanticCategory::Taxonomy => 5,
-        TemplateSemanticCategory::System => 6,
+        TemplateSemanticCategory::Partial => 4,
+        TemplateSemanticCategory::ListingItem => 5,
+        TemplateSemanticCategory::Taxonomy => 6,
+        TemplateSemanticCategory::System => 7,
     }
 }
 
@@ -1318,10 +1353,9 @@ fn template_roles(
     directly_serves_page: bool,
 ) -> Vec<TemplateCatalogRole> {
     let mut roles = Vec::new();
-    let is_macro_library = template.name.starts_with("macros/") || !template.macros.is_empty();
+    let is_component_library = !template.component_definitions.is_empty();
     let is_partial = template.name.starts_with("partials/");
     let is_listing_item = template.name.starts_with("listing-items/");
-    let is_shortcode = template.name.starts_with("shortcodes/");
     let is_layout = !template.blocks.is_empty()
         && (used_by_templates
             .iter()
@@ -1340,13 +1374,10 @@ fn template_roles(
     } else if is_partial {
         roles.push(TemplateCatalogRole::Partial);
     }
-    if is_macro_library {
-        roles.push(TemplateCatalogRole::MacroLibrary);
+    if is_component_library {
+        roles.push(TemplateCatalogRole::ComponentLibrary);
     }
-    if is_shortcode {
-        roles.push(TemplateCatalogRole::Shortcode);
-    }
-    if roles.is_empty() && !is_partial && !is_listing_item && !is_macro_library && !is_shortcode {
+    if roles.is_empty() && !is_partial && !is_listing_item && !is_component_library {
         roles.push(TemplateCatalogRole::Page);
     }
     roles
@@ -1363,7 +1394,6 @@ fn reference_kind(kind: &SourceRelationKind) -> Option<TemplateCatalogReferenceK
     match kind {
         SourceRelationKind::Extends => Some(TemplateCatalogReferenceKind::Extends),
         SourceRelationKind::Includes => Some(TemplateCatalogReferenceKind::Includes),
-        SourceRelationKind::Imports => Some(TemplateCatalogReferenceKind::Imports),
         _ => None,
     }
 }
@@ -1379,6 +1409,7 @@ mod tests {
         TaxonomyCatalogCapabilities, TaxonomyCatalogEntry, TaxonomyCatalogSnapshot,
         TaxonomyCatalogTemplate, TaxonomyCatalogTerm, TAXONOMY_CATALOG_SCHEMA_VERSION,
     };
+    use crate::source_graph::tera_semantics::{TeraComponentDefinition, TeraSourceRange};
 
     fn template(
         id: &str,
@@ -1394,11 +1425,10 @@ mod tests {
             name: name.to_string(),
             origin,
             theme_name: None,
-            is_partial: name.starts_with("partials/") || name.starts_with("macros/"),
+            is_partial: name.starts_with("partials/") || name.starts_with("components/"),
             extends: extends.map(str::to_string),
             includes: Vec::new(),
             include_groups: Vec::new(),
-            imports: Vec::new(),
             get_pages: Vec::new(),
             get_sections: Vec::new(),
             internal_links: Vec::new(),
@@ -1411,7 +1441,26 @@ mod tests {
             image_metadata: Vec::new(),
             image_resizes: Vec::new(),
             blocks: blocks.iter().map(|value| (*value).to_string()).collect(),
-            macros: Vec::new(),
+            component_definitions: name
+                .strip_prefix("components/")
+                .map(|logical| TeraComponentDefinition {
+                    name: logical.trim_end_matches(".html").replace('/', "."),
+                    namespace: None,
+                    arguments: Vec::new(),
+                    rest_argument: None,
+                    range: TeraSourceRange {
+                        start: 0,
+                        end: 1,
+                        line: 1,
+                        column: 1,
+                        end_line: 1,
+                        end_column: 2,
+                    },
+                    body_range: None,
+                })
+                .into_iter()
+                .collect(),
+            component_calls: Vec::new(),
             semantics: None,
             markdown_projections: Vec::new(),
             node_id: id.to_string(),
@@ -1458,8 +1507,7 @@ mod tests {
             frontmatter_parse_error: None,
             frontmatter_nodes: Vec::new(),
             taxonomies: Default::default(),
-            shortcode_parse_error: None,
-            shortcodes: Vec::new(),
+            component_calls: Vec::new(),
         }
     }
 
@@ -1481,8 +1529,7 @@ mod tests {
             frontmatter_parse_error: None,
             frontmatter_nodes: Vec::new(),
             taxonomies: Default::default(),
-            shortcode_parse_error: None,
-            shortcodes: Vec::new(),
+            component_calls: Vec::new(),
         };
         let graph = SourceGraph {
             node_index: Default::default(),
@@ -1523,6 +1570,30 @@ mod tests {
                     None,
                     &[],
                 ),
+                template(
+                    "footer-theme",
+                    "themes/theme/templates/partials/footer.html",
+                    "partials/footer.html",
+                    SourceOrigin::Theme,
+                    None,
+                    &[],
+                ),
+                template(
+                    "banner-theme",
+                    "themes/theme/templates/partials/banner.html",
+                    "partials/banner.html",
+                    SourceOrigin::Theme,
+                    None,
+                    &[],
+                ),
+                template(
+                    "orphan",
+                    "templates/partials/orphan.html",
+                    "partials/orphan.html",
+                    SourceOrigin::Local,
+                    None,
+                    &[],
+                ),
             ],
             styles: Vec::new(),
             scripts: Vec::new(),
@@ -1539,6 +1610,7 @@ mod tests {
             relations: vec![
                 relation("index", "base-local", SourceRelationKind::Extends),
                 relation("index", "footer", SourceRelationKind::Includes),
+                relation("index", "banner-theme", SourceRelationKind::Includes),
                 relation("page-node", "index", SourceRelationKind::PageTemplate),
             ],
             asset_reference_coverage: Default::default(),
@@ -1572,6 +1644,42 @@ mod tests {
         assert_eq!(theme_base.local_override_path, "templates/base.html");
         assert_eq!(footer.roles, vec![TemplateCatalogRole::Partial]);
         assert_eq!(footer.affected_pages[0].file, "content/_index.md");
+
+        let partials = catalog
+            .semantic_entries
+            .iter()
+            .filter(|entry| entry.category == TemplateSemanticCategory::Partial)
+            .collect::<Vec<_>>();
+        assert_eq!(partials.len(), 3);
+        assert!(partials
+            .iter()
+            .all(|entry| entry.role == TemplateSemanticRole::Partial));
+        assert!(partials.iter().any(|entry| {
+            entry.assignment.resource_id.as_deref() == Some("footer")
+                && entry
+                    .preview_context
+                    .as_ref()
+                    .and_then(|preview| preview.page_file.as_deref())
+                    == Some("content/_index.md")
+        }));
+        assert!(partials.iter().any(|entry| {
+            entry.assignment.resource_id.as_deref() == Some("banner-theme")
+                && entry.assignment.resource_name == "partials/banner.html"
+        }));
+        let orphan = catalog
+            .resources
+            .iter()
+            .find(|entry| entry.id == "orphan")
+            .unwrap();
+        assert!(orphan.can_delete);
+        assert!(partials.iter().any(|entry| {
+            entry.assignment.resource_id.as_deref() == Some("orphan")
+                && entry.preview_context.is_none()
+        }));
+        assert!(!catalog
+            .semantic_entries
+            .iter()
+            .any(|entry| { entry.assignment.resource_id.as_deref() == Some("footer-theme") }));
     }
 
     #[test]
@@ -1652,9 +1760,17 @@ mod tests {
                     &["content"],
                 ),
                 template(
-                    "shortcode",
-                    "templates/shortcodes/galerie.html",
-                    "shortcodes/galerie.html",
+                    "component",
+                    "templates/components/galerie.html",
+                    "components/galerie.html",
+                    SourceOrigin::Local,
+                    None,
+                    &[],
+                ),
+                template(
+                    "listing-item",
+                    "templates/listing-items/card.html",
+                    "listing-items/card.html",
                     SourceOrigin::Local,
                     None,
                     &[],
@@ -1743,17 +1859,30 @@ mod tests {
             Some("content/blog/primul.md")
         );
 
-        let shortcode = catalog
+        let component = catalog
             .resources
             .iter()
-            .find(|entry| entry.name == "shortcodes/galerie.html")
+            .find(|entry| entry.name == "components/galerie.html")
             .unwrap();
-        assert_eq!(shortcode.roles, vec![TemplateCatalogRole::Shortcode]);
+        assert!(component
+            .roles
+            .contains(&TemplateCatalogRole::ComponentLibrary));
         assert!(!catalog.semantic_entries.iter().any(|entry| entry
             .assignment
             .resource_id
             .as_deref()
-            == Some(shortcode.id.as_str())));
+            == Some(component.id.as_str())));
+
+        let listing_item = catalog
+            .resources
+            .iter()
+            .find(|entry| entry.name == "listing-items/card.html")
+            .unwrap();
+        assert_eq!(listing_item.roles, vec![TemplateCatalogRole::ListingItem]);
+        assert!(!catalog.semantic_entries.iter().any(|entry| {
+            entry.category == TemplateSemanticCategory::Partial
+                && entry.assignment.resource_id.as_deref() == Some(listing_item.id.as_str())
+        }));
     }
 
     #[test]

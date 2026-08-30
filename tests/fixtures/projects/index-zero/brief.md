@@ -81,7 +81,7 @@ Vizitatorul consultă programul și deschide detaliile unui eveniment.
 
 ## Constrângeri
 
-- Zola embedded compatibil 0.22.1;
+- Zola embedded compatibil 0.23.4;
 - fără Node.js/npm în proiect;
 - generator și instrumente Rust-first;
 - fără resurse, fonturi sau scripturi externe;

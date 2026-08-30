@@ -149,21 +149,6 @@ fn wraps_page_markdown_with_typed_projection_markers() {
 }
 
 #[test]
-fn keeps_shortcode_output_inside_one_atomic_markdown_boundary() {
-    let source = "<figure>{{ body | markdown | safe }}</figure>";
-    let path = "templates/shortcodes/figure.html";
-    let index = SourceIdIndex::for_template_source(path, source);
-
-    let result = preprocess_template(source, path, Some(&index));
-
-    assert!(result.starts_with("<!-- pana-markdown-start:mdp_"));
-    assert!(result.ends_with(" -->"));
-    assert_eq!(result.matches("pana-markdown-start").count(), 1);
-    assert_eq!(result.matches("pana-markdown-end").count(), 1);
-    assert!(!result.contains("pana-template-expression-start"));
-}
-
-#[test]
 fn wraps_toc_loop_as_one_markdown_boundary_owned_by_the_page() {
     let source = r#"{% for heading in page.toc %}<a href="{{ heading.permalink }}">{{ heading.title }}</a>{% endfor %}"#;
     let path = "templates/page.html";

@@ -139,8 +139,9 @@ export function teraSourceKindLabel(kind: SourceNodeKind) {
   if (kind === "extends") return t("source-provenance-kind-layout");
   if (kind === "block") return t("source-provenance-kind-block");
   if (kind === "include") return t("source-provenance-kind-include");
-  if (kind === "import") return t("source-provenance-kind-import");
-  if (kind === "macro") return t("source-provenance-kind-macro");
+  if (kind === "componentDefinition") return t("source-provenance-kind-component-definition");
+  if (kind === "componentCall") return t("source-provenance-kind-component-call");
+  if (kind === "legacyTera") return t("source-provenance-kind-legacy-tera");
   if (kind === "for") return t("source-provenance-kind-loop");
   if (kind === "if") return t("source-provenance-kind-condition");
   if (kind === "set") return t("source-provenance-kind-local");

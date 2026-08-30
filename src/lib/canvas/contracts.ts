@@ -343,6 +343,8 @@ export type ZolaImageOperation = "fit_width" | "fit" | "fill";
 
 export type ZolaImageFormat = "auto" | "webp" | "avif" | "jpg" | "png";
 
+export type ZolaImageFilter = "nearest" | "triangle" | "catmull_rom" | "gaussian" | "lanczos3";
+
 export type ZolaImagePresentation = {
   sourceUrl: string;
   sourcePath: string;
@@ -351,6 +353,7 @@ export type ZolaImagePresentation = {
   operation: ZolaImageOperation;
   format: ZolaImageFormat;
   quality: number;
+  filter: ZolaImageFilter | null;
 };
 
 export type EditableAttributes = Record<string, string>;

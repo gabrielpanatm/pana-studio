@@ -381,7 +381,6 @@ pub(super) fn relation_kind_label(kind: &SourceRelationKind) -> &'static str {
         SourceRelationKind::ImageResize => "image_resize",
         SourceRelationKind::Extends => "extends",
         SourceRelationKind::Includes => "includes",
-        SourceRelationKind::Imports => "imports",
         SourceRelationKind::DefinesBlock => "defines_block",
         SourceRelationKind::OverridesBlock => "overrides_block",
         SourceRelationKind::UsesStyle => "uses_style",
@@ -407,7 +406,6 @@ fn tera_node_kind_for_relation(kind: &SourceRelationKind) -> SourceNodeKind {
     match kind {
         SourceRelationKind::Extends => SourceNodeKind::Extends,
         SourceRelationKind::Includes => SourceNodeKind::Include,
-        SourceRelationKind::Imports => SourceNodeKind::Import,
         _ => SourceNodeKind::Tera,
     }
 }

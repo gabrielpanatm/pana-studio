@@ -144,6 +144,8 @@ function sameTemplateWorkbenchContext(
     && current.activeTemplate.file === next.activeTemplate.file
     && current.activeTemplate.sourceId === next.activeTemplate.sourceId
     && current.renderMode === next.renderMode
+    && normalizedTemplateContextPath(current.activeComponentName)
+      === normalizedTemplateContextPath(next.activeComponentName)
     && normalizedTemplateContextPath(current.selectedContext?.pageFile)
       === normalizedTemplateContextPath(next.selectedContext?.pageFile)
     && normalizedTemplateContextPath(current.selectedRoute?.url)
@@ -208,6 +210,8 @@ function compactTemplateWorkbenchReuseCandidate(
       === normalizedTemplateContextPath(request.preferredPagePath)
     && normalizedTemplateContextPath(plan.selectedRoute?.url)
       === normalizedTemplateContextPath(request.preferredRoute)
+    && normalizedTemplateContextPath(plan.activeComponentName)
+      === normalizedTemplateContextPath(request.preferredComponentName)
     && normalizedTemplateContextPath(host.templateWorkbenchPreferredPagePath)
       === normalizedTemplateContextPath(request.preferredPagePath)
     && normalizedTemplateContextPath(host.templateWorkbenchPreferredRoute)
@@ -294,6 +298,7 @@ export async function updateTemplateWorkbenchContext(
     expectedWorkspaceRevision?: number;
     minimumWorkspaceRevision?: number;
     preferredRoute?: string | null;
+    preferredComponentName?: string | null;
     strict?: boolean;
     bindToActiveDocument?: boolean;
   } = {},
@@ -346,6 +351,7 @@ export async function updateTemplateWorkbenchContext(
       templatePath: lease.templatePath,
       preferredPagePath,
       preferredRoute: options.preferredRoute ?? null,
+      preferredComponentName: options.preferredComponentName ?? null,
     };
 
     const reuseCandidate = compactTemplateWorkbenchReuseCandidate(host, request);
@@ -418,6 +424,8 @@ export async function updateTemplateWorkbenchContext(
       || !receipt.route?.startsWith("/__pana_workbench/")
       || !receipt.reuseToken?.trim()
       || receipt.plan.activeTemplate.file !== lease.templatePath
+      || normalizedTemplateContextPath(receipt.plan.activeComponentName)
+        !== normalizedTemplateContextPath(request.preferredComponentName)
       || !["reused", "materialized"].includes(receipt.publicationStatus)
       || !templateWorkbenchPerformanceIsValid(receipt.performance)
     ) {

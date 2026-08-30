@@ -6,6 +6,7 @@ import type {
 } from "$lib/blocks/contracts";
 import type {
   ZolaImageFormat,
+  ZolaImageFilter,
   ZolaImageOperation,
   ZolaImagePresentation,
 } from "$lib/canvas/contracts";
@@ -77,6 +78,7 @@ export type ProjectZolaImageIntent = {
   operation?: ZolaImageOperation | null;
   format?: ZolaImageFormat | null;
   quality?: number | null;
+  filter?: ZolaImageFilter | null;
 };
 
 type ProjectHtmlTextIntent = {

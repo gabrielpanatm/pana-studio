@@ -21,14 +21,13 @@ export type SourceNodeKind =
   | "configFile"
   | "html"
   | "blockMarker"
-  | "macroCall"
+  | "componentCall"
   | "functionCall"
-  | "shortcode"
   | "extends"
   | "block"
   | "include"
-  | "import"
-  | "macro"
+  | "componentDefinition"
+  | "legacyTera"
   | "for"
   | "if"
   | "elif"
@@ -60,7 +59,6 @@ export type SourceRelationKind =
   | "imageResize"
   | "extends"
   | "includes"
-  | "imports"
   | "definesBlock"
   | "overridesBlock"
   | "usesStyle"
@@ -76,8 +74,7 @@ export type SourceCapabilityReason =
   | "teraExtends"
   | "teraBlock"
   | "teraInclude"
-  | "teraImport"
-  | "teraMacro"
+  | "teraComponentDefinition"
   | "teraFor"
   | "teraIf"
   | "teraElif"
@@ -89,20 +86,19 @@ export type SourceCapabilityReason =
   | "teraContinue"
   | "teraSuper"
   | "teraVariable"
-  | "teraMacroCall"
+  | "teraComponentCall"
   | "teraFunctionCall"
-  | "zolaShortcode"
+  | "legacyTeraSyntax"
   | "nativeBlockMarker"
   | "teraComment"
   | "teraRaw"
   | "teraSyntax"
   | "htmlInTeraLoop"
   | "htmlInTeraCondition"
-  | "htmlInTeraMacro"
+  | "htmlInTeraComponent"
   | "htmlInTeraLocalScope"
   | "htmlInTeraRaw"
   | "markdownPage"
-  | "markdownShortcode"
   | "staticJavaScript"
   | "staticAsset"
   | "dataOutputReadOnly"
@@ -196,31 +192,7 @@ export type SourceGraphPage = {
   frontmatterParseError: string | null;
   frontmatterNodes: SourceDataNode[];
   taxonomies: Record<string, string[]>;
-  shortcodeParseError: string | null;
-  shortcodes: ZolaShortcodeInvocation[];
-};
-
-type ZolaShortcodeRange = {
-  start: number;
-  end: number;
-};
-
-type ZolaShortcodeValue =
-  | { kind: "string"; value: string }
-  | { kind: "integer"; value: number }
-  | { kind: "float"; value: number }
-  | { kind: "boolean"; value: boolean }
-  | { kind: "array"; value: ZolaShortcodeValue[] };
-
-type ZolaShortcodeInvocation = {
-  name: string;
-  arguments: Record<string, ZolaShortcodeValue>;
-  range: ZolaShortcodeRange;
-  callRange: ZolaShortcodeRange;
-  bodyRange: ZolaShortcodeRange | null;
-  nth: number;
-  inner: ZolaShortcodeInvocation[];
-  sourceNodeId: string | null;
+  componentCalls: TeraComponentCall[];
 };
 
 export type SourceGraphTemplate = {
@@ -236,7 +208,6 @@ export type SourceGraphTemplate = {
     targets: string[];
     ignoreMissing: boolean;
   }>;
-  imports: string[];
   getPages: string[];
   getSections: string[];
   internalLinks: string[];
@@ -249,13 +220,14 @@ export type SourceGraphTemplate = {
   imageMetadata: string[];
   imageResizes: string[];
   blocks: string[];
-  macros: string[];
+  componentDefinitions: TeraComponentDefinition[];
+  componentCalls: TeraComponentCall[];
   semantics: TeraSemanticDocument | null;
   markdownProjections: MarkdownProjection[];
   nodeId: string;
 };
 
-type MarkdownProjectionKind = "body" | "summary" | "filter" | "toc" | "shortcode";
+type MarkdownProjectionKind = "body" | "summary" | "filter" | "toc";
 
 type MarkdownSourceBindingKind =
   | "currentPage"
@@ -264,7 +236,6 @@ type MarkdownSourceBindingKind =
   | "staticSection"
   | "runtimePage"
   | "runtimeSection"
-  | "shortcodeInvocation"
   | "unresolved";
 
 export type MarkdownProjection = {
@@ -280,22 +251,60 @@ export type MarkdownProjection = {
 
 type TeraSemanticDocument = {
   nodes: TeraSemanticNode[];
+  componentDefinitions: TeraComponentDefinition[];
+  componentCalls: TeraComponentCall[];
+  legacySyntax: TeraLegacySyntax[];
+};
+
+type TeraComponentDefinition = {
+  name: string;
+  namespace: string | null;
+  arguments: TeraComponentParameter[];
+  restArgument: string | null;
+  range: SourceRange;
+  bodyRange: SourceRange | null;
+};
+
+type TeraComponentParameter = {
+  name: string;
+  argumentType: string | null;
+  required: boolean;
+  defaultValue: TeraSemanticExpression | null;
+  range: SourceRange;
+};
+
+type TeraComponentCall = {
+  name: string;
+  namespace: string | null;
+  arguments: TeraComponentArgument[];
+  range: SourceRange;
+  callRange: SourceRange;
+  bodyRange: SourceRange | null;
+  parentCall: number | null;
+};
+
+type TeraComponentArgument = {
+  name: string | null;
+  expression: TeraSemanticExpression;
+  spread: boolean;
+  range: SourceRange;
+};
+
+type TeraLegacySyntax = {
+  kind: "removedDefinition" | "removedImport";
+  range: SourceRange;
 };
 
 type TeraSemanticNode =
   | { kind: "super" }
   | { kind: "text"; value: string }
   | { kind: "variable"; expression: TeraSemanticExpression }
-  | {
-      kind: "macroDefinition";
-      name: string;
-      arguments: Record<string, TeraSemanticExpression | null>;
-      body: TeraSemanticNode[];
-    }
+  | { kind: "componentDefinition"; name: string; body: TeraSemanticNode[] }
+  | { kind: "componentCall"; name: string; body: TeraSemanticNode[] }
   | { kind: "extends"; template: string }
   | { kind: "include"; templates: string[]; ignoreMissing: boolean }
-  | { kind: "import"; template: string; namespace: string }
   | { kind: "set"; key: string; global: boolean; value: TeraSemanticExpression }
+  | { kind: "setBlock"; key: string; body: TeraSemanticNode[] }
   | { kind: "raw"; value: string }
   | { kind: "filterSection"; filter: TeraSemanticCall; body: TeraSemanticNode[] }
   | { kind: "block"; name: string; body: TeraSemanticNode[] }
@@ -359,9 +368,39 @@ type TeraSemanticValue =
         arguments: TeraSemanticExpression[];
       };
     }
-  | { kind: "macroCall"; value: TeraSemanticCall }
   | { kind: "functionCall"; value: TeraSemanticCall }
   | { kind: "array"; value: TeraSemanticExpression[] }
+  | { kind: "map"; value: Record<string, TeraSemanticExpression> }
+  | { kind: "spread"; value: TeraSemanticExpression }
+  | {
+      kind: "slice";
+      value: {
+        value: TeraSemanticExpression;
+        start: TeraSemanticExpression | null;
+        end: TeraSemanticExpression | null;
+      };
+    }
+  | {
+      kind: "optionalChain";
+      value: { value: TeraSemanticExpression; member: string };
+    }
+  | {
+      kind: "ternary";
+      value: {
+        condition: TeraSemanticExpression;
+        truthy: TeraSemanticExpression;
+        falsy: TeraSemanticExpression;
+      };
+    }
+  | {
+      kind: "comprehension";
+      value: {
+        value: TeraSemanticExpression;
+        binding: string;
+        iterable: TeraSemanticExpression;
+        condition: TeraSemanticExpression | null;
+      };
+    }
   | { kind: "stringConcat"; value: TeraSemanticValue[] }
   | {
       kind: "in";
@@ -370,7 +409,8 @@ type TeraSemanticValue =
         needle: TeraSemanticExpression;
         haystack: TeraSemanticExpression;
       };
-    };
+    }
+  | { kind: "raw"; value: string };
 
 export type SourceGraphAsset = {
   id: string;
@@ -477,12 +517,10 @@ export type SourceGraphStyle = {
   nodeId: string;
 };
 
-export type ComponentDefinitionKind =
+type ComponentDefinitionKind =
   | "templateFile"
   | "partial"
-  | "macroLibrary"
-  | "macro"
-  | "shortcode"
+  | "teraComponent"
   | "templateBlock"
   | "inlineRepeat"
   | "inlineConditional"
@@ -490,8 +528,7 @@ export type ComponentDefinitionKind =
 
 type ComponentInvocationKind =
   | "include"
-  | "macroCall"
-  | "shortcode"
+  | "teraComponent"
   | "repeat"
   | "conditional"
   | "transform";
@@ -518,13 +555,18 @@ type ComponentDependencyKind =
 
 type ComponentParameter = {
   name: string;
+  argumentType: string | null;
   required: boolean;
+  rest: boolean;
   defaultValue: TeraSemanticExpression | null;
+  range: SourceRange | null;
 };
 
 type ComponentArgument = {
-  name: string;
+  name: string | null;
   expression: TeraSemanticExpression;
+  spread: boolean;
+  range: SourceRange | null;
 };
 
 type ComponentDataBinding = {
@@ -573,6 +615,9 @@ export type ComponentDefinition = {
   sourceNodeId: string | null;
   ownerDefinitionId: string | null;
   symbol: string | null;
+  range: SourceRange | null;
+  bodyRange: SourceRange | null;
+  restParameter: string | null;
   parameters: ComponentParameter[];
   contextDependencies: string[];
   dataBindings: ComponentDataBinding[];
@@ -595,6 +640,9 @@ type ComponentInvocation = {
   targetReference: string;
   resolvedDefinitionIds: string[];
   fallbackReferences: string[];
+  range: SourceRange | null;
+  callRange: SourceRange | null;
+  bodyRange: SourceRange | null;
   arguments: ComponentArgument[];
   contextDependencies: string[];
   dataBindings: ComponentDataBinding[];

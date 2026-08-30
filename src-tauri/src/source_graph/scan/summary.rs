@@ -2,7 +2,9 @@ use crate::source_graph::model::{
     MarkdownProjection, SourceCapabilities, SourceDataFormat, SourceDataLocation, SourceDataNode,
     SourceGraphInclude, SourceNodeKind, SourceOrigin,
 };
-use crate::source_graph::tera_semantics::TeraSemanticDocument;
+use crate::source_graph::tera_semantics::{
+    TeraComponentCall, TeraComponentDefinition, TeraSemanticDocument,
+};
 
 #[derive(Clone)]
 pub(super) struct TemplateSummary {
@@ -16,7 +18,6 @@ pub(super) struct TemplateSummary {
     pub(super) extends: Option<String>,
     pub(super) includes: Vec<String>,
     pub(super) include_groups: Vec<SourceGraphInclude>,
-    pub(super) imports: Vec<String>,
     pub(super) get_pages: Vec<String>,
     pub(super) get_sections: Vec<String>,
     pub(super) internal_links: Vec<String>,
@@ -29,7 +30,8 @@ pub(super) struct TemplateSummary {
     pub(super) image_metadata: Vec<String>,
     pub(super) image_resizes: Vec<String>,
     pub(super) blocks: Vec<(String, String)>,
-    pub(super) macros: Vec<String>,
+    pub(super) component_definitions: Vec<TeraComponentDefinition>,
+    pub(super) component_calls: Vec<TeraComponentCall>,
     pub(super) semantics: Option<TeraSemanticDocument>,
     pub(super) markdown_projections: Vec<MarkdownProjection>,
 }

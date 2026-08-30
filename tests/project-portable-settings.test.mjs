@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
+import {
+  createDefaultZolaSettings,
+  textFieldsFromZolaSettings,
+  zolaSettingsWithTextFields,
+} from "$lib/project/deploy-settings";
 
 function source(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
@@ -78,13 +83,26 @@ test("configurația de publicare este salvată printr-o singură mutație worksp
   assert.match(deployIo, /validateDeployConfigurationSnapshot/);
 });
 
+test("globurile skip_content_templating au round-trip frontend câte unul pe linie", () => {
+  const settings = {
+    ...createDefaultZolaSettings(),
+    skipContentTemplating: ["documentatie/**", "literal/*.md"],
+  };
+  const fields = textFieldsFromZolaSettings(settings);
+  assert.equal(fields.skipContentTemplatingText, "documentatie/**\nliteral/*.md");
+  assert.deepEqual(zolaSettingsWithTextFields(settings, {
+    ...fields,
+    skipContentTemplatingText: " documentatie/** \n\n literal/*.md \n",
+  }).skipContentTemplating, ["documentatie/**", "literal/*.md"]);
+});
+
 test("Application Home rămâne global/tehnic și căile project-config legacy sunt eliminate", () => {
   const appHome = source("../src-tauri/src/app_home.rs");
   const appConfig = source("../src-tauri/src/commands/config/app_config.rs");
   const startup = source("../src-tauri/src/project/startup.rs");
 
   assert.doesNotMatch(appHome, /projects_dir|deploy-secrets|project_app_config/);
-  assert.match(appHome, /APP_HOME_SCHEMA_VERSION: u32 = 2/);
+  assert.match(appHome, /APP_HOME_SCHEMA_VERSION: u32 = 3/);
   assert.match(appConfig, /app_config_path/);
   assert.doesNotMatch(appConfig, /project_root|cachebust|deploy/);
   assert.match(startup, /\.panastudio\/settings\.toml/);

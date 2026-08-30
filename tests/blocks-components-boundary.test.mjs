@@ -21,7 +21,8 @@ test("ComponentGraph rămâne exclusiv semantic Zola/Tera", () => {
     + source("../src/lib/blocks/contracts.ts");
 
   assert.match(model, /pub struct ComponentGraph/);
-  assert.match(graph, /ComponentDefinitionKind::Shortcode/);
+  assert.match(graph, /ComponentDefinitionKind::TeraComponent/);
+  assert.doesNotMatch(graph, /ComponentDefinitionKind::(?:Macro|Shortcode)/);
   assert.match(graph, /ComponentDefinitionKind::InlineRepeat/);
   assert.doesNotMatch(model, /Blueprint|RuntimeProvider/);
   assert.doesNotMatch(productionGraph, /Blueprint|RuntimeProvider|data-pana-block/);

@@ -17,4 +17,4 @@ capabilities = [
 
 [zola]
 minimum = "0.22.0"
-tested = "0.22.1"
+tested = "0.23.4"

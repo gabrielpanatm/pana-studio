@@ -36,8 +36,7 @@ pub enum EditorNavigationBoundaryKind {
 #[serde(rename_all = "camelCase")]
 pub enum EditorNavigationComponentKind {
     Partial,
-    Macro,
-    Shortcode,
+    TeraComponent,
     Repeat,
     Conditional,
     Transform,
@@ -58,7 +57,6 @@ pub enum EditorNavigationViewNodeKind {
 pub enum EditorNavigationRelationKind {
     Extends,
     Include,
-    Import,
     BlockOverride,
 }
 
@@ -183,11 +181,8 @@ fn editor_component_kind(
         Some(ComponentInvocationKind::Include) => {
             return Some(EditorNavigationComponentKind::Partial)
         }
-        Some(ComponentInvocationKind::MacroCall) => {
-            return Some(EditorNavigationComponentKind::Macro)
-        }
-        Some(ComponentInvocationKind::Shortcode) => {
-            return Some(EditorNavigationComponentKind::Shortcode)
+        Some(ComponentInvocationKind::TeraComponent) => {
+            return Some(EditorNavigationComponentKind::TeraComponent)
         }
         Some(ComponentInvocationKind::Repeat) => {
             return Some(EditorNavigationComponentKind::Repeat)
@@ -207,8 +202,9 @@ fn editor_component_kind(
         .map(|definition| &definition.kind);
     match definition_kind {
         Some(ComponentDefinitionKind::Partial) => Some(EditorNavigationComponentKind::Partial),
-        Some(ComponentDefinitionKind::Macro) => Some(EditorNavigationComponentKind::Macro),
-        Some(ComponentDefinitionKind::Shortcode) => Some(EditorNavigationComponentKind::Shortcode),
+        Some(ComponentDefinitionKind::TeraComponent) => {
+            Some(EditorNavigationComponentKind::TeraComponent)
+        }
         Some(ComponentDefinitionKind::InlineRepeat) => Some(EditorNavigationComponentKind::Repeat),
         Some(ComponentDefinitionKind::InlineConditional) => {
             Some(EditorNavigationComponentKind::Conditional)
@@ -218,10 +214,9 @@ fn editor_component_kind(
         }
         _ => match source.kind {
             SourceNodeKind::Include => Some(EditorNavigationComponentKind::Partial),
-            SourceNodeKind::Macro | SourceNodeKind::MacroCall => {
-                Some(EditorNavigationComponentKind::Macro)
+            SourceNodeKind::ComponentDefinition | SourceNodeKind::ComponentCall => {
+                Some(EditorNavigationComponentKind::TeraComponent)
             }
-            SourceNodeKind::Shortcode => Some(EditorNavigationComponentKind::Shortcode),
             SourceNodeKind::For => Some(EditorNavigationComponentKind::Repeat),
             SourceNodeKind::If => Some(EditorNavigationComponentKind::Conditional),
             SourceNodeKind::Filter => Some(EditorNavigationComponentKind::Transform),

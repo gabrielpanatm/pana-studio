@@ -384,7 +384,7 @@
   function semanticBoundaryIcon(node: EditorNavigationViewNode) {
     switch (node.sourceKind) {
       case "include": return IconFileImport;
-      case "macro": return IconFunction;
+      case "componentDefinition": return IconFunction;
       case "for": return IconRepeat;
       case "if": return IconGitBranch;
       case "filter": return IconFilter;

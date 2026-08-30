@@ -5,6 +5,45 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-30
+
+### Added
+
+- componente Tera 2 native cu namespace-uri, parametri tipizați, valori
+  implicite, argumente rest, body, apeluri imbricate, utilizări și diagnostice;
+- categorie semantică „Parțiale” în activitatea Șabloane, cu resurse locale și
+  de temă, consumatori, pagini afectate și preview într-un context real;
+- fixture și rapoarte reproductibile pentru upgrade-ul Zola, paritatea dintre
+  Preview și build, performanță și validarea tuturor starterelor incluse;
+- setări și contracte editoriale pentru noile capabilități Zola 0.23, inclusiv
+  templating în conținut, feed-uri, taxonomii și image processing actualizat.
+
+### Changed
+
+- motorul embedded a fost actualizat la Zola 0.23.4, fixat la revizia
+  `28daab8d47cacb1e6c863b97739148f424433f5b`, cu o singură Tera 2.2.0;
+- Source Graph, Preview, Workbench, inserarea Tera și starterele folosesc
+  componente Tera 2 în locul macro-urilor și shortcode-urilor Tera 1;
+- activitatea Componente operează asupra simbolurilor Tera 2 și a contractelor
+  lor semantice, iar `templates/components/` rămâne separat de Parțiale;
+- build-ul și preview-ul folosesc API-urile publice Zola 0.23, păstrând
+  publicarea atomică, anularea controlată și reconcilierea incrementală.
+
+### Removed
+
+- parserul, gramatica, modelele și fluxurile de migrare legacy pentru
+  shortcode-uri și macro-uri Tera 1;
+- căile runtime paralele și fallback-urile către Zola 0.22.1.
+
+### Fixed
+
+- rezolvarea rutelor, cache-urilor și contextelor Preview după migrarea la
+  Zola 0.23.4, inclusiv pagini draft, paginare și conținut multilingv;
+- invalidarea incrementală a consumatorilor componentelor și echivalența cu
+  reconstruirea completă a Source Graph;
+- protecțiile pentru redenumirea și ștergerea semantică a componentelor și
+  partialelor, fără rescrierea zonelor Tera fără legătură.
+
 ## [0.1.9] - 2026-08-24
 
 ### Added
@@ -452,7 +491,11 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 - documentația publică, politica de securitate și atribuirea componentelor terțe
   completate.
 
-[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.9...v0.2.0
+[0.1.9]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.8...v0.1.9
+[0.1.8]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.3...v0.1.4

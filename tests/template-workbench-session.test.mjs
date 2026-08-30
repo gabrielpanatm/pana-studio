@@ -54,17 +54,23 @@ function receipt(input, overrides = {}) {
   const previewRevision = `workbench-${input.expectedWorkspaceRevision}`;
   return {
     plan: {
-      schemaVersion: 3,
+      schemaVersion: 5,
+      projectModelRevision: `model-${input.expectedWorkspaceRevision}`,
       activeTemplate: {
         sourceId: "template-active",
         name: input.templatePath.replace(/^templates\//, ""),
         file: input.templatePath,
         origin: "local",
         themeName: null,
+        isPartial: false,
+        definesComponents: Boolean(input.preferredComponentName),
       },
+      activeComponentName: input.preferredComponentName ?? null,
+      directParent: null,
       selectedContext: null,
       selectedRoute: null,
       navigator: [],
+      consumers: [],
       renderMode: "orphan",
       renderContext: {
         kind: "controlledTemplateFixture",
@@ -257,12 +263,38 @@ test("Template Workbench binds activation to the exact ProjectWorkspace revision
     templatePath: template.relativePath,
     preferredPagePath: null,
     preferredRoute: null,
+    preferredComponentName: null,
   });
   assert.equal(host.templateWorkbenchActive, true);
   assert.equal(host.templateWorkbenchTarget, template.relativePath);
   assert.equal(host.templateWorkbenchReturnPreviewPath, "content/_index.md");
   assert.match(host.previewSrc, /__pana_workbench\/template-active/);
   assert.match(statuses.at(-1).text, /Active template context/);
+});
+
+test("Component Workspace requests the exact Tera 2 symbol for Preview", async () => {
+  let workbenchRequest = null;
+  mockIPC((command, payload) => {
+    if (command === "read_project_workspace_state") {
+      return {
+        projectRoot: "/project-a",
+        runtimeSessionId: "session-a:runtime-1",
+        revision: 7,
+      };
+    }
+    assert.equal(command, "project_template_workbench_preview");
+    workbenchRequest = payload.input;
+    return receipt(payload.input);
+  });
+  const { host, template } = workbenchHost();
+
+  await updateTemplateWorkbenchContext(host, host.scannedProject, template, null, {
+    preferredComponentName: "ui.secondary",
+    strict: true,
+  });
+
+  assert.equal(workbenchRequest.preferredComponentName, "ui.secondary");
+  assert.equal(host.templateWorkbenchPlan.activeComponentName, "ui.secondary");
 });
 
 test("a superseded Template Workbench revision never requests a generation that is not materialized", async () => {
@@ -369,6 +401,7 @@ test("an exact Rust cache hit reuses the mounted canonical Workbench surface wit
       ...input,
       preferredPagePath: null,
       preferredRoute: null,
+      preferredComponentName: null,
       reuseToken: cached.reuseToken,
       expectedPreviewRevision: cached.previewRevision,
       expectedCanvasTransactionId: cached.canvasProjection.identity.transactionId,

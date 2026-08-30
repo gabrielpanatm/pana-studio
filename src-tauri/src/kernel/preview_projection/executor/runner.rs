@@ -1009,8 +1009,8 @@ pub(super) fn inserted_tera_source_nodes<'a>(
     after_model: &'a ProjectModel,
     patch: &ProjectTeraInsertPatch,
 ) -> Result<Vec<&'a crate::source_graph::model::SourceNode>, String> {
-    let inserted_kind = (!matches!(patch.inserted_kind.as_str(), "macroCall" | "dynamicWidget"))
-        .then_some(patch.inserted_kind.as_str());
+    let inserted_kind =
+        (patch.inserted_kind != "dynamicWidget").then_some(patch.inserted_kind.as_str());
     let target = node_by_id(
         after_model,
         &patch.resolved_target_id,
@@ -1370,8 +1370,8 @@ fn structural_kind_label(kind: &crate::source_graph::model::SourceNodeKind) -> &
         SourceNodeKind::Extends => "extends",
         SourceNodeKind::Block => "block",
         SourceNodeKind::Include => "include",
-        SourceNodeKind::Import => "import",
-        SourceNodeKind::Macro => "macro",
+        SourceNodeKind::ComponentDefinition => "componentDefinition",
+        SourceNodeKind::ComponentCall => "componentCall",
         SourceNodeKind::For => "for",
         SourceNodeKind::If => "if",
         SourceNodeKind::Elif => "elif",
@@ -1983,7 +1983,7 @@ mod tests {
     }
 
     #[test]
-    fn tera_macro_call_insert_projects_and_retains_both_new_roots() {
+    fn tera_component_call_insert_projects_and_retains_the_new_root() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1992,8 +1992,8 @@ mod tests {
         let mut fixture =
             ProjectModelTestFixture::standard_zola(root.clone(), "<main></main>\n").unwrap();
         fixture.source(
-            "templates/macros.html",
-            "{% macro card() %}<article></article>{% endmacro %}\n",
+            "templates/components.html",
+            "{% component card() %}<article></article>{% endcomponent card %}\n",
         );
         let before = fixture.build_model().unwrap();
         let target = before
@@ -2010,9 +2010,9 @@ mod tests {
                 target_tag: Some("main".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
-                    kind: "macroCall".to_string(),
+                    kind: "componentCall".to_string(),
                     label: Some("Card".to_string()),
-                    target: Some("macros.html".to_string()),
+                    target: None,
                     name: Some("card".to_string()),
                     expression: None,
                     dynamic_widget: None,
@@ -2021,11 +2021,11 @@ mod tests {
             Some("templates/index.html"),
         )
         .patch
-        .expect("macro call insert patch");
+        .expect("component call insert patch");
         let after = build_reconciled_after(&mut fixture, &before, &patch);
         validate_tera_insert_after_model(&before, &after, &patch).unwrap();
         let inserted = inserted_tera_source_nodes(&before, &after, &patch).unwrap();
-        assert_eq!(inserted.len(), 2);
+        assert_eq!(inserted.len(), 1);
         let inserted_ids = inserted
             .iter()
             .map(|node| node.id.clone())
@@ -2035,7 +2035,7 @@ mod tests {
             &inserted_ids,
         )
         .unwrap();
-        assert_eq!(forest.root_count, 2);
+        assert_eq!(forest.root_count, 1);
         fs::remove_dir_all(root).unwrap();
     }
 

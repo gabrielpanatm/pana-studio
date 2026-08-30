@@ -3,9 +3,12 @@ use std::path::PathBuf;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::kernel::write_authority::{ApplicationAuthorityPaths, WriteAuthorityRuntime};
+use crate::{
+    kernel::write_authority::{ApplicationAuthorityPaths, WriteAuthorityRuntime},
+    zola_engine::EMBEDDED_ZOLA_VERSION,
+};
 
-const APP_HOME_SCHEMA_VERSION: u32 = 2;
+const APP_HOME_SCHEMA_VERSION: u32 = 3;
 
 #[cfg(test)]
 pub(crate) static TEST_APP_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -15,6 +18,7 @@ pub(crate) static TEST_APP_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::ne
 pub struct AppHomeSnapshot {
     pub schema_version: u32,
     pub identifier: String,
+    pub embedded_zola_version: String,
     pub config_dir: String,
     pub data_dir: String,
     pub cache_dir: String,
@@ -87,6 +91,7 @@ pub fn app_home_snapshot<R: Runtime>(app: &AppHandle<R>) -> Result<AppHomeSnapsh
     Ok(AppHomeSnapshot {
         schema_version: APP_HOME_SCHEMA_VERSION,
         identifier,
+        embedded_zola_version: EMBEDDED_ZOLA_VERSION.to_string(),
         mcp_dir: path_to_string(config_dir.join("mcp")),
         sessions_dir: path_to_string(data_dir.join("sessions")),
         kernel_dir: path_to_string(data_dir.join("kernel")),
@@ -128,6 +133,7 @@ fn snapshot_from_authority_paths(
     AppHomeSnapshot {
         schema_version: APP_HOME_SCHEMA_VERSION,
         identifier,
+        embedded_zola_version: EMBEDDED_ZOLA_VERSION.to_string(),
         config_dir: path_to_string(paths.config_dir),
         data_dir: path_to_string(paths.data_dir),
         cache_dir: path_to_string(paths.cache_dir),

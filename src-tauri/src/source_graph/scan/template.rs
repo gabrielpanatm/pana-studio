@@ -18,7 +18,7 @@ use crate::{
             summary::{TemplateSummary, TeraScopeSummary},
         },
         tera::{tera_items_from_document, TeraItemKind},
-        zola::extract_zola_template_references,
+        zola::{collect_zola_runtime_deprecations, extract_zola_template_references},
     },
 };
 
@@ -58,9 +58,8 @@ pub(super) fn scan_template(
     let file = relative_project_path(project_root, path);
     let name = template_name(zola_root, path, theme_name.as_deref());
     let is_partial = name.starts_with("partials/")
-        || name.starts_with("listing-items/")
-        || name.starts_with("macros/")
-        || name.starts_with("shortcodes/");
+        || name.starts_with("components/")
+        || name.starts_with("listing-items/");
     let file_node_kind = if is_partial {
         SourceNodeKind::Partial
     } else {
@@ -84,6 +83,15 @@ pub(super) fn scan_template(
     // SourceGraph gives HTML and Tera insertions one Rust-owned anchor even
     // when the file is completely empty and has no child nodes yet.
     builder.update_node_range(&node_id, ranges.range(0, source.len()));
+    if name.starts_with("shortcodes/") {
+        builder.add_diagnostic(
+            SourceDiagnosticSeverity::Error,
+            LocalizedDiagnostic::new("source-graph-legacy-shortcode-template-incompatible")
+                .with_argument("template", name.clone()),
+            Some(file.clone()),
+            Some(ranges.range(0, source.len())),
+        );
+    }
     let mixed_document = parse_mixed_cst(&source, &name);
     debug_assert!(mixed_document.is_lossless());
     let tera_document = &mixed_document.tera;
@@ -100,13 +108,32 @@ pub(super) fn scan_template(
             None,
         );
     }
+    if let Some(semantics) = tera_document.semantics() {
+        for deprecation in collect_zola_runtime_deprecations(semantics) {
+            builder.add_diagnostic(
+                SourceDiagnosticSeverity::Warning,
+                LocalizedDiagnostic::new("source-graph-zola-runtime-argument-deprecated")
+                    .with_argument("function", deprecation.function)
+                    .with_argument("argument", deprecation.argument)
+                    .with_argument("replacement", deprecation.replacement),
+                Some(file.clone()),
+                None,
+            );
+        }
+        for legacy in &semantics.legacy_syntax {
+            builder.add_diagnostic(
+                SourceDiagnosticSeverity::Error,
+                LocalizedDiagnostic::new("source-graph-legacy-tera-incompatible"),
+                Some(file.clone()),
+                Some(ranges.range(legacy.range.start, legacy.range.end)),
+            );
+        }
+    }
     let mut scope_stack = vec![node_id.clone()];
     let mut extends = None;
     let mut includes = Vec::new();
     let mut include_groups = Vec::new();
-    let mut imports = Vec::new();
     let mut blocks = Vec::new();
-    let mut macros = Vec::new();
     let mut open_scopes: Vec<TeraScopeSummary> = Vec::new();
     let mut completed_scopes: Vec<TeraScopeSummary> = Vec::new();
     let mut set_preludes: Vec<SetPrelude> = Vec::new();
@@ -194,7 +221,6 @@ pub(super) fn scan_template(
                             ignore_missing: item.ignore_missing,
                         });
                     }
-                    SourceNodeKind::Import => push_unique(&mut imports, item.target.clone()),
                     SourceNodeKind::Block => {
                         if blocks.iter().any(|(block, _)| block == &item.label) {
                             builder.add_diagnostic(
@@ -213,7 +239,6 @@ pub(super) fn scan_template(
                             item.label.clone(),
                         );
                     }
-                    SourceNodeKind::Macro => push_unique(&mut macros, Some(item.label.clone())),
                     _ => {}
                 }
 
@@ -262,18 +287,6 @@ pub(super) fn scan_template(
 
     if let Some(semantics) = tera_document.semantics() {
         let facts = semantics.template_facts();
-        let cst_block_names = blocks
-            .iter()
-            .map(|(block, _)| block.clone())
-            .collect::<Vec<_>>();
-        if !is_partial && cst_block_names != facts.blocks {
-            builder.add_diagnostic(
-                SourceDiagnosticSeverity::Error,
-                LocalizedDiagnostic::new("source-graph-tera-cst-ast-mismatch"),
-                Some(file.clone()),
-                None,
-            );
-        }
         extends = facts.extends;
         includes = facts.includes;
         include_groups = facts
@@ -284,8 +297,6 @@ pub(super) fn scan_template(
                 ignore_missing: include.ignore_missing,
             })
             .collect();
-        imports = facts.imports;
-        macros = facts.macros;
     }
 
     let projected_html_bodies = add_mixed_html_nodes(
@@ -342,7 +353,6 @@ pub(super) fn scan_template(
         extends,
         includes,
         include_groups,
-        imports,
         get_pages: zola_references.get_pages,
         get_sections: zola_references.get_sections,
         internal_links: zola_references.internal_links,
@@ -355,7 +365,14 @@ pub(super) fn scan_template(
         image_metadata: zola_references.image_metadata,
         image_resizes: zola_references.image_resizes,
         blocks,
-        macros,
+        component_definitions: tera_document
+            .semantics()
+            .map(|semantics| semantics.component_definitions.clone())
+            .unwrap_or_default(),
+        component_calls: tera_document
+            .semantics()
+            .map(|semantics| semantics.component_calls.clone())
+            .unwrap_or_default(),
         semantics: tera_document.semantics().cloned(),
         markdown_projections,
     }
@@ -595,8 +612,8 @@ fn html_capabilities(parent_scope: Option<&TeraScopeSummary>) -> SourceCapabilit
         SourceNodeKind::If => {
             SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraCondition)
         }
-        SourceNodeKind::Macro => {
-            SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraMacro)
+        SourceNodeKind::ComponentDefinition => {
+            SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraComponent)
         }
         SourceNodeKind::Set | SourceNodeKind::SetGlobal | SourceNodeKind::Filter => {
             SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraLocalScope)
@@ -621,8 +638,7 @@ fn tera_reason(kind: &SourceNodeKind) -> SourceCapabilityReason {
         SourceNodeKind::Extends => SourceCapabilityReason::TeraExtends,
         SourceNodeKind::Block => SourceCapabilityReason::TeraBlock,
         SourceNodeKind::Include => SourceCapabilityReason::TeraInclude,
-        SourceNodeKind::Import => SourceCapabilityReason::TeraImport,
-        SourceNodeKind::Macro => SourceCapabilityReason::TeraMacro,
+        SourceNodeKind::ComponentDefinition => SourceCapabilityReason::TeraComponentDefinition,
         SourceNodeKind::For => SourceCapabilityReason::TeraFor,
         SourceNodeKind::If => SourceCapabilityReason::TeraIf,
         SourceNodeKind::Elif => SourceCapabilityReason::TeraElif,
@@ -634,9 +650,9 @@ fn tera_reason(kind: &SourceNodeKind) -> SourceCapabilityReason {
         SourceNodeKind::Continue => SourceCapabilityReason::TeraContinue,
         SourceNodeKind::Super => SourceCapabilityReason::TeraSuper,
         SourceNodeKind::TeraVariable => SourceCapabilityReason::TeraVariable,
-        SourceNodeKind::MacroCall => SourceCapabilityReason::TeraMacroCall,
+        SourceNodeKind::ComponentCall => SourceCapabilityReason::TeraComponentCall,
         SourceNodeKind::FunctionCall => SourceCapabilityReason::TeraFunctionCall,
-        SourceNodeKind::Shortcode => SourceCapabilityReason::ZolaShortcode,
+        SourceNodeKind::LegacyTera => SourceCapabilityReason::LegacyTeraSyntax,
         SourceNodeKind::BlockMarker => SourceCapabilityReason::NativeBlockMarker,
         SourceNodeKind::TeraComment => SourceCapabilityReason::TeraComment,
         SourceNodeKind::Raw => SourceCapabilityReason::TeraRaw,

@@ -585,7 +585,8 @@ fn editable_boundary_kind(kind: &SourceNodeKind) -> bool {
         kind,
         SourceNodeKind::Block
             | SourceNodeKind::Include
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Filter
@@ -597,7 +598,8 @@ fn movable_boundary_kind(kind: &SourceNodeKind) -> bool {
         kind,
         SourceNodeKind::Block
             | SourceNodeKind::Include
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Filter
@@ -608,7 +610,8 @@ pub(super) fn boundary_effect_scope(kind: Option<&SourceNodeKind>) -> EditorNavi
     match kind {
         Some(
             SourceNodeKind::Include
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If,
         ) => EditorNavigationEffectScope::AllRenderedInstances,

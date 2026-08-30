@@ -38,6 +38,8 @@ pub struct ProjectZolaImageIntent {
     pub format: Option<ZolaImageFormat>,
     #[serde(default)]
     pub quality: Option<u8>,
+    #[serde(default)]
+    pub filter: Option<ZolaImageFilter>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -72,6 +74,28 @@ pub enum ZolaImageFormat {
     Png,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ZolaImageFilter {
+    Nearest,
+    Triangle,
+    CatmullRom,
+    Gaussian,
+    Lanczos3,
+}
+
+impl ZolaImageFilter {
+    fn as_zola_str(self) -> &'static str {
+        match self {
+            Self::Nearest => "nearest",
+            Self::Triangle => "triangle",
+            Self::CatmullRom => "catmull_rom",
+            Self::Gaussian => "gaussian",
+            Self::Lanczos3 => "lanczos3",
+        }
+    }
+}
+
 impl ZolaImageFormat {
     fn as_zola_str(self) -> &'static str {
         match self {
@@ -98,6 +122,7 @@ pub struct ZolaImagePresentation {
     pub operation: ZolaImageOperation,
     pub format: ZolaImageFormat,
     pub quality: u8,
+    pub filter: Option<ZolaImageFilter>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -330,6 +355,7 @@ fn normalized_presentation(
         operation,
         format,
         quality,
+        filter: intent.filter,
     })
 }
 
@@ -508,6 +534,9 @@ fn render_prelude(metadata: &ZolaImageContractMetadata) -> Result<String, String
     if p.format.uses_quality() {
         arguments.push(format!("quality={}", p.quality));
     }
+    if let Some(filter) = p.filter {
+        arguments.push(format!("filter=\"{}\"", filter.as_zola_str()));
+    }
     Ok(format!(
         "{MARKER_PREFIX}{payload}{MARKER_SUFFIX}{{% set {} = resize_image({}) %}}",
         metadata.variable,
@@ -647,7 +676,8 @@ mod tests {
         );
         assert!(annotated.contains("data-pana-zola-image=\""));
 
-        let updated_intent = enabled_intent(640, ZolaImageOperation::Fill, Some(360));
+        let mut updated_intent = enabled_intent(640, ZolaImageOperation::Fill, Some(360));
+        updated_intent.filter = Some(ZolaImageFilter::Gaussian);
         let updated = apply_zola_image_contract(
             &model,
             "templates/index.html",
@@ -659,6 +689,11 @@ mod tests {
         assert!(updated
             .contents
             .contains("width=640, height=360, op=\"fill\""));
+        assert!(updated.contents.contains("filter=\"gaussian\""));
+        assert_eq!(
+            updated.presentation.as_ref().and_then(|value| value.filter),
+            Some(ZolaImageFilter::Gaussian)
+        );
 
         let updated_opening = updated.contents.find("<img").unwrap();
         let disabled = apply_zola_image_contract(
@@ -675,6 +710,7 @@ mod tests {
                 operation: None,
                 format: None,
                 quality: None,
+                filter: None,
             },
         )
         .unwrap();
@@ -865,6 +901,7 @@ mod tests {
             operation: Some(operation),
             format: Some(ZolaImageFormat::Webp),
             quality: Some(82),
+            filter: None,
         }
     }
 

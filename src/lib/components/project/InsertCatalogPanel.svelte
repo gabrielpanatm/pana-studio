@@ -324,7 +324,7 @@
     if (code === "insert_catalog_document_not_insertable") return "Documentul activ nu acceptă inserare vizuală.";
     if (code === "insert_catalog_block_not_insertable") return "Blocul nu permite inserare.";
     if (code === "insert_catalog_component_inactive") return "Componenta nu este activă sau este umbrită.";
-    if (code === "insert_catalog_macro_requires_arguments") return "Macrocomanda cere argumente explicite.";
+    if (code === "insert_catalog_component_requires_arguments") return "Componenta cere argumente explicite.";
     if (code === "insert_catalog_listing_nested_loop") return "Listing-ul nu poate fi inserat în interiorul altei bucle.";
     return code ? `Inserare blocată: ${code}` : "Inserare indisponibilă.";
   }

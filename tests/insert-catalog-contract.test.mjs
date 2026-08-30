@@ -246,14 +246,14 @@ test("payloadul HTML component legacy este refuzat, nu convertit sau reinterpret
   assert.equal(statusKind, "error");
 });
 
-test("bridge-ul Tera păstrează macroCall și DynamicWidget tipizat", () => {
+test("bridge-ul Tera păstrează componentCall și DynamicWidget tipizat", () => {
   const normalize = teraBridgeNormalizer();
-  const macro = normalize({
+  const component = normalize({
     id: "component:card",
-    kind: "macroCall",
+    kind: "componentCall",
     family: "reuse",
     label: "Card",
-    target: "macros/card.html",
+    target: "card",
     name: "card",
   });
   const widgetProperties = {
@@ -280,7 +280,7 @@ test("bridge-ul Tera păstrează macroCall și DynamicWidget tipizat", () => {
     dynamicWidget: widgetProperties,
   });
 
-  assert.equal(macro.kind, "macroCall");
+  assert.equal(component.kind, "componentCall");
   assert.equal(widget.kind, "dynamicWidget");
   assert.deepEqual(widget.dynamicWidget, widgetProperties);
 });
@@ -358,7 +358,7 @@ test("catalogul proiectează blocuri, componente Tera și DynamicWidget din graf
   assert.match(kernel, /definition\.active && definition\.shadowed_by\.is_none\(\)/);
   assert.match(kernel, /InsertCatalogPayload::Component/);
   assert.match(kernel, /tera_kind:\s*"include"/);
-  assert.match(kernel, /tera_kind:\s*"macroCall"/);
+  assert.match(kernel, /tera_kind:\s*"componentCall"/);
   assert.match(kernel, /dynamic_widget_group/);
   assert.match(kernel, /InsertCatalogPayload::DynamicWidget/);
   assert.match(adapter, /sourceNodeId:\s*payload\.kind === "component" \? payload\.componentId/);
@@ -367,16 +367,16 @@ test("catalogul proiectează blocuri, componente Tera și DynamicWidget din graf
   }
 });
 
-test("macrocomenzile fără argumente obligatorii au reprezentare validată de motorul Tera", () => {
+test("componentele fără argumente obligatorii au reprezentare validată de motorul Tera", () => {
   const catalog = source("../src-tauri/src/kernel/insert_catalog.rs");
   const engine = source("../src-tauri/src/project_model/tera_insert_engine.rs");
   const model = source("../src/lib/tera/model.ts");
 
   assert.match(catalog, /parameters[\s\S]*\.all\(\|parameter\| !parameter\.required\)/);
-  assert.match(catalog, /tera_kind:\s*"macroCall"/);
-  assert.match(engine, /"macroCall"\s*=>/);
-  assert.match(engine, /pana_component::\{name\}\(\)/);
-  assert.match(model, /\| "macroCall"/);
+  assert.match(catalog, /tera_kind:\s*"componentCall"/);
+  assert.match(engine, /"componentCall"\s*=>/);
+  assert.match(engine, /format!\("\{\{\{\{<\{name\} \/>\}\}\}\}"\)/);
+  assert.match(model, /\| "componentCall"/);
 });
 
 test("revizia workspace și contextul Canvas sunt trimise reactiv panoului", () => {

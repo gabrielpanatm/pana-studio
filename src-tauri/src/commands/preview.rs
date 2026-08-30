@@ -317,6 +317,8 @@ pub struct TemplateWorkbenchPreviewRequest {
     pub preferred_page_path: Option<String>,
     #[serde(default)]
     pub preferred_route: Option<String>,
+    #[serde(default)]
+    pub preferred_component_name: Option<String>,
 }
 
 impl TemplateWorkbenchPreviewRequest {
@@ -353,6 +355,8 @@ pub struct TemplateWorkbenchReuseRequest {
     pub preferred_page_path: Option<String>,
     #[serde(default)]
     pub preferred_route: Option<String>,
+    #[serde(default)]
+    pub preferred_component_name: Option<String>,
     pub reuse_token: String,
     pub expected_preview_revision: String,
     pub expected_canvas_transaction_id: String,
@@ -821,6 +825,7 @@ pub async fn project_template_workbench_preview(
                     template_path: task_input.template_path,
                     preferred_page_path: task_input.preferred_page_path,
                     preferred_route: task_input.preferred_route,
+                    preferred_component_name: task_input.preferred_component_name,
                 },
             )?;
             let plan_us = elapsed_us(plan_started);
@@ -949,6 +954,7 @@ pub async fn confirm_template_workbench_reuse(
                     template_path: &task_input.template_path,
                     preferred_page_path: task_input.preferred_page_path.as_deref(),
                     preferred_route: task_input.preferred_route.as_deref(),
+                    preferred_component_name: task_input.preferred_component_name.as_deref(),
                     reuse_token: &task_input.reuse_token,
                     expected_preview_revision: &task_input.expected_preview_revision,
                     expected_canvas_transaction_id: &task_input.expected_canvas_transaction_id,

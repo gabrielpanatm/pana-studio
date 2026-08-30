@@ -997,9 +997,9 @@ pub(crate) fn initial_text_for_path(relative_path: &str) -> String {
         let stem = if stem.is_empty() { "partial" } else { stem };
         return format!("<section class=\"{stem}\">\n  <h2>{stem}</h2>\n</section>\n");
     }
-    if relative_path.starts_with("templates/macros/") && name.ends_with(".html") {
-        let stem = if stem.is_empty() { "partial" } else { stem };
-        return format!("{{% macro {stem}() %}}\n{{% endmacro %}}\n");
+    if relative_path.starts_with("templates/components/") && name.ends_with(".html") {
+        let stem = if stem.is_empty() { "componenta" } else { stem };
+        return format!("{{% component {stem}() %}}\n{{% endcomponent {stem} %}}\n");
     }
     if relative_path.starts_with("templates/") && name.ends_with(".html") {
         return "{% extends \"base.html\" %}\n\n{% block content %}\n{% endblock %}\n".to_string();

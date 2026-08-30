@@ -358,12 +358,6 @@ fn validate_tera_insert(
                 .to_string(),
         );
     }
-    if matches!(kind, "import" | "macroCall") && intent.position == ProjectMovePosition::Inside {
-        return Err(
-            "Importurile și apelurile macro Tera se inserează la nivel de template, înainte sau după o ancoră stabilă."
-                .to_string(),
-        );
-    }
     if kind == "extends" && template.is_some_and(|template| template.extends.is_some()) {
         return Err("Template-ul are deja extends.".to_string());
     }
@@ -389,14 +383,46 @@ fn validate_tera_insert(
             return Err(format!("Block-ul {name} există deja în template."));
         }
     }
-    if kind == "macro" {
-        let name = sanitize_identifier(
+    if kind == "componentDefinition" {
+        let name = sanitize_component_name(
             intent.item.name.as_deref().unwrap_or("componenta"),
             "componenta",
-            "nume macro",
+            "nume componentă",
         )?;
-        if template.is_some_and(|template| template.macros.contains(&name)) {
-            return Err(format!("Macro-ul {name} există deja în template."));
+        if model
+            .source_graph
+            .component_graph
+            .definitions
+            .iter()
+            .any(|definition| {
+                definition.kind
+                    == crate::source_graph::model::ComponentDefinitionKind::TeraComponent
+                    && definition.active
+                    && definition.name == name
+            })
+        {
+            return Err(format!("Componenta {name} există deja în proiect."));
+        }
+    }
+    if kind == "componentCall" {
+        let name = sanitize_component_name(
+            intent.item.name.as_deref().unwrap_or("componenta"),
+            "componenta",
+            "nume componentă apelată",
+        )?;
+        if !model
+            .source_graph
+            .component_graph
+            .definitions
+            .iter()
+            .any(|definition| {
+                definition.kind
+                    == crate::source_graph::model::ComponentDefinitionKind::TeraComponent
+                    && definition.active
+                    && definition.name == name
+            })
+        {
+            return Err(format!("Componenta {name} nu există în proiect."));
         }
     }
     let context_kind = target_context_kind(model, anchor, intent.position);
@@ -406,22 +432,19 @@ fn validate_tera_insert(
     if kind == "block" && !matches!(context_kind, Some(SourceNodeKind::Template)) {
         return Err("Block-urile Tera rămân la nivel de template în DnD sigur.".to_string());
     }
-    if matches!(kind, "macro" | "import" | "macroCall")
+    if kind == "componentDefinition"
         && !matches!(
             context_kind,
             Some(SourceNodeKind::Template) | Some(SourceNodeKind::Partial)
         )
     {
         return Err(
-            "Macro-urile, importurile și apelurile macro Tera rămân la nivel de template în DnD sigur."
-                .to_string(),
+            "Definițiile de componente Tera rămân la nivel de template în DnD sigur.".to_string(),
         );
     }
-    if matches!(kind, "extends" | "include" | "import" | "macroCall") {
+    if matches!(kind, "extends" | "include") {
         let fallback = if kind == "include" {
             "partials/cta.html"
-        } else if matches!(kind, "import" | "macroCall") {
-            "macros.html"
         } else {
             "base.html"
         };
@@ -436,11 +459,6 @@ fn validate_tera_insert(
             && template.is_some_and(|template| template_has_reference(&template.includes, &target))
         {
             return Err(format!("Include-ul {target} există deja în template."));
-        }
-        if kind == "import"
-            && template.is_some_and(|template| template_has_reference(&template.imports, &target))
-        {
-            return Err(format!("Importul {target} există deja în template."));
         }
     }
     if intent.position == ProjectMovePosition::Inside && !can_receive_tera_inside(anchor, intent) {
@@ -752,35 +770,21 @@ fn build_tera_insert_snippet(
             )?;
             format!("{{% include \"{target}\" %}}")
         }
-        "import" => {
-            let target =
-                normalize_template_reference(item.target.as_deref().unwrap_or("macros.html"))?;
-            let name = sanitize_identifier(
-                item.name.as_deref().unwrap_or("macros"),
-                "macros",
-                "alias import",
-            )?;
-            format!("{{% import \"{target}\" as {name} %}}")
-        }
-        "macro" => {
-            let name = sanitize_identifier(
+        "componentDefinition" => {
+            let name = sanitize_component_name(
                 item.name.as_deref().unwrap_or("componenta"),
                 "componenta",
-                "nume macro",
+                "nume componentă",
             )?;
-            format!("{{% macro {name}() %}}\n{{% endmacro %}}")
+            format!("{{% component {name}() %}}\n{{% endcomponent {name} %}}")
         }
-        "macroCall" => {
-            let target =
-                normalize_template_reference(item.target.as_deref().unwrap_or("macros.html"))?;
-            let name = sanitize_identifier(
+        "componentCall" => {
+            let name = sanitize_component_name(
                 item.name.as_deref().unwrap_or("componenta"),
                 "componenta",
-                "nume macro apelat",
+                "nume componentă apelată",
             )?;
-            format!(
-                "{{% import \"{target}\" as pana_component %}}\n{{{{ pana_component::{name}() }}}}"
-            )
+            format!("{{{{<{name} />}}}}")
         }
         "for" => {
             let expression = sanitize_tera_expression(
@@ -836,11 +840,9 @@ fn build_tera_insert_snippet(
         }
     };
 
-    if matches!(kind, "extends" | "include" | "import" | "macroCall") {
+    if matches!(kind, "extends" | "include") {
         let target = if kind == "include" {
             item.target.as_deref().unwrap_or("partials/cta.html")
-        } else if matches!(kind, "import" | "macroCall") {
-            item.target.as_deref().unwrap_or("macros.html")
         } else {
             item.target.as_deref().unwrap_or("base.html")
         };
@@ -868,7 +870,7 @@ fn can_receive_tera_inside(anchor: &SourceNode, intent: &ProjectTeraInsertIntent
         SourceNodeKind::Template
             | SourceNodeKind::Partial
             | SourceNodeKind::Block
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Filter
@@ -967,6 +969,23 @@ fn sanitize_identifier(value: &str, fallback: &str, label: &str) -> Result<Strin
     Ok(value.to_string())
 }
 
+fn sanitize_component_name(value: &str, fallback: &str, label: &str) -> Result<String, String> {
+    let value = if value.trim().is_empty() {
+        fallback
+    } else {
+        value.trim()
+    };
+    if value
+        .split('.')
+        .any(|segment| sanitize_identifier(segment, "", label).is_err())
+    {
+        return Err(format!(
+            "Tera Insert Engine a primit {label} invalid: {value}."
+        ));
+    }
+    Ok(value.to_string())
+}
+
 fn sanitize_tera_expression(value: &str, fallback: &str) -> Result<String, String> {
     let expression = if value.trim().is_empty() {
         fallback
@@ -1009,8 +1028,8 @@ fn is_tera_insert_anchor_kind(kind: &SourceNodeKind) -> bool {
             | SourceNodeKind::Extends
             | SourceNodeKind::Block
             | SourceNodeKind::Include
-            | SourceNodeKind::Import
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set
@@ -1041,8 +1060,9 @@ fn source_kind_label(kind: &SourceNodeKind) -> &'static str {
         SourceNodeKind::Extends => "extends",
         SourceNodeKind::Block => "block",
         SourceNodeKind::Include => "include",
-        SourceNodeKind::Import => "import",
-        SourceNodeKind::Macro => "macro",
+        SourceNodeKind::ComponentDefinition => "componentDefinition",
+        SourceNodeKind::ComponentCall => "componentCall",
+        SourceNodeKind::LegacyTera => "legacyTera",
         SourceNodeKind::For => "for",
         SourceNodeKind::If => "if",
         SourceNodeKind::Elif => "elif",
@@ -1066,9 +1086,8 @@ fn tera_item_kind(value: &str) -> &str {
         "extends" => "extends",
         "block" => "block",
         "include" => "include",
-        "import" => "import",
-        "macro" => "macro",
-        "macroCall" => "macroCall",
+        "componentDefinition" => "componentDefinition",
+        "componentCall" => "componentCall",
         "for" => "for",
         "if" => "if",
         "set" => "set",
@@ -1091,9 +1110,8 @@ fn is_known_tera_item_kind(kind: &str) -> bool {
         "extends"
             | "block"
             | "include"
-            | "import"
-            | "macro"
-            | "macroCall"
+            | "componentDefinition"
+            | "componentCall"
             | "for"
             | "if"
             | "set"
@@ -1624,48 +1642,6 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_insert_blocks_duplicate_import_with_tera_equivalent_syntax() {
-        let root = unique_test_dir();
-        let fixture = project_fixture(
-            root.clone(),
-            "{%- import 'macros.html' as macros -%}\n{% block content %}<main></main>{% endblock %}\n",
-        );
-        let model = fixture.build_model().unwrap();
-        let content_block = model
-            .source_graph
-            .nodes
-            .iter()
-            .find(|node| node.kind == SourceNodeKind::Block && node.label == "content")
-            .unwrap();
-
-        let plan = plan_tera_insert_for_active_document(
-            &model,
-            &ProjectTeraInsertIntent {
-                target_source_id: Some(content_block.id.clone()),
-                target_kind: Some("block".to_string()),
-                target_tag: None,
-                position: ProjectMovePosition::Before,
-                item: ProjectTeraInsertItem {
-                    kind: "import".to_string(),
-                    label: Some("Import macros".to_string()),
-                    target: Some("macros.html".to_string()),
-                    name: Some("macros".to_string()),
-                    expression: None,
-                    dynamic_widget: None,
-                },
-            },
-            Some("templates/index.html"),
-        );
-
-        fs::remove_dir_all(&root).unwrap();
-        assert!(!plan.allowed);
-        assert!(plan
-            .diagnostic
-            .unwrap()
-            .contains("Importul macros.html există deja"));
-    }
-
-    #[test]
     fn plan_tera_insert_blocks_block_in_nested_scope() {
         let root = unique_test_dir();
         let fixture = project_fixture(
@@ -1705,7 +1681,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_insert_blocks_macro_in_nested_scope() {
+    fn plan_tera_insert_blocks_component_definition_in_nested_scope() {
         let root = unique_test_dir();
         let fixture = project_fixture(
             root.clone(),
@@ -1727,10 +1703,10 @@ mod tests {
                 target_tag: Some("main".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
-                    kind: "macro".to_string(),
-                    label: Some("Macro card".to_string()),
+                    kind: "componentDefinition".to_string(),
+                    label: Some("Component sidebar".to_string()),
                     target: None,
-                    name: Some("card".to_string()),
+                    name: Some("sidebar".to_string()),
                     expression: None,
                     dynamic_widget: None,
                 },
@@ -1791,7 +1767,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_insert_adds_safe_macro_call_at_template_level() {
+    fn plan_tera_insert_adds_component_call_at_template_level() {
         let root = unique_test_dir();
         let fixture = project_fixture(root.clone(), "<main></main>\n");
         let model = fixture.build_model().unwrap();
@@ -1809,9 +1785,9 @@ mod tests {
                 target_tag: Some("main".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
-                    kind: "macroCall".to_string(),
+                    kind: "componentCall".to_string(),
                     label: Some("Card".to_string()),
-                    target: Some("macros.html".to_string()),
+                    target: None,
                     name: Some("card".to_string()),
                     expression: None,
                     dynamic_widget: None,
@@ -1822,18 +1798,16 @@ mod tests {
 
         fs::remove_dir_all(&root).unwrap();
         assert!(plan.allowed, "{:?}", plan.diagnostic);
-        let contents = plan.patch.expect("macro call patch").contents;
-        assert!(contents.contains("{% import \"macros.html\" as pana_component %}"));
-        assert!(contents.contains("{{ pana_component::card() }}"));
+        let contents = plan.patch.expect("component call patch").contents;
+        assert!(contents.contains("{{<card />}}"));
         assert!(
-            contents.find("{{ pana_component::card() }}").unwrap()
-                < contents.find("<main>").unwrap(),
-            "Apelul macro trebuie să rămână la nivel de template înaintea ancorei: {contents}"
+            contents.find("{{<card />}}").unwrap() < contents.find("<main>").unwrap(),
+            "Apelul componentei trebuie inserat înaintea ancorei: {contents}"
         );
     }
 
     #[test]
-    fn plan_tera_insert_blocks_macro_call_inside_html() {
+    fn plan_tera_insert_allows_component_call_inside_html() {
         let root = unique_test_dir();
         let fixture = project_fixture(
             root.clone(),
@@ -1854,9 +1828,9 @@ mod tests {
                 target_tag: Some("main".to_string()),
                 position: ProjectMovePosition::Inside,
                 item: ProjectTeraInsertItem {
-                    kind: "macroCall".to_string(),
+                    kind: "componentCall".to_string(),
                     label: Some("Card".to_string()),
-                    target: Some("macros.html".to_string()),
+                    target: None,
                     name: Some("card".to_string()),
                     expression: None,
                     dynamic_widget: None,
@@ -1865,11 +1839,12 @@ mod tests {
             Some("templates/index.html"),
         );
         fs::remove_dir_all(root).unwrap();
-        assert!(!plan.allowed);
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
         assert!(plan
-            .diagnostic
-            .as_deref()
-            .is_some_and(|diagnostic| diagnostic.contains("nivel de template")));
+            .patch
+            .expect("component call patch")
+            .contents
+            .contains("<main>\n  {{<card />}}\n</main>"));
     }
 
     fn project_fixture(root: PathBuf, template: &str) -> ProjectModelTestFixture {
@@ -1877,8 +1852,8 @@ mod tests {
         fixture.source("templates/partials/card.html", "<article></article>\n");
         fixture.source("templates/base.html", "<body></body>\n");
         fixture.source(
-            "templates/macros.html",
-            "{% macro card() %}{% endmacro %}\n",
+            "templates/components.html",
+            "{% component card() %}{% endcomponent card %}\n",
         );
         fixture
     }

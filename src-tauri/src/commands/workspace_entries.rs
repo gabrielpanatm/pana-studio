@@ -45,6 +45,8 @@ pub enum PageFrontmatterField {
     Weight,
     PaginateBy,
     Draft,
+    Hidden,
+    IncludeInFeeds,
     SeoTitle,
     SeoDescription,
     CanonicalUrl,
@@ -88,6 +90,8 @@ fn page_frontmatter_key(field: PageFrontmatterField) -> PageFrontmatterKey {
         PageFrontmatterField::Weight => PageFrontmatterKey::Root("weight"),
         PageFrontmatterField::PaginateBy => PageFrontmatterKey::Root("paginate_by"),
         PageFrontmatterField::Draft => PageFrontmatterKey::Root("draft"),
+        PageFrontmatterField::Hidden => PageFrontmatterKey::Root("hidden"),
+        PageFrontmatterField::IncludeInFeeds => PageFrontmatterKey::Root("include_in_feeds"),
         PageFrontmatterField::SeoTitle => PageFrontmatterKey::Extra("seo_title"),
         PageFrontmatterField::SeoDescription => PageFrontmatterKey::Extra("seo_description"),
         PageFrontmatterField::CanonicalUrl => PageFrontmatterKey::Extra("canonical_url"),
@@ -126,12 +130,25 @@ fn validated_page_frontmatter_item(
             "Numărul de articole pe pagină trebuie trimis către Rust ca număr întreg pozitiv."
                 .to_string(),
         ),
-        (PageFrontmatterField::Draft, PageFrontmatterScalar::Boolean(enabled)) => {
-            Ok(Some(value(enabled)))
-        }
+        (
+            PageFrontmatterField::Draft | PageFrontmatterField::Hidden,
+            PageFrontmatterScalar::Boolean(enabled),
+        ) => Ok(Some(value(enabled))),
+        (PageFrontmatterField::Hidden, PageFrontmatterScalar::Empty) => Ok(None),
         (PageFrontmatterField::Draft, _) => {
             Err("Starea draft trebuie trimisă către Rust ca valoare booleană.".to_string())
         }
+        (PageFrontmatterField::Hidden, _) => Err(
+            "Vizibilitatea trebuie trimisă către Rust ca boolean sau stare moștenită.".to_string(),
+        ),
+        (PageFrontmatterField::IncludeInFeeds, PageFrontmatterScalar::Boolean(false)) => {
+            Ok(Some(value(false)))
+        }
+        (PageFrontmatterField::IncludeInFeeds, PageFrontmatterScalar::Empty) => Ok(None),
+        (PageFrontmatterField::IncludeInFeeds, _) => Err(
+            "include_in_feeds folosește false explicit sau absența pentru default-ul true."
+                .to_string(),
+        ),
         (PageFrontmatterField::Title, PageFrontmatterScalar::String(text))
             if text.trim().is_empty() =>
         {
@@ -374,13 +391,17 @@ pub fn workspace_update_page_frontmatter_field(
             "Setările paginii pot modifica doar documente Markdown din `content/`.".to_string(),
         );
     }
+    let is_section = relative_path.ends_with("/_index.md");
     if input.field == PageFrontmatterField::PaginateBy
-        && (!relative_path.ends_with("/_index.md") || relative_path == "content/_index.md")
+        && (!is_section || relative_path == "content/_index.md")
     {
         return Err(
             "Paginarea poate fi configurată doar pentru o secțiune Zola, nu pentru o pagină."
                 .to_string(),
         );
+    }
+    if input.field == PageFrontmatterField::IncludeInFeeds && is_section {
+        return Err("include_in_feeds poate fi configurat numai pentru pagini Zola.".to_string());
     }
 
     let (_root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
@@ -540,5 +561,74 @@ custom_field = "păstrat"
 
         assert!(!document.as_table().contains_key("description"));
         assert_eq!(document["weight"].as_integer(), Some(3));
+    }
+
+    #[test]
+    fn hidden_round_trip_preserves_inherited_true_and_false_states() {
+        let source = "+++\ntitle = \"Pagină\"\ncustom = \"păstrat\"\n+++\n";
+        let hidden = rewrite_page_frontmatter_field(
+            source,
+            PageFrontmatterField::Hidden,
+            PageFrontmatterScalar::Boolean(true),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed_toml_frontmatter(&hidden)["hidden"].as_bool(),
+            Some(true)
+        );
+
+        let visible = rewrite_page_frontmatter_field(
+            &hidden,
+            PageFrontmatterField::Hidden,
+            PageFrontmatterScalar::Boolean(false),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed_toml_frontmatter(&visible)["hidden"].as_bool(),
+            Some(false)
+        );
+
+        let inherited = rewrite_page_frontmatter_field(
+            &visible,
+            PageFrontmatterField::Hidden,
+            PageFrontmatterScalar::Empty,
+        )
+        .unwrap();
+        let document = parsed_toml_frontmatter(&inherited);
+        assert!(!document.as_table().contains_key("hidden"));
+        assert_eq!(document["custom"].as_str(), Some("păstrat"));
+    }
+
+    #[test]
+    fn include_in_feeds_writes_only_the_non_default_false_value() {
+        let source = "+++\ntitle = \"Articol\"\ncustom = \"păstrat\"\n+++\n";
+        let excluded = rewrite_page_frontmatter_field(
+            source,
+            PageFrontmatterField::IncludeInFeeds,
+            PageFrontmatterScalar::Boolean(false),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed_toml_frontmatter(&excluded)["include_in_feeds"].as_bool(),
+            Some(false)
+        );
+
+        let defaulted = rewrite_page_frontmatter_field(
+            &excluded,
+            PageFrontmatterField::IncludeInFeeds,
+            PageFrontmatterScalar::Empty,
+        )
+        .unwrap();
+        let document = parsed_toml_frontmatter(&defaulted);
+        assert!(!document.as_table().contains_key("include_in_feeds"));
+        assert_eq!(document["custom"].as_str(), Some("păstrat"));
+
+        assert!(rewrite_page_frontmatter_field(
+            source,
+            PageFrontmatterField::IncludeInFeeds,
+            PageFrontmatterScalar::Boolean(true),
+        )
+        .unwrap_err()
+        .contains("default-ul true"));
     }
 }

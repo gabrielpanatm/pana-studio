@@ -11,6 +11,9 @@ Proiectele Zola care pot fi deschise în Pană Studio stau în `projects/`:
   Rust și sursa Zola folosită pentru materializarea profilelor benchmarkului;
 - `design-safe-zola/` — fixture vizual controlat pentru verificări de design;
 - `empty-active-zola/` — proiect minim pentru stările fără conținut activ.
+- `zola-upgrade-baseline/` — matricea compactă pentru comparația motorului
+  embedded înainte și după upgrade; acoperă pagini, secțiuni, taxonomii,
+  paginare, Sass, imagini procesate, search, feed, i18n și asset colocat.
 
 Catalogul conține fixture-urile persistente și reutilizabile. Proiectele create
 exclusiv pentru un singur test Rust sau pentru microbenchmarkul legacy de kernel

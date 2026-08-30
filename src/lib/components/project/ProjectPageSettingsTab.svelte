@@ -48,6 +48,11 @@
     "article",
     "profile",
   ];
+  $: hiddenOptions = [
+    { value: "inherit", label: t("content-settings-hidden-inherit") },
+    { value: "hidden", label: t("content-settings-hidden-hidden") },
+    { value: "visible", label: t("content-settings-hidden-visible") },
+  ];
 
   function setField(field: PageFrontmatterField, value: string | boolean) {
     if (!activePage) return;
@@ -126,6 +131,24 @@
           <input class="ui-input compact" value={values.slug} onchange={(event) => setField("slug", event.currentTarget.value)} />
         </label>{/if}
         <CheckboxControl compact label={t("content-settings-field-draft")} checked={values.draft} onchange={(checked) => setField("draft", checked)} />
+        <div class="ui-form-field">
+          <span class="ui-form-label">{t("content-settings-field-hidden")}</span>
+          <SelectControl
+            value={values.hidden}
+            options={hiddenOptions}
+            ariaLabel={t("content-settings-field-hidden")}
+            onchange={(value) => setField("hidden", value)}
+          />
+          <span class="ui-form-help">{t("content-settings-hidden-help")}</span>
+        </div>
+        {#if !isSection}
+          <CheckboxControl
+            compact
+            label={t("content-settings-field-include-in-feeds")}
+            checked={values.includeInFeeds}
+            onchange={(checked) => setField("includeInFeeds", checked)}
+          />
+        {/if}
       </section>{/if}
 
       {#if view === "seo"}<section class="metadata-group">

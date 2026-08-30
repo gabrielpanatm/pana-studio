@@ -37,9 +37,11 @@ test("Zola runtime has no executable, resolver, sidecar or exposed path", () => 
   assert.doesNotMatch(runtimeCorpus, /Command::new\([^)]*[Zz]ola/);
 });
 
-test("official embedded crates are pinned to the audited Zola 0.22.1 revision", () => {
+test("official embedded crates are pinned to the audited Zola 0.23.4 revision", () => {
   const cargo = source("src-tauri/Cargo.toml");
-  const revision = "29540e9897dbe8aca388b13f7bdf615985f6ca2c";
+  const readme = source("README.md");
+  const notices = source("THIRD_PARTY_NOTICES.md");
+  const revision = "28daab8d47cacb1e6c863b97739148f424433f5b";
   assert.match(
     cargo,
     new RegExp(`zola-site = \\{ package = "site", git = "https://github\\.com/getzola/zola\\.git", rev = "${revision}" \\}`),
@@ -48,6 +50,15 @@ test("official embedded crates are pinned to the audited Zola 0.22.1 revision", 
     cargo,
     new RegExp(`zola-utils = \\{ package = "utils", git = "https://github\\.com/getzola/zola\\.git", rev = "${revision}" \\}`),
   );
+  assert.match(
+    cargo,
+    new RegExp(`zola-config = \\{ package = "config", git = "https://github\\.com/getzola/zola\\.git", rev = "${revision}" \\}`),
+  );
+  assert.match(cargo, /tera = \{ version = "=2\.2\.0", features = \["preserve_order", "fast"\] \}/);
+  for (const documentation of [readme, notices]) {
+    assert.match(documentation, /0\.23\.4/);
+    assert.match(documentation, new RegExp(revision));
+  }
 });
 
 test("init, validation, build and quick tasks use only embedded engine contracts", () => {
@@ -79,7 +90,8 @@ test("init, validation, build and quick tasks use only embedded engine contracts
   assert.doesNotMatch(buildRuntime, /fs::rename|fs::remove_dir_all|renameat_with/);
   assert.match(writeCapability, /publish_rebuildable_directory/);
   assert.match(writeCapabilityLinux, /RenameFlags::EXCHANGE/);
-  assert.match(build, /process_images/);
+  assert.match(build, /site\.build\(\)/);
+  assert.doesNotMatch(buildRuntime, /render_sections|render_orphan_pages|render_taxonomies/);
   assert.match(preview, /with_zola_engine/);
   assert.doesNotMatch(preview, /std::process|Command::new/);
   assert.match(terminal, /kind: "embedded-check"/);

@@ -1843,7 +1843,6 @@ fn remap_source_graph_base_ids(
         remap_optional(&mut page.template_node_id, ids);
         remap_optional(&mut page.page_template_node_id, ids);
         remap_data_nodes(&mut page.frontmatter_nodes, ids);
-        remap_shortcodes(&mut page.shortcodes, ids);
     }
     for template in &mut graph.templates {
         remap_required(&mut template.id, ids);
@@ -1903,16 +1902,6 @@ fn remap_data_nodes(nodes: &mut [SourceDataNode], ids: &HashMap<String, String>)
     }
 }
 
-fn remap_shortcodes(
-    invocations: &mut [crate::source_graph::zola_shortcode::ZolaShortcodeInvocation],
-    ids: &HashMap<String, String>,
-) {
-    for invocation in invocations {
-        remap_optional(&mut invocation.source_node_id, ids);
-        remap_shortcodes(&mut invocation.inner, ids);
-    }
-}
-
 fn common_prefix_len(left: &[u8], right: &[u8]) -> usize {
     left.iter()
         .zip(right)
@@ -1959,7 +1948,6 @@ fn relation_kind_key(kind: &SourceRelationKind) -> &'static str {
         SourceRelationKind::ImageResize => "image_resize",
         SourceRelationKind::Extends => "extends",
         SourceRelationKind::Includes => "includes",
-        SourceRelationKind::Imports => "imports",
         SourceRelationKind::DefinesBlock => "defines_block",
         SourceRelationKind::OverridesBlock => "overrides_block",
         SourceRelationKind::UsesStyle => "uses_style",

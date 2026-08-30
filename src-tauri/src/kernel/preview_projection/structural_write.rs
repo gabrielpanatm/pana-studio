@@ -684,6 +684,7 @@ mod tests {
                 operation: Some(ZolaImageOperation::FitWidth),
                 format: Some(ZolaImageFormat::Webp),
                 quality: Some(82),
+                filter: None,
             },
         )
         .unwrap();

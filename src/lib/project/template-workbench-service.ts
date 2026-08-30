@@ -32,6 +32,7 @@ type TemplateWorkbenchUpdateOptions = {
   expectedWorkspaceRevision?: number;
   minimumWorkspaceRevision?: number;
   preferredRoute?: string | null;
+  preferredComponentName?: string | null;
   strict?: boolean;
   bindToActiveDocument?: boolean;
 };
@@ -120,6 +121,7 @@ export class TemplateWorkbenchService {
         revision,
         preferredPagePath,
         options.preferredRoute,
+        options.preferredComponentName,
       )) {
         return this.selectedPage(project);
       }
@@ -133,6 +135,7 @@ export class TemplateWorkbenchService {
             revision,
             preferredPagePath,
             options.preferredRoute,
+            options.preferredComponentName,
           )
         ) {
           return this.selectedPage(project);
@@ -152,6 +155,7 @@ export class TemplateWorkbenchService {
     revision: number,
     preferredPagePath: string | null,
     preferredRoute: string | null | undefined,
+    preferredComponentName: string | null | undefined,
   ) {
     const { preview } = this.dependencies;
     const identity = preview.activeIdentity;
@@ -162,6 +166,7 @@ export class TemplateWorkbenchService {
         revision,
         preferredPagePath,
         preferredRoute,
+        preferredComponentName,
       )
       || !preview.canReuseCanonicalWorkbenchSurface(identity, preview.src)
     ) return false;
@@ -198,6 +203,7 @@ export class TemplateWorkbenchService {
     revision: number,
     preferredPagePath: string | null,
     preferredRoute: string | null | undefined,
+    preferredComponentName: string | null | undefined,
   ) {
     const { project, documents, preview } = this.dependencies;
     const normalized = (value: string | null | undefined) => (
@@ -208,6 +214,7 @@ export class TemplateWorkbenchService {
       && documents.templatePlan?.activeTemplate.file === templateFile.relativePath
       && normalized(documents.templatePreferredPagePath) === normalized(preferredPagePath)
       && normalized(documents.templatePreferredRoute) === normalized(preferredRoute)
+      && normalized(documents.templatePlan?.activeComponentName) === normalized(preferredComponentName)
       && preview.activeIdentity?.projectRoot === project.root
       && preview.activeIdentity?.runtimeSessionId === project.runtimeSessionId
       && preview.activeIdentity?.workspaceRevision === revision;
@@ -257,6 +264,7 @@ export class TemplateWorkbenchService {
         expectedWorkspaceRevision: minimumWorkspaceRevision,
         minimumWorkspaceRevision,
         preferredRoute: documents.templatePreferredRoute,
+        preferredComponentName: documents.templatePlan?.activeComponentName ?? null,
         strict: true,
         bindToActiveDocument: false,
       },

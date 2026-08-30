@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
 use tauri_utils::html::{parse, serialize_node};
 use tera::Context;
-use zola_site::{sass, BuildMode, Site, SITE_CONTENT};
+use zola_site::{BuildMode, Site, SITE_CONTENT};
 
 use crate::{
     js::{
@@ -48,7 +48,7 @@ use crate::{
         model::ProjectModel,
         template_workbench::{TemplateWorkbenchPlan, TemplateWorkbenchRenderMode},
     },
-    zola_engine::{with_zola_engine, zola_config_file},
+    zola_engine::{with_zola_engine, zola_config_file, EMBEDDED_ZOLA_VERSION},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,6 +123,7 @@ pub(crate) struct TemplateWorkbenchReuseQuery<'a> {
     pub template_path: &'a str,
     pub preferred_page_path: Option<&'a str>,
     pub preferred_route: Option<&'a str>,
+    pub preferred_component_name: Option<&'a str>,
     pub reuse_token: &'a str,
     pub expected_preview_revision: &'a str,
     pub expected_canvas_transaction_id: &'a str,
@@ -271,6 +272,7 @@ impl PersistentZolaPreviewEngine {
                 && projection.template_path == query.template_path
                 && projection.selected_page_path.as_deref() == query.preferred_page_path
                 && projection.selected_route.as_deref() == query.preferred_route
+                && projection.selected_component_name.as_deref() == query.preferred_component_name
         }) else {
             return Ok(None);
         };
@@ -424,6 +426,7 @@ impl PersistentZolaPreviewEngine {
                         .selected_route
                         .as_ref()
                         .map(|context| context.url.clone()),
+                    selected_component_name: plan.active_component_name.clone(),
                     content: RenderedPreviewContent::Html(prepared),
                     graph,
                 },
@@ -709,8 +712,7 @@ impl PersistentZolaPreviewEngine {
         let mut generation_assets_root = artifact_root.to_path_buf();
         let mut inherited_assets = None;
         let zola_render_started = Instant::now();
-        let rendered = with_zola_engine("randare Preview persistentă", || {
-            match impact {
+        let rendered = with_zola_engine("randare Preview persistentă", || match impact {
             ProjectionRenderImpact::Full => build_new_official_zola_site(
                 &update.projection_root,
                 artifact_root,
@@ -722,43 +724,27 @@ impl PersistentZolaPreviewEngine {
                 self.site = Some(site);
                 rendered
             }),
-            ProjectionRenderImpact::Templates | ProjectionRenderImpact::TemplatesAndAssets => self
+            ProjectionRenderImpact::Reload => self
                 .site
                 .as_mut()
                 .ok_or_else(|| "Motorul Zola persistent nu are site activ.".to_string())
                 .and_then(|site| {
-                    if impact == ProjectionRenderImpact::Templates {
-                        let previous = previous_generation.clone().ok_or_else(|| {
-                            "Motorul Preview nu are generația de artifacte pentru reload-ul template-urilor."
-                                .to_string()
-                        })?;
-                        remove_persistent_preview_artifact_root(
-                            app,
-                            &self.session_root,
-                            artifact_root,
-                        )?;
-                        generation_assets_root = previous.assets_root.clone();
-                        inherited_assets = Some(previous);
-                    }
                     render_incremental_template_generation(
                         site,
-                        &generation_assets_root,
+                        artifact_root,
                         &base_url,
                         projection.revision,
-                        impact == ProjectionRenderImpact::TemplatesAndAssets,
                     )
                 }),
-            ProjectionRenderImpact::AssetsOnly => self
-                .site
-                .as_mut()
-                .ok_or_else(|| "Motorul Zola persistent nu are site activ.".to_string())
-                .and_then(|site| {
-                    site.set_base_url(base_url.clone());
-                    site.set_output_path(artifact_root);
-                    materialize_official_zola_assets(site, projection.revision)?;
-                    Ok(self.raw_content.clone())
-                }),
-        }
+            ProjectionRenderImpact::Reuse => {
+                let previous = previous_generation.clone().ok_or_else(|| {
+                    "Motorul Preview nu are o generație publicată pentru reutilizare.".to_string()
+                })?;
+                remove_persistent_preview_artifact_root(app, &self.session_root, artifact_root)?;
+                generation_assets_root = previous.assets_root.clone();
+                inherited_assets = Some(previous);
+                Ok(self.raw_content.clone())
+            }
         });
         timings.zola_render_ms = elapsed_ms(zola_render_started);
         let rendered = match rendered {
@@ -934,12 +920,13 @@ fn template_workbench_projection_key(plan: &TemplateWorkbenchPlan) -> String {
         .map(|context| context.url.as_str())
         .unwrap_or_default();
     format!(
-        "{}\u{1f}{}\u{1f}{:?}\u{1f}{}\u{1f}{}",
+        "{}\u{1f}{}\u{1f}{:?}\u{1f}{}\u{1f}{}\u{1f}{}",
         plan.project_model_revision,
         plan.active_template.source_id,
         plan.render_mode,
         page_context,
         route_context,
+        plan.active_component_name.as_deref().unwrap_or_default(),
     )
 }
 
@@ -1002,8 +989,9 @@ fn render_template_workbench_document(
         TemplateWorkbenchRenderMode::ListingItemScenario => {
             render_listing_item_scenario(site, &active_template_name, context, plan)?
         }
-        TemplateWorkbenchRenderMode::MacroScenario => {
-            render_macro_scenario(&site.tera, &active_template_name, context)?
+        TemplateWorkbenchRenderMode::ComponentScenario => {
+            let component_name = active_workbench_component_name(model, plan)?;
+            render_component_scenario(&site.tera, &active_template_name, &component_name)?
         }
         TemplateWorkbenchRenderMode::IncludedTemplate if consumer_render_is_required(plan) => {
             let consumer = plan.selected_context.as_ref().ok_or_else(|| {
@@ -1093,7 +1081,7 @@ fn render_listing_item_scenario(
     let harness_name = "__pana_template_workbench_listing_item.html";
     tera.add_raw_template(harness_name, &harness)
         .map_err(|error| format!("Scenariul Listing Item nu a putut fi compilat: {error}"))?;
-    zola_utils::templates::render_template(harness_name, &tera, context, &site.config.theme)
+    tera.render(harness_name, &context)
         .map_err(|error| format!("Scenariul Listing Item a eșuat: {error}"))
 }
 
@@ -1117,18 +1105,9 @@ fn render_zola_template(
     context: Context,
     theme_template: bool,
 ) -> Result<String, String> {
-    let result = if theme_template {
-        site.tera.render(template_name, &context)
-    } else {
-        zola_utils::templates::render_template(
-            template_name,
-            &site.tera,
-            context,
-            &site.config.theme,
-        )
-        .map_err(|error| tera::Error::msg(error.to_string()))
-    };
-    result
+    let _ = theme_template;
+    site.tera
+        .render(template_name, &context)
         .map_err(|error| format!("Context de template nu a putut randa «{template_name}»: {error}"))
 }
 
@@ -1222,64 +1201,83 @@ fn normalize_workbench_project_file(file: &str) -> String {
     file.trim().trim_start_matches('/').replace('\\', "/")
 }
 
-fn render_macro_scenario(
+fn render_component_scenario(
     source_tera: &tera::Tera,
     template_name: &str,
-    mut context: Context,
+    component_name: &str,
 ) -> Result<String, String> {
-    let definition = source_tera.get_template(template_name).map_err(|error| {
-        format!("Macro scenario nu a găsit template-ul «{template_name}»: {error}")
-    })?;
-    let mut macro_names = definition.macros.keys().cloned().collect::<Vec<_>>();
-    macro_names.sort();
-    let macro_name = macro_names.first().ok_or_else(|| {
-        format!("Template-ul «{template_name}» nu definește niciun macro apelabil.")
-    })?;
-    let macro_definition = definition
-        .macros
-        .get(macro_name)
-        .expect("macro name was collected from the same template");
-    let mut argument_names = macro_definition.args.keys().cloned().collect::<Vec<_>>();
-    argument_names.sort();
-    let mut calls = Vec::new();
-    for argument_name in argument_names {
-        if macro_definition
-            .args
-            .get(&argument_name)
-            .is_some_and(Option::is_some)
-        {
+    let definition = source_tera
+        .get_component_definition(component_name)
+        .ok_or_else(|| {
+            format!(
+                "Componenta «{component_name}» din template-ul «{template_name}» nu există în registrul Tera 2 activ."
+            )
+        })?;
+    // Tera 2 validates a component call context as its argument list. Page and
+    // site globals belong to template rendering and must not be smuggled in as
+    // undeclared component arguments.
+    let mut arguments = Context::new();
+    for argument in definition.args() {
+        if !argument.is_required() {
             continue;
         }
-        let variable_name = format!("__pana_macro_arg_{}", safe_tera_identifier(&argument_name));
-        context.insert(&variable_name, &controlled_macro_argument(&argument_name));
-        calls.push(format!("{argument_name}={variable_name}"));
+        arguments.insert(
+            argument.name().to_string(),
+            &controlled_component_argument(argument.name(), argument.arg_type()),
+        );
     }
-    let harness = format!(
-        "{{% import \"{template_name}\" as pana_workbench_macro %}}\n{{{{ pana_workbench_macro::{macro_name}({}) }}}}",
-        calls.join(", ")
-    );
-    let mut tera = source_tera.clone();
-    let harness_name = "__pana_template_workbench_macro_scenario.html";
-    tera.add_raw_template(harness_name, &harness)
-        .map_err(|error| format!("Scenariul macro nu a putut fi compilat: {error}"))?;
-    tera.render(harness_name, &context)
-        .map_err(|error| format!("Scenariul macro controlat a eșuat: {error}"))
+    source_tera
+        .render_component(
+            component_name,
+            &arguments,
+            Some("<p>Conținut demonstrativ</p>"),
+            true,
+        )
+        .map_err(|error| format!("Scenariul componentei «{component_name}» a eșuat: {error}"))
 }
 
-fn safe_tera_identifier(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || character == '_' {
-                character
-            } else {
-                '_'
-            }
+fn active_workbench_component_name(
+    model: &ProjectModel,
+    plan: &TemplateWorkbenchPlan,
+) -> Result<String, String> {
+    if let Some(component_name) = plan.active_component_name.as_ref() {
+        return Ok(component_name.clone());
+    }
+    model
+        .source_graph
+        .templates
+        .iter()
+        .find(|template| template.node_id == plan.active_template.source_id)
+        .and_then(|template| template.component_definitions.first())
+        .map(|definition| definition.name.clone())
+        .ok_or_else(|| {
+            format!(
+                "Template-ul «{}» nu definește nicio componentă apelabilă.",
+                plan.active_template.name
+            )
         })
-        .collect()
 }
 
-fn controlled_macro_argument(name: &str) -> serde_json::Value {
+fn controlled_component_argument(
+    name: &str,
+    argument_type: Option<tera::ComponentArgType>,
+) -> serde_json::Value {
+    match argument_type {
+        Some(tera::ComponentArgType::Bool) => return serde_json::json!(true),
+        Some(tera::ComponentArgType::Integer) => return serde_json::json!(3),
+        Some(tera::ComponentArgType::Float | tera::ComponentArgType::Number) => {
+            return serde_json::json!(3.5);
+        }
+        Some(tera::ComponentArgType::Array) => {
+            return serde_json::json!(["Exemplu unu", "Exemplu doi"]);
+        }
+        Some(tera::ComponentArgType::Map) => {
+            return serde_json::json!({"title": "Exemplu", "url": "#"});
+        }
+        Some(tera::ComponentArgType::Bytes) => return serde_json::json!([80, 97, 110, 97]),
+        Some(tera::ComponentArgType::String) | None => {}
+        Some(_) => {}
+    }
     let normalized = name.to_ascii_lowercase();
     if normalized.contains("items") || normalized.contains("pages") || normalized.contains("cards")
     {
@@ -1349,36 +1347,55 @@ fn template_workbench_context(
         .selected_context
         .as_ref()
         .map(|consumer| normalized_content_file(&consumer.page_file));
-    let library = site.library.read().map_err(|_| {
-        "Biblioteca Zola este indisponibilă pentru Context de template.".to_string()
-    })?;
+    let library = &site.library;
 
     if let Some(selected_file) = selected_file.as_deref() {
-        if let Some(page) = library
+        if let Some((page_path, page)) = library
             .pages
-            .values()
-            .find(|page| normalized_content_file(&page.file.relative) == selected_file)
+            .iter()
+            .find(|(_, page)| normalized_content_file(&page.file.relative) == selected_file)
         {
             let mut context = Context::new();
-            context.insert("config", &site.config.serialize(&page.lang));
+            let config = site.cache.configs.get(&page.lang).ok_or_else(|| {
+                format!(
+                    "Cache-ul Zola nu conține configurația limbii «{}».",
+                    page.lang
+                )
+            })?;
+            let cached_page = site
+                .cache
+                .pages
+                .get(page_path)
+                .ok_or_else(|| format!("Cache-ul Zola nu conține pagina «{selected_file}»."))?;
+            context.insert_value("config", config.clone());
             context.insert("current_url", &page.permalink);
             context.insert("current_path", &page.path);
-            context.insert("zola_version", "0.22.1");
-            context.insert("page", &page.serialize(&library));
+            context.insert("zola_version", EMBEDDED_ZOLA_VERSION);
+            context.insert_value("page", cached_page.value.clone());
             context.insert("lang", &page.lang);
             return Ok((context, Some(page.path.clone())));
         }
-        if let Some(section) = library
+        if let Some((section_path, section)) = library
             .sections
-            .values()
-            .find(|section| normalized_content_file(&section.file.relative) == selected_file)
+            .iter()
+            .find(|(_, section)| normalized_content_file(&section.file.relative) == selected_file)
         {
             let mut context = Context::new();
-            context.insert("config", &site.config.serialize(&section.lang));
+            let config = site.cache.configs.get(&section.lang).ok_or_else(|| {
+                format!(
+                    "Cache-ul Zola nu conține configurația limbii «{}».",
+                    section.lang
+                )
+            })?;
+            let cached_section =
+                site.cache.sections.get(section_path).ok_or_else(|| {
+                    format!("Cache-ul Zola nu conține secțiunea «{selected_file}».")
+                })?;
+            context.insert_value("config", config.clone());
             context.insert("current_url", &section.permalink);
             context.insert("current_path", &section.path);
-            context.insert("zola_version", "0.22.1");
-            context.insert("section", &section.serialize(&library));
+            context.insert("zola_version", EMBEDDED_ZOLA_VERSION);
+            context.insert_value("section", cached_section.value.clone());
             context.insert("lang", &section.lang);
             return Ok((context, Some(section.path.clone())));
         }
@@ -1389,10 +1406,15 @@ fn template_workbench_context(
 
     let lang = site.config.default_language.clone();
     let mut context = Context::new();
-    context.insert("config", &site.config.serialize(&lang));
+    let config = site
+        .cache
+        .configs
+        .get(&lang)
+        .ok_or_else(|| format!("Cache-ul Zola nu conține configurația limbii «{lang}»."))?;
+    context.insert_value("config", config.clone());
     context.insert("current_url", &site.config.base_url);
     context.insert("current_path", "/");
-    context.insert("zola_version", "0.22.1");
+    context.insert("zola_version", EMBEDDED_ZOLA_VERSION);
     context.insert("lang", &lang);
     Ok((context, None))
 }
@@ -1554,9 +1576,8 @@ fn canvas_route_for_content_key(content_key: &str) -> String {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProjectionRenderImpact {
     Full,
-    Templates,
-    TemplatesAndAssets,
-    AssetsOnly,
+    Reload,
+    Reuse,
 }
 
 fn projection_render_impact(
@@ -1567,32 +1588,23 @@ fn projection_render_impact(
     if update.baseline_rebuilt || !has_site || !has_rendered_content {
         return ProjectionRenderImpact::Full;
     }
-    let mut templates = false;
-    let mut assets = false;
+    if update.projected_paths.is_empty() {
+        return ProjectionRenderImpact::Reuse;
+    }
     for project_relative in &update.projected_paths {
         let relative = project_relative.as_str();
         if relative == "config.toml"
             || relative == "zola.toml"
             || relative.starts_with("content/")
             || relative.starts_with("themes/")
-            || relative.starts_with("templates/shortcodes/")
             || !(relative.starts_with("templates/")
                 || relative.starts_with("sass/")
                 || relative.starts_with("static/"))
         {
             return ProjectionRenderImpact::Full;
         }
-        if relative.starts_with("templates/") {
-            templates = true;
-        } else {
-            assets = true;
-        }
     }
-    match (templates, assets) {
-        (true, true) => ProjectionRenderImpact::TemplatesAndAssets,
-        (true, false) => ProjectionRenderImpact::Templates,
-        (false, _) => ProjectionRenderImpact::AssetsOnly,
-    }
+    ProjectionRenderImpact::Reload
 }
 
 #[cfg(test)]
@@ -1630,7 +1642,7 @@ fn build_new_official_zola_site(
     clear_site_content()?;
     let config_file = zola_config_file(projection_root)?;
     let mut site = Site::new(projection_root, config_file).map_err(|error| {
-        format!("Zola 0.22.1 nu a putut încărca proiecția reviziei {workspace_revision}: {error:#}")
+        format!("Zola {EMBEDDED_ZOLA_VERSION} nu a putut încărca proiecția reviziei {workspace_revision}: {error:#}")
     })?;
     site.enable_serve_mode(BuildMode::Memory);
     // Embedded preview is an offline editor operation. Keep this explicit even
@@ -1646,11 +1658,13 @@ fn build_new_official_zola_site(
     site.set_output_path(artifact_root);
     site.load().map_err(|error| {
         format!(
-            "Zola 0.22.1 nu a putut încărca conținutul reviziei {workspace_revision}: {error:#}"
+            "Zola {EMBEDDED_ZOLA_VERSION} nu a putut încărca conținutul reviziei {workspace_revision}: {error:#}"
         )
     })?;
     site.build().map_err(|error| {
-        format!("Zola 0.22.1 nu a putut randă revizia {workspace_revision}: {error:#}")
+        format!(
+            "Zola {EMBEDDED_ZOLA_VERSION} nu a putut randă revizia {workspace_revision}: {error:#}"
+        )
     })?;
     let rendered = capture_site_content()?;
     Ok((site, rendered))
@@ -1699,55 +1713,16 @@ fn render_incremental_template_generation(
     artifact_root: &Path,
     base_url: &str,
     workspace_revision: u64,
-    rebuild_assets: bool,
 ) -> Result<HashMap<String, String>, String> {
     site.set_base_url(base_url.to_string());
     site.set_output_path(artifact_root);
-    if rebuild_assets {
-        materialize_official_zola_assets(site, workspace_revision)?;
-    }
     clear_site_content()?;
     site.reload_templates().map_err(|error| {
         format!(
-            "Zola 0.22.1 nu a putut reîncărca template-urile reviziei {workspace_revision}: {error}"
+            "Zola {EMBEDDED_ZOLA_VERSION} nu a putut reîncărca template-urile reviziei {workspace_revision}: {error}"
         )
     })?;
     capture_site_content()
-}
-
-fn materialize_official_zola_assets(site: &Site, workspace_revision: u64) -> Result<(), String> {
-    if let Some(theme) = &site.config.theme {
-        let theme_root = site.base_path.join("themes").join(theme);
-        if theme_root.join("sass").is_dir() {
-            sass::compile_sass(&theme_root, &site.output_path).map_err(|error| {
-                format!(
-                    "Zola 0.22.1 nu a putut compila Sass-ul temei pentru revizia {workspace_revision}: {error}"
-                )
-            })?;
-        }
-    }
-    if site.config.compile_sass {
-        sass::compile_sass(&site.base_path, &site.output_path).map_err(|error| {
-            format!(
-                "Zola 0.22.1 nu a putut compila Sass pentru revizia {workspace_revision}: {error}"
-            )
-        })?;
-    }
-    site.render_themes_css().map_err(|error| {
-        format!(
-            "Zola 0.22.1 nu a putut genera temele CSS pentru revizia {workspace_revision}: {error}"
-        )
-    })?;
-    site.process_images().map_err(|error| {
-        format!(
-            "Zola 0.22.1 nu a putut procesa imaginile pentru revizia {workspace_revision}: {error}"
-        )
-    })?;
-    site.copy_static_directories().map_err(|error| {
-        format!(
-            "Zola 0.22.1 nu a putut materializa asset-urile reviziei {workspace_revision}: {error}"
-        )
-    })
 }
 
 fn prepare_rendered_content(
@@ -2001,25 +1976,31 @@ mod tests {
     }
 
     #[test]
-    fn macro_scenario_calls_real_macro_with_controlled_required_arguments() {
+    fn component_scenario_calls_real_component_with_controlled_required_arguments() {
         let mut tera = tera::Tera::default();
         tera.add_raw_template(
-            "macros/card.html",
+            "components/foreign.html",
+            "{% component alpha() %}<aside>Componentă străină</aside>{% endcomponent alpha %}",
+        )
+        .unwrap();
+        tera.add_raw_template(
+            "components/card.html",
             concat!(
-                "{% macro card(title, visible=true) %}",
+                "{% component card(title: string, visible: bool=true) %}",
                 "{% if visible %}<article class=\"card\">{{ title }}</article>{% endif %}",
-                "{% endmacro %}",
+                "{% endcomponent card %}",
             ),
         )
         .unwrap();
 
-        let rendered = render_macro_scenario(&tera, "macros/card.html", Context::new()).unwrap();
+        let rendered = render_component_scenario(&tera, "components/card.html", "card").unwrap();
 
         assert!(rendered.contains("<article class=\"card\">Exemplu</article>"));
+        assert!(!rendered.contains("Componentă străină"));
     }
 
     #[test]
-    fn workbench_renders_page_partial_orphan_and_macro_with_declared_contexts() {
+    fn workbench_renders_page_partial_orphan_and_component_with_declared_contexts() {
         let fixture = parity_fixture("template-workbench-render-matrix");
         let project = fixture.join("project");
         let zola_root = project.to_path_buf();
@@ -2045,6 +2026,7 @@ mod tests {
                 template_path: "templates/index.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -2061,6 +2043,7 @@ mod tests {
                 template_path: "templates/base.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -2107,6 +2090,7 @@ mod tests {
                     template_path: "templates/partials/wrapper.html".to_string(),
                     preferred_page_path: None,
                     preferred_route: None,
+                    preferred_component_name: None,
                 },
             )
             .unwrap();
@@ -2130,6 +2114,7 @@ mod tests {
                     template_path: "templates/orphan.html".to_string(),
                     preferred_page_path: None,
                     preferred_route: None,
+                    preferred_component_name: None,
                 },
             )
             .unwrap();
@@ -2138,19 +2123,21 @@ mod tests {
         assert!(!orphan_plan.render_context.canonical_truth);
         assert!(orphan_html.contains("<aside>Pagină demonstrativă</aside>"));
 
-        let macro_plan = crate::project_model::template_workbench::resolve_template_workbench_plan(
-            &model,
-            &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
-                template_path: "templates/macros/card.html".to_string(),
-                preferred_page_path: None,
-                preferred_route: None,
-            },
-        )
-        .unwrap();
-        let (macro_html, _) =
-            render_template_workbench_document(&site, &canonical, &model, &macro_plan).unwrap();
-        assert!(!macro_plan.render_context.canonical_truth);
-        assert!(macro_html.contains("<strong class=\"macro-card\">Exemplu</strong>"));
+        let component_plan =
+            crate::project_model::template_workbench::resolve_template_workbench_plan(
+                &model,
+                &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
+                    template_path: "templates/components/card.html".to_string(),
+                    preferred_page_path: None,
+                    preferred_route: None,
+                    preferred_component_name: None,
+                },
+            )
+            .unwrap();
+        let (component_html, _) =
+            render_template_workbench_document(&site, &canonical, &model, &component_plan).unwrap();
+        assert!(!component_plan.render_context.canonical_truth);
+        assert!(component_html.contains("<strong class=\"component-card\">Exemplu</strong>"));
 
         drop(site);
         drop(_render_guard);
@@ -2182,6 +2169,7 @@ mod tests {
                 template_path: "templates/tags/list.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: Some("/tags/".to_string()),
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -2202,6 +2190,7 @@ mod tests {
                 template_path: "templates/tags/single.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: Some("/tags/rust/".to_string()),
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -2444,12 +2433,12 @@ Conținut draft vizibil în editor.
         drop(_render);
 
         assert!(
-            workspace_rendered.contains_key("despre/"),
+            workspace_rendered.contains_key("despre"),
             "generația workspace nu conține ruta draft: {:?}",
             workspace_rendered.keys().collect::<Vec<_>>()
         );
         assert!(
-            !disk_rendered.contains_key("despre/"),
+            !disk_rendered.contains_key("despre") && !disk_rendered.contains_key("despre/"),
             "generația de pe disc a publicat ruta draft"
         );
 
@@ -2476,11 +2465,11 @@ Conținut draft vizibil în editor.
         };
         assert_eq!(
             projection_render_impact(&update(&["templates/index.html"], false), true, true),
-            ProjectionRenderImpact::Templates
+            ProjectionRenderImpact::Reload
         );
         assert_eq!(
             projection_render_impact(&update(&["sass/pages/index.scss"], false), true, true),
-            ProjectionRenderImpact::AssetsOnly
+            ProjectionRenderImpact::Reload
         );
         assert_eq!(
             projection_render_impact(
@@ -2488,7 +2477,7 @@ Conținut draft vizibil în editor.
                 true,
                 true,
             ),
-            ProjectionRenderImpact::TemplatesAndAssets
+            ProjectionRenderImpact::Reload
         );
         assert_eq!(
             projection_render_impact(
@@ -2496,7 +2485,7 @@ Conținut draft vizibil în editor.
                 true,
                 true,
             ),
-            ProjectionRenderImpact::TemplatesAndAssets
+            ProjectionRenderImpact::Reload
         );
         assert_eq!(
             projection_render_impact(&update(&["content/about.md"], false), true, true),
@@ -2505,6 +2494,10 @@ Conținut draft vizibil în editor.
         assert_eq!(
             projection_render_impact(&update(&[], true), true, true),
             ProjectionRenderImpact::Full
+        );
+        assert_eq!(
+            projection_render_impact(&update(&[], false), true, true),
+            ProjectionRenderImpact::Reuse
         );
     }
 
@@ -2545,6 +2538,90 @@ Conținut draft vizibil în editor.
     }
 
     #[test]
+    fn upgrade_baseline_fixture_keeps_preview_and_disk_generation_in_parity() {
+        let fixture = parity_fixture("upgrade-baseline-parity");
+        let project = fixture.join("project");
+        let preview_output = fixture.join("preview-output");
+        let disk_output = fixture.join("disk-output");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/projects/zola-upgrade-baseline");
+        copy_test_tree(&source, &project);
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/32x32.png"),
+            project.join("static/pixel.png"),
+        )
+        .unwrap();
+        fs::create_dir_all(&preview_output).unwrap();
+
+        let base_url = "https://preview.pana.invalid";
+        let rendered = render_official_zola_memory(&project, &preview_output, base_url, 1)
+            .expect("fixture baseline randat în Preview");
+        run_fresh_embedded_disk_build(&project, &disk_output, base_url);
+
+        for expected_route in ["", "en", "articole", "articole/page/2"] {
+            assert!(
+                rendered.contains_key(expected_route),
+                "ruta Preview lipsește: {expected_route}; rute: {:?}",
+                rendered.keys().collect::<Vec<_>>()
+            );
+        }
+        assert_rendered_matches_disk(&rendered, &disk_output);
+        for relative in [
+            "site.css",
+            "giallo.css",
+            "marker.txt",
+            "search_index.ro.js",
+            "search_index.en.js",
+            "articole/primul/diagrama.svg",
+        ] {
+            assert_eq!(
+                fs::read(preview_output.join(relative)).unwrap(),
+                fs::read(disk_output.join(relative)).unwrap(),
+                "resursa derivată diferă: {relative}"
+            );
+        }
+
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn every_bundled_starter_renders_with_the_embedded_preview() {
+        let starters_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/project-starters");
+        let mut starter_ids = fs::read_dir(&starters_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        starter_ids.sort();
+        assert_eq!(
+            starter_ids,
+            ["cadru", "minimal", "nord", "pana-studio", "radacini"]
+        );
+
+        for starter_id in starter_ids {
+            let fixture = parity_fixture(&format!("starter-{starter_id}"));
+            let project = fixture.join("project");
+            let preview_output = fixture.join("preview-output");
+            copy_test_tree(&starters_root.join(&starter_id).join("project"), &project);
+            fs::create_dir_all(&preview_output).unwrap();
+
+            let rendered = render_official_zola_memory(
+                &project,
+                &preview_output,
+                "https://preview.pana.invalid",
+                1,
+            )
+            .unwrap_or_else(|error| panic!("starter {starter_id}: Preview eșuat: {error}"));
+            let home = rendered
+                .get("")
+                .unwrap_or_else(|| panic!("starter {starter_id}: ruta homepage lipsește"));
+            assert!(home.contains("<html"), "starter {starter_id}");
+
+            fs::remove_dir_all(fixture).unwrap();
+        }
+    }
+
+    #[test]
     fn retained_site_template_and_sass_updates_keep_fresh_disk_parity() {
         let fixture = parity_fixture("persistent-site-parity");
         let project = fixture.join("project");
@@ -2576,7 +2653,7 @@ Conținut draft vizibil în editor.
         )
         .unwrap();
         let template_rendered =
-            render_incremental_template_generation(&mut site, &template_output, base_url, 2, false)
+            render_incremental_template_generation(&mut site, &template_output, base_url, 2)
                 .unwrap();
 
         fs::write(
@@ -2584,9 +2661,8 @@ Conținut draft vizibil în editor.
             "$accent: #a32952; body { color: $accent; main { display: flex; } }\n",
         )
         .unwrap();
-        site.set_output_path(&sass_output);
-        materialize_official_zola_assets(&site, 3).unwrap();
-        let sass_rendered = template_rendered.clone();
+        let sass_rendered =
+            render_incremental_template_generation(&mut site, &sass_output, base_url, 3).unwrap();
         drop(_render);
 
         run_fresh_embedded_disk_build(&project, &template_fresh, base_url);
@@ -2639,8 +2715,7 @@ Conținut draft vizibil în editor.
         )
         .unwrap();
         let mixed_rendered =
-            render_incremental_template_generation(&mut site, &mixed_output, base_url, 2, true)
-                .unwrap();
+            render_incremental_template_generation(&mut site, &mixed_output, base_url, 2).unwrap();
         drop(_render);
 
         run_fresh_embedded_disk_build(&project, &mixed_fresh, base_url);
@@ -2775,8 +2850,8 @@ Conținut draft vizibil în editor.
                 None,
             )
             .unwrap();
-        assert_eq!(second.generation.assets_root, first_assets_root);
-        assert!(second.generation.inherited_assets.is_some());
+        assert_ne!(second.generation.assets_root, first_assets_root);
+        assert!(second.generation.inherited_assets.is_none());
         assert!(second.projection_publication.reused_entries > 0);
         assert!(
             second.projection_publication.reflinked_files
@@ -2813,6 +2888,7 @@ Conținut draft vizibil în editor.
                     template_path: template_path.clone(),
                     preferred_page_path: None,
                     preferred_route: None,
+                    preferred_component_name: None,
                 },
             )
             .unwrap();
@@ -2850,12 +2926,14 @@ Conținut draft vizibil în editor.
             .selected_route
             .as_ref()
             .map(|context| context.url.as_str());
+        let selected_component_name = workbench_plan.active_component_name.as_deref();
         let confirmed = engine
             .confirm_template_workbench_reuse(TemplateWorkbenchReuseQuery {
                 workspace_revision: 2,
                 template_path: &template_path,
                 preferred_page_path: selected_page_path,
                 preferred_route: selected_route,
+                preferred_component_name: selected_component_name,
                 reuse_token: &workbench.reuse_token,
                 expected_preview_revision: &second_identity.preview_revision,
                 expected_canvas_transaction_id: &second_identity.transaction_id,
@@ -2871,6 +2949,7 @@ Conținut draft vizibil în editor.
                 template_path: &template_path,
                 preferred_page_path: Some("content/other.md"),
                 preferred_route: selected_route,
+                preferred_component_name: selected_component_name,
                 reuse_token: &workbench.reuse_token,
                 expected_preview_revision: &second_identity.preview_revision,
                 expected_canvas_transaction_id: &second_identity.transaction_id,
@@ -2883,6 +2962,7 @@ Conținut draft vizibil în editor.
                 template_path: &template_path,
                 preferred_page_path: selected_page_path,
                 preferred_route: selected_route,
+                preferred_component_name: selected_component_name,
                 reuse_token: &workbench.reuse_token,
                 expected_preview_revision: &second_identity.preview_revision,
                 expected_canvas_transaction_id: "canvas-stale",
@@ -2895,6 +2975,7 @@ Conținut draft vizibil în editor.
                 template_path: &template_path,
                 preferred_page_path: selected_page_path,
                 preferred_route: selected_route,
+                preferred_component_name: selected_component_name,
                 reuse_token: &workbench.reuse_token,
                 expected_preview_revision: &second_identity.preview_revision,
                 expected_canvas_transaction_id: &second_identity.transaction_id,
@@ -2907,6 +2988,7 @@ Conținut draft vizibil în editor.
                 template_path: &template_path,
                 preferred_page_path: selected_page_path,
                 preferred_route: selected_route,
+                preferred_component_name: selected_component_name,
                 reuse_token: "sha256:foreign-session",
                 expected_preview_revision: &second_identity.preview_revision,
                 expected_canvas_transaction_id: &second_identity.transaction_id,
@@ -3006,10 +3088,24 @@ Conținut draft vizibil în editor.
         ))
     }
 
+    fn copy_test_tree(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let source_path = entry.path();
+            let destination_path = destination.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_test_tree(&source_path, &destination_path);
+            } else {
+                fs::copy(source_path, destination_path).unwrap();
+            }
+        }
+    }
+
     fn create_workbench_render_project(root: &Path) {
         fs::create_dir_all(root.join("content")).unwrap();
         fs::create_dir_all(root.join("templates/partials")).unwrap();
-        fs::create_dir_all(root.join("templates/macros")).unwrap();
+        fs::create_dir_all(root.join("templates/components")).unwrap();
         fs::create_dir_all(root.join("static")).unwrap();
         fs::write(
             root.join("zola.toml"),
@@ -3060,8 +3156,8 @@ template = "index.html"
         )
         .unwrap();
         fs::write(
-            root.join("templates/macros/card.html"),
-            r#"{% macro card(title) %}<strong class="macro-card">{{ title }}</strong>{% endmacro %}"#,
+            root.join("templates/components/card.html"),
+            r#"{% component card(title: string) %}<strong class="component-card">{{ title }}</strong>{% endcomponent card %}"#,
         )
         .unwrap();
         fs::write(root.join("static/site.css"), ".card { color: red; }\n").unwrap();
@@ -3155,7 +3251,7 @@ Conținut **Markdown** randat de Zola.
     fn disk_path_for_memory_route(output: &Path, route: &str) -> PathBuf {
         if route.is_empty() {
             output.join("index.html")
-        } else if route.ends_with('/') {
+        } else if Path::new(route).extension().is_none() {
             output.join(route).join("index.html")
         } else {
             output.join(route)

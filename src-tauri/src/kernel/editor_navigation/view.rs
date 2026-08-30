@@ -273,10 +273,7 @@ impl<'a> EditorNavigationViewBuilder<'a> {
         let view_kind = view_node_kind(&source.kind);
         let view_node_id = editor_view_node_id(&source.id);
         let source_editor_node_id = editor_source_node_id(&source.id);
-        let is_relation = matches!(
-            source.kind,
-            SourceNodeKind::Extends | SourceNodeKind::Import
-        );
+        let is_relation = source.kind == SourceNodeKind::Extends;
         let is_gate = source_kind_is_gate(&source.kind);
         let relation = self.navigation_relation(&source);
         let matches = self
@@ -642,7 +639,6 @@ impl<'a> EditorNavigationViewBuilder<'a> {
         let relation_kind = match source.kind {
             SourceNodeKind::Extends => EditorNavigationRelationKind::Extends,
             SourceNodeKind::Include => EditorNavigationRelationKind::Include,
-            SourceNodeKind::Import => EditorNavigationRelationKind::Import,
             SourceNodeKind::Block => {
                 return self.block_override_relation(source);
             }
@@ -844,7 +840,6 @@ fn source_relation_kind(kind: &SourceNodeKind) -> Option<SourceRelationKind> {
     match kind {
         SourceNodeKind::Extends => Some(SourceRelationKind::Extends),
         SourceNodeKind::Include => Some(SourceRelationKind::Includes),
-        SourceNodeKind::Import => Some(SourceRelationKind::Imports),
         _ => None,
     }
 }
@@ -858,7 +853,7 @@ fn view_boundary(
     if source.kind == SourceNodeKind::Html
         || matches!(
             source.kind,
-            SourceNodeKind::Extends | SourceNodeKind::Import | SourceNodeKind::BlockMarker
+            SourceNodeKind::Extends | SourceNodeKind::BlockMarker
         )
     {
         return None;
@@ -876,9 +871,9 @@ fn view_boundary(
     roots.sort();
     let target = source.tera_template_target().map(str::to_string);
     let effect_scope = match source.kind {
-        SourceNodeKind::Include | SourceNodeKind::Macro => {
-            EditorNavigationEffectScope::SharedDefinition
-        }
+        SourceNodeKind::Include
+        | SourceNodeKind::ComponentDefinition
+        | SourceNodeKind::ComponentCall => EditorNavigationEffectScope::SharedDefinition,
         _ => boundary_effect_scope(Some(&source.kind)),
     };
     let rendered_instance_count = if source.kind == SourceNodeKind::Include {
@@ -953,7 +948,7 @@ fn dynamic_widget_navigation_label(
 fn view_node_kind(kind: &SourceNodeKind) -> EditorNavigationViewNodeKind {
     match kind {
         SourceNodeKind::Html => EditorNavigationViewNodeKind::HtmlElement,
-        SourceNodeKind::Extends | SourceNodeKind::Import => EditorNavigationViewNodeKind::Relation,
+        SourceNodeKind::Extends => EditorNavigationViewNodeKind::Relation,
         kind if source_kind_is_gate(kind) => EditorNavigationViewNodeKind::Boundary,
         _ => EditorNavigationViewNodeKind::Source,
     }
@@ -968,7 +963,8 @@ fn source_kind_is_gate(kind: &SourceNodeKind) -> bool {
         kind,
         SourceNodeKind::Block
             | SourceNodeKind::Include
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Filter
@@ -981,8 +977,8 @@ fn source_kind_is_atomic(kind: &SourceNodeKind) -> bool {
         kind,
         SourceNodeKind::Block
             | SourceNodeKind::Include
-            | SourceNodeKind::Import
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set

@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    ops::Range,
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -27,7 +28,6 @@ use crate::{
             ComponentDefinition, ComponentDefinitionKind, ComponentDependency,
             ComponentDependencyKind, ComponentOrigin, SourceDiagnosticSeverity, SourceGraph,
         },
-        zola_shortcode::{parse_zola_shortcodes, ZolaShortcodeInvocation},
     },
     zola_theme::{
         conventional_script_files_for_template, conventional_style_files_for_template,
@@ -35,7 +35,7 @@ use crate::{
     },
 };
 
-pub const COMPONENT_MUTATION_SCHEMA_VERSION: u32 = 2;
+pub const COMPONENT_MUTATION_SCHEMA_VERSION: u32 = 3;
 static COMPONENT_VALIDATION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -55,9 +55,7 @@ pub enum ComponentMutationOperation {
 #[serde(rename_all = "snake_case")]
 pub enum ComponentDraftKind {
     Partial,
-    MacroLibrary,
-    ShortcodeHtml,
-    ShortcodeMarkdown,
+    TeraComponent,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -92,6 +90,8 @@ pub struct ComponentMutationInput {
     pub definition_id: Option<String>,
     pub kind: Option<ComponentDraftKind>,
     pub name: Option<String>,
+    #[serde(default)]
+    pub symbol_name: Option<String>,
     pub destination_name: Option<String>,
     pub contents: Option<String>,
     #[serde(default)]
@@ -125,6 +125,8 @@ pub struct ComponentMutationPlan {
     pub definition_id: Option<String>,
     pub source_relative_path: Option<String>,
     pub destination_relative_path: Option<String>,
+    pub source_symbol: Option<String>,
+    pub destination_symbol: Option<String>,
     pub writes: Vec<ComponentPlannedWrite>,
     pub deletes: Vec<String>,
     pub touched_files: Vec<String>,
@@ -174,6 +176,8 @@ pub fn plan_component_mutation(
     let mut diagnostics = Vec::new();
     let mut source_relative_path = None;
     let mut destination_relative_path = None;
+    let mut source_symbol = None;
+    let mut destination_symbol = None;
 
     match input.operation {
         ComponentMutationOperation::Create => {
@@ -184,6 +188,15 @@ pub fn plan_component_mutation(
                 ));
             }
             let kind = input.kind.unwrap_or(ComponentDraftKind::Partial);
+            let expected_symbol = if kind == ComponentDraftKind::TeraComponent {
+                Some(validate_component_symbol_name(
+                    input.symbol_name.as_deref().ok_or_else(|| {
+                        "Crearea unei componente Tera 2 cere numele simbolului.".to_string()
+                    })?,
+                )?)
+            } else {
+                None
+            };
             let destination = component_path(
                 kind,
                 input
@@ -203,12 +216,21 @@ pub fn plan_component_mutation(
                 },
             )?;
             destination_relative_path = Some(destination);
+            destination_symbol = expected_symbol;
         }
         ComponentMutationOperation::Update => {
             let definition = require_file_component(definition, input.operation)?;
             require_project_definition(definition, input.operation)?;
             require_capability(definition.capabilities.can_edit, definition, "editată")?;
             let source = component_source_path(definition)?;
+            if definition.kind == ComponentDefinitionKind::TeraComponent
+                && input.destination_name.is_some()
+            {
+                return Err(
+                    "Redenumirea unui simbol Tera 2 folosește operația semantică Rename."
+                        .to_string(),
+                );
+            }
             let contents = input
                 .contents
                 .ok_or_else(|| "Editarea componentei cere sursa completă.".to_string())?;
@@ -240,7 +262,6 @@ pub fn plan_component_mutation(
                     project_root,
                     workspace,
                     &graph,
-                    definition,
                     &source,
                     &destination,
                     &mut writes,
@@ -259,6 +280,8 @@ pub fn plan_component_mutation(
             }
             source_relative_path = Some(source.clone());
             destination_relative_path = Some(destination);
+            source_symbol = definition.symbol.clone();
+            destination_symbol = definition.symbol.clone();
         }
         ComponentMutationOperation::Duplicate => {
             let definition = require_file_component(definition, input.operation)?;
@@ -298,6 +321,40 @@ pub fn plan_component_mutation(
             source_relative_path = Some(source);
             destination_relative_path = Some(destination);
         }
+        ComponentMutationOperation::Rename
+            if definition.is_some_and(|definition| {
+                definition.kind == ComponentDefinitionKind::TeraComponent
+            }) =>
+        {
+            let definition = require_file_component(definition, input.operation)?;
+            require_project_definition(definition, input.operation)?;
+            require_capability(definition.capabilities.can_rename, definition, "redenumită")?;
+            let source = component_source_path(definition)?;
+            let old_symbol = definition.symbol.as_deref().ok_or_else(|| {
+                "Definiția Tera 2 nu expune simbolul semantic curent.".to_string()
+            })?;
+            let new_symbol = validate_component_symbol_name(
+                input
+                    .destination_name
+                    .as_deref()
+                    .ok_or_else(|| "Redenumirea cere noul nume al simbolului.".to_string())?,
+            )?;
+            if old_symbol == new_symbol {
+                return Err("Operația nu schimbă numele simbolului.".to_string());
+            }
+            require_component_symbol_available(&graph, &new_symbol, &definition.id)?;
+            plan_tera_component_symbol_rename(
+                workspace,
+                &graph,
+                definition,
+                &new_symbol,
+                &mut writes,
+            )?;
+            source_relative_path = Some(source.clone());
+            destination_relative_path = Some(source);
+            source_symbol = Some(old_symbol.to_string());
+            destination_symbol = Some(new_symbol);
+        }
         ComponentMutationOperation::Move | ComponentMutationOperation::Rename => {
             let definition = require_file_component(definition, input.operation)?;
             require_project_definition(definition, input.operation)?;
@@ -332,7 +389,6 @@ pub fn plan_component_mutation(
                 project_root,
                 workspace,
                 &graph,
-                definition,
                 &source,
                 &destination,
                 &mut writes,
@@ -458,15 +514,41 @@ pub fn plan_component_mutation(
                 ));
             }
             let source = component_source_path(definition)?;
-            require_workspace_text(workspace, &source)?;
-            deletes.insert(source.clone());
-            plan_component_companion_deletes(
-                workspace,
-                &graph,
-                definition,
-                &mut deletes,
-                &mut diagnostics,
-            )?;
+            let source_text = require_workspace_text(workspace, &source)?;
+            if definition.kind == ComponentDefinitionKind::TeraComponent {
+                let range = require_component_source_range(definition, &source_text)?;
+                let mut remaining = source_text;
+                remaining.replace_range(range, "");
+                if remaining.trim().is_empty() {
+                    deletes.insert(source.clone());
+                    plan_component_companion_deletes(
+                        workspace,
+                        &graph,
+                        definition,
+                        &mut deletes,
+                        &mut diagnostics,
+                    )?;
+                } else {
+                    insert_write(
+                        &mut writes,
+                        ComponentPlannedWrite {
+                            relative_path: source.clone(),
+                            contents: remaining,
+                            create_only: false,
+                        },
+                    )?;
+                }
+                source_symbol = definition.symbol.clone();
+            } else {
+                deletes.insert(source.clone());
+                plan_component_companion_deletes(
+                    workspace,
+                    &graph,
+                    definition,
+                    &mut deletes,
+                    &mut diagnostics,
+                )?;
+            }
             source_relative_path = Some(source);
         }
         ComponentMutationOperation::OverrideTheme => {
@@ -503,6 +585,8 @@ pub fn plan_component_mutation(
             )?;
             source_relative_path = Some(source);
             destination_relative_path = Some(destination);
+            source_symbol = definition.symbol.clone();
+            destination_symbol = definition.symbol.clone();
         }
     }
 
@@ -560,6 +644,8 @@ pub fn plan_component_mutation(
         definition_id: input.definition_id,
         source_relative_path,
         destination_relative_path,
+        source_symbol,
+        destination_symbol,
         writes,
         deletes,
         touched_files,
@@ -607,7 +693,16 @@ fn validate_component_candidate(
 
     match plan.operation {
         ComponentMutationOperation::Delete => {
-            if let Some(source) = plan.source_relative_path.as_deref() {
+            if let (Some(source), Some(symbol)) = (
+                plan.source_relative_path.as_deref(),
+                plan.source_symbol.as_deref(),
+            ) {
+                if component_symbol_exists_at(&graph, source, symbol) {
+                    return Err(format!(
+                        "Validarea semantică a refuzat ștergerea: simbolul {symbol} din {source} există încă."
+                    ));
+                }
+            } else if let Some(source) = plan.source_relative_path.as_deref() {
                 if graph
                     .component_graph
                     .definitions
@@ -624,11 +719,19 @@ fn validate_component_candidate(
             let destination = plan.destination_relative_path.as_deref().ok_or_else(|| {
                 "Planul de editare nu păstrează path-ul final al definiției.".to_string()
             })?;
-            require_active_project_definition_at(&graph, destination)?;
+            require_active_project_definition_at(
+                &graph,
+                destination,
+                plan.destination_symbol.as_deref(),
+            )?;
         }
         _ => {
             if let Some(destination) = plan.destination_relative_path.as_deref() {
-                require_active_project_definition_at(&graph, destination)?;
+                require_active_project_definition_at(
+                    &graph,
+                    destination,
+                    plan.destination_symbol.as_deref(),
+                )?;
             }
         }
     }
@@ -826,7 +929,11 @@ fn require_graph_without_errors_for(
     Ok(())
 }
 
-fn require_active_project_definition_at(graph: &SourceGraph, path: &str) -> Result<(), String> {
+fn require_active_project_definition_at(
+    graph: &SourceGraph,
+    path: &str,
+    symbol: Option<&str>,
+) -> Result<(), String> {
     if graph.component_graph.definitions.iter().any(|definition| {
         definition.file.as_deref() == Some(path)
             && definition.active
@@ -834,9 +941,10 @@ fn require_active_project_definition_at(graph: &SourceGraph, path: &str) -> Resu
             && matches!(
                 definition.kind,
                 ComponentDefinitionKind::Partial
-                    | ComponentDefinitionKind::MacroLibrary
-                    | ComponentDefinitionKind::Shortcode
+                    | ComponentDefinitionKind::TemplateFile
+                    | ComponentDefinitionKind::TeraComponent
             )
+            && symbol.is_none_or(|symbol| definition.symbol.as_deref() == Some(symbol))
     }) {
         Ok(())
     } else {
@@ -870,8 +978,8 @@ fn require_file_component(
     if !matches!(
         definition.kind,
         ComponentDefinitionKind::Partial
-            | ComponentDefinitionKind::MacroLibrary
-            | ComponentDefinitionKind::Shortcode
+            | ComponentDefinitionKind::TemplateFile
+            | ComponentDefinitionKind::TeraComponent
     ) || definition.file.is_none()
         || definition.template_name.is_none()
     {
@@ -930,23 +1038,304 @@ fn component_source_path(definition: &ComponentDefinition) -> Result<String, Str
         .and_then(normalize_project_relative_path)
 }
 
+fn validate_component_symbol_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    let valid = !name.is_empty()
+        && name.split('.').all(|segment| {
+            let mut characters = segment.chars();
+            characters
+                .next()
+                .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+                && characters.all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+                })
+        });
+    if valid {
+        Ok(name.to_string())
+    } else {
+        Err(
+            "Numele componentei Tera 2 trebuie să conțină segmente identificator separate prin punct."
+                .to_string(),
+        )
+    }
+}
+
+fn require_component_symbol_available(
+    graph: &SourceGraph,
+    symbol: &str,
+    current_definition_id: &str,
+) -> Result<(), String> {
+    if graph.component_graph.definitions.iter().any(|definition| {
+        definition.id != current_definition_id
+            && definition.active
+            && definition.kind == ComponentDefinitionKind::TeraComponent
+            && definition.symbol.as_deref() == Some(symbol)
+    }) {
+        Err(format!(
+            "Simbolul componentei Tera 2 {symbol} există deja în proiectul efectiv."
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn component_symbol_exists_at(graph: &SourceGraph, path: &str, symbol: &str) -> bool {
+    graph.component_graph.definitions.iter().any(|definition| {
+        definition.file.as_deref() == Some(path)
+            && definition.active
+            && definition.kind == ComponentDefinitionKind::TeraComponent
+            && definition.symbol.as_deref() == Some(symbol)
+    })
+}
+
+fn require_component_source_range(
+    definition: &ComponentDefinition,
+    source: &str,
+) -> Result<Range<usize>, String> {
+    let range = definition
+        .range
+        .as_ref()
+        .ok_or_else(|| "Definiția componentei nu are range semantic exact.".to_string())?;
+    if range.start >= range.end
+        || range.end > source.len()
+        || !source.is_char_boundary(range.start)
+        || !source.is_char_boundary(range.end)
+    {
+        return Err("Range-ul componentei nu mai este valid în sursa curentă.".to_string());
+    }
+    Ok(range.start..range.end)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ComponentSymbolEdit {
+    start: usize,
+    end: usize,
+    replacement: String,
+}
+
+fn plan_tera_component_symbol_rename(
+    workspace: &ProjectWorkspace,
+    graph: &SourceGraph,
+    definition: &ComponentDefinition,
+    new_symbol: &str,
+    writes: &mut BTreeMap<String, ComponentPlannedWrite>,
+) -> Result<(), String> {
+    let old_symbol = definition
+        .symbol
+        .as_deref()
+        .ok_or_else(|| "Definiția Tera 2 nu are simbol semantic.".to_string())?;
+    let definition_file = component_source_path(definition)?;
+    let mut edits_by_file = BTreeMap::<String, Vec<ComponentSymbolEdit>>::new();
+    let definition_source = require_workspace_text(workspace, &definition_file)?;
+    let definition_range = require_component_source_range(definition, &definition_source)?;
+    let opening_end = definition
+        .body_range
+        .as_ref()
+        .map_or(definition_range.end, |range| range.start);
+    let opening = find_keyword_symbol_span(
+        &definition_source,
+        definition_range.start..opening_end,
+        "component",
+        old_symbol,
+    )?;
+    edits_by_file
+        .entry(definition_file.clone())
+        .or_default()
+        .push(ComponentSymbolEdit {
+            start: opening.start,
+            end: opening.end,
+            replacement: new_symbol.to_string(),
+        });
+    if let Some(body_range) = definition.body_range.as_ref() {
+        let closing = find_keyword_symbol_span(
+            &definition_source,
+            body_range.end..definition_range.end,
+            "endcomponent",
+            old_symbol,
+        )?;
+        edits_by_file
+            .entry(definition_file.clone())
+            .or_default()
+            .push(ComponentSymbolEdit {
+                start: closing.start,
+                end: closing.end,
+                replacement: new_symbol.to_string(),
+            });
+    }
+
+    for invocation in graph
+        .component_graph
+        .invocations
+        .iter()
+        .filter(|invocation| {
+            invocation.kind == crate::source_graph::model::ComponentInvocationKind::TeraComponent
+                && invocation
+                    .resolved_definition_ids
+                    .iter()
+                    .any(|id| id == &definition.id)
+        })
+    {
+        let source = require_workspace_text(workspace, &invocation.file)?;
+        let call_range = invocation
+            .call_range
+            .as_ref()
+            .ok_or_else(|| format!("Invocarea din {} nu are callRange exact.", invocation.file))?;
+        let opening =
+            find_call_symbol_span(&source, call_range.start..call_range.end, old_symbol, false)?;
+        edits_by_file
+            .entry(invocation.file.clone())
+            .or_default()
+            .push(ComponentSymbolEdit {
+                start: opening.start,
+                end: opening.end,
+                replacement: new_symbol.to_string(),
+            });
+        if let (Some(body_range), Some(range)) =
+            (invocation.body_range.as_ref(), invocation.range.as_ref())
+        {
+            let closing =
+                find_call_symbol_span(&source, body_range.end..range.end, old_symbol, true)?;
+            edits_by_file
+                .entry(invocation.file.clone())
+                .or_default()
+                .push(ComponentSymbolEdit {
+                    start: closing.start,
+                    end: closing.end,
+                    replacement: new_symbol.to_string(),
+                });
+        }
+    }
+
+    for (file, mut edits) in edits_by_file {
+        let mut source = require_workspace_text(workspace, &file)?;
+        edits.sort_by_key(|edit| (edit.start, edit.end));
+        edits.dedup_by(|left, right| left.start == right.start && left.end == right.end);
+        for pair in edits.windows(2) {
+            if pair[0].end > pair[1].start {
+                return Err(format!(
+                    "Redenumirea componentei produce editări suprapuse în {file}."
+                ));
+            }
+        }
+        for edit in edits.into_iter().rev() {
+            if edit.start >= edit.end
+                || edit.end > source.len()
+                || !source.is_char_boundary(edit.start)
+                || !source.is_char_boundary(edit.end)
+            {
+                return Err(format!(
+                    "Range-ul de redenumire nu mai este valid în {file}."
+                ));
+            }
+            source.replace_range(edit.start..edit.end, &edit.replacement);
+        }
+        insert_write(
+            writes,
+            ComponentPlannedWrite {
+                relative_path: file,
+                contents: source,
+                create_only: false,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn find_keyword_symbol_span(
+    source: &str,
+    search: Range<usize>,
+    keyword: &str,
+    expected: &str,
+) -> Result<Range<usize>, String> {
+    let slice = source.get(search.clone()).ok_or_else(|| {
+        "Range-ul semantic al componentei nu mai aparține sursei curente.".to_string()
+    })?;
+    let keyword_start = slice
+        .find(keyword)
+        .ok_or_else(|| format!("Tag-ul {keyword} nu mai există în range-ul semantic."))?;
+    let mut relative_start = keyword_start + keyword.len();
+    while slice[relative_start..]
+        .chars()
+        .next()
+        .is_some_and(char::is_whitespace)
+    {
+        relative_start += slice[relative_start..]
+            .chars()
+            .next()
+            .expect("caracter verificat")
+            .len_utf8();
+    }
+    let relative_end = relative_start
+        + slice[relative_start..]
+            .find(|character: char| {
+                character == '(' || character.is_whitespace() || character == '%'
+            })
+            .unwrap_or(slice.len() - relative_start);
+    let actual = &slice[relative_start..relative_end];
+    if actual != expected {
+        return Err(format!(
+            "Simbolul semantic așteptat {expected} nu mai corespunde sursei ({actual})."
+        ));
+    }
+    Ok((search.start + relative_start)..(search.start + relative_end))
+}
+
+fn find_call_symbol_span(
+    source: &str,
+    search: Range<usize>,
+    expected: &str,
+    closing: bool,
+) -> Result<Range<usize>, String> {
+    let slice = source.get(search.clone()).ok_or_else(|| {
+        "Range-ul semantic al apelului nu mai aparține sursei curente.".to_string()
+    })?;
+    let marker = if closing { "</" } else { "<" };
+    let marker_start = slice
+        .find(marker)
+        .ok_or_else(|| "Tag-ul apelului componentei nu mai există în range.".to_string())?;
+    let mut relative_start = marker_start + marker.len();
+    while slice[relative_start..]
+        .chars()
+        .next()
+        .is_some_and(char::is_whitespace)
+    {
+        relative_start += slice[relative_start..]
+            .chars()
+            .next()
+            .expect("caracter verificat")
+            .len_utf8();
+    }
+    let relative_end = relative_start
+        + slice[relative_start..]
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, '/' | '>' | '%' | '}')
+            })
+            .unwrap_or(slice.len() - relative_start);
+    let actual = &slice[relative_start..relative_end];
+    if actual != expected {
+        return Err(format!(
+            "Apelul semantic așteptat {expected} nu mai corespunde sursei ({actual})."
+        ));
+    }
+    Ok((search.start + relative_start)..(search.start + relative_end))
+}
+
 fn draft_kind_for_definition(
     definition: &ComponentDefinition,
 ) -> Result<ComponentDraftKind, String> {
     match definition.kind {
-        ComponentDefinitionKind::Partial => Ok(ComponentDraftKind::Partial),
-        ComponentDefinitionKind::MacroLibrary => Ok(ComponentDraftKind::MacroLibrary),
-        ComponentDefinitionKind::Shortcode => {
+        ComponentDefinitionKind::TeraComponent => Ok(ComponentDraftKind::TeraComponent),
+        ComponentDefinitionKind::Partial | ComponentDefinitionKind::TemplateFile => Ok(
             if definition
                 .file
                 .as_deref()
-                .is_some_and(|path| path.ends_with(".md"))
+                .is_some_and(|path| path.starts_with("templates/components/"))
             {
-                Ok(ComponentDraftKind::ShortcodeMarkdown)
+                ComponentDraftKind::TeraComponent
             } else {
-                Ok(ComponentDraftKind::ShortcodeHtml)
-            }
-        }
+                ComponentDraftKind::Partial
+            },
+        ),
         _ => Err("Tipul definiției nu are un draft de componentă mutabil.".to_string()),
     }
 }
@@ -955,11 +1344,9 @@ fn component_path(kind: ComponentDraftKind, name: &str) -> Result<String, String
     let mut logical = name.trim().replace('\\', "/");
     for prefix in [
         "templates/partials/",
-        "templates/macros/",
-        "templates/shortcodes/",
+        "templates/components/",
         "partials/",
-        "macros/",
-        "shortcodes/",
+        "components/",
     ] {
         if let Some(stripped) = logical.strip_prefix(prefix) {
             logical = stripped.to_string();
@@ -975,9 +1362,7 @@ fn component_path(kind: ComponentDraftKind, name: &str) -> Result<String, String
     }
     let (directory, extension) = match kind {
         ComponentDraftKind::Partial => ("templates/partials", "html"),
-        ComponentDraftKind::MacroLibrary => ("templates/macros", "html"),
-        ComponentDraftKind::ShortcodeHtml => ("templates/shortcodes", "html"),
-        ComponentDraftKind::ShortcodeMarkdown => ("templates/shortcodes", "md"),
+        ComponentDraftKind::TeraComponent => ("templates/components", "html"),
     };
     let path = normalize_project_relative_path(&format!("{directory}/{logical}.{extension}"))?;
     if !path.starts_with(&format!("{directory}/")) || !path.ends_with(&format!(".{extension}")) {
@@ -997,13 +1382,9 @@ fn component_draft(kind: ComponentDraftKind, path: &str) -> String {
         ComponentDraftKind::Partial => {
             format!("<section class=\"{stem}\">\n  Componentă nouă\n</section>\n")
         }
-        ComponentDraftKind::MacroLibrary => format!(
-            "{{% macro {stem}(text) %}}\n  <span>{{{{ text }}}}</span>\n{{% endmacro {stem} %}}\n"
+        ComponentDraftKind::TeraComponent => format!(
+            "{{% component {stem}(text: string) %}}\n  <span>{{{{ text }}}}</span>\n{{% endcomponent {stem} %}}\n"
         ),
-        ComponentDraftKind::ShortcodeHtml => {
-            format!("<span class=\"shortcode-{stem}\">Shortcode nou</span>\n")
-        }
-        ComponentDraftKind::ShortcodeMarkdown => "**Shortcode nou**\n".to_string(),
     }
 }
 
@@ -1272,7 +1653,6 @@ fn plan_component_reference_rewrites(
     project_root: &Path,
     workspace: &ProjectWorkspace,
     graph: &SourceGraph,
-    definition: &ComponentDefinition,
     source: &str,
     destination: &str,
     writes: &mut BTreeMap<String, ComponentPlannedWrite>,
@@ -1298,91 +1678,6 @@ fn plan_component_reference_rewrites(
                 )?;
             }
         }
-    }
-    if definition.kind == ComponentDefinitionKind::Shortcode {
-        let old_name = shortcode_name_for_path(source)?;
-        let new_name = shortcode_name_for_path(destination)?;
-        for rewrite in plan_shortcode_reference_rewrites(workspace, &old_name, &new_name)? {
-            insert_write(writes, rewrite)?;
-        }
-    }
-    Ok(())
-}
-
-fn shortcode_name_for_path(path: &str) -> Result<String, String> {
-    path.split("/shortcodes/")
-        .nth(1)
-        .and_then(|name| {
-            name.strip_suffix(".html")
-                .or_else(|| name.strip_suffix(".md"))
-        })
-        .map(str::to_string)
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| format!("Path-ul {path} nu identifică un shortcode Zola."))
-}
-
-fn plan_shortcode_reference_rewrites(
-    workspace: &ProjectWorkspace,
-    old_name: &str,
-    new_name: &str,
-) -> Result<Vec<ComponentPlannedWrite>, String> {
-    let mut writes = Vec::new();
-    for (relative_path, entry) in workspace.documents.files.iter() {
-        if !relative_path.starts_with("content/") || !relative_path.ends_with(".md") {
-            continue;
-        }
-        let source = entry.current_text();
-        let document = parse_zola_shortcodes(source);
-        if let Some(error) = document.parse_error.as_deref() {
-            return Err(format!(
-                "Rescrierea shortcode-ului este blocată de sintaxa invalidă din {relative_path}: {error}"
-            ));
-        }
-        let mut replacements = Vec::<(usize, usize)>::new();
-        collect_shortcode_name_replacements(
-            source,
-            &document.invocations,
-            old_name,
-            &mut replacements,
-        )?;
-        if replacements.is_empty() {
-            continue;
-        }
-        replacements.sort_by_key(|right| std::cmp::Reverse(right.0));
-        let mut rewritten = source.to_string();
-        for (start, end) in replacements {
-            rewritten.replace_range(start..end, new_name);
-        }
-        writes.push(ComponentPlannedWrite {
-            relative_path: relative_path.clone(),
-            contents: rewritten,
-            create_only: false,
-        });
-    }
-    Ok(writes)
-}
-
-fn collect_shortcode_name_replacements(
-    source: &str,
-    invocations: &[ZolaShortcodeInvocation],
-    old_name: &str,
-    replacements: &mut Vec<(usize, usize)>,
-) -> Result<(), String> {
-    for invocation in invocations {
-        if invocation.name == old_name {
-            let call = source
-                .get(invocation.call_range.start..invocation.call_range.end)
-                .ok_or_else(|| "Range-ul shortcode-ului nu mai corespunde sursei.".to_string())?;
-            let relative_start = call.find(&invocation.name).ok_or_else(|| {
-                format!(
-                    "Parserul shortcode nu a regăsit numele {} în propriul call range.",
-                    invocation.name
-                )
-            })?;
-            let start = invocation.call_range.start + relative_start;
-            replacements.push((start, start + invocation.name.len()));
-        }
-        collect_shortcode_name_replacements(source, &invocation.inner, old_name, replacements)?;
     }
     Ok(())
 }
@@ -1441,6 +1736,7 @@ mod tests {
             definition_id: None,
             kind: Some(ComponentDraftKind::Partial),
             name: Some("catalog/card".to_string()),
+            symbol_name: None,
             destination_name: None,
             contents: Some("<article>{{ item.title }}</article>\n".to_string()),
             source_file: None,
@@ -1522,6 +1818,7 @@ mod tests {
                 definition_id: Some(definition_id),
                 kind: None,
                 name: None,
+                symbol_name: None,
                 destination_name: None,
                 contents: None,
                 source_file: None,
@@ -1531,66 +1828,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("este folosită de 1 invocări"), "{error}");
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn shortcode_rename_rewrites_nested_content_calls_atomically() {
-        let root = test_root("rename-shortcode");
-        let mut workspace = test_workspace(
-            &root,
-            HashMap::from([
-                (
-                    "zola.toml".to_string(),
-                    "base_url = \"https://example.test\"\n".to_string(),
-                ),
-                (
-                    "templates/shortcodes/badge.html".to_string(),
-                    "<strong>{{ label }}</strong>\n".to_string(),
-                ),
-                (
-                    "content/_index.md".to_string(),
-                    "+++\ntitle = \"Acasă\"\n+++\n{{ badge(label=\"Nou\") }}\n{% quote() %}\n{{ badge(label=\"Interior\") }}\n{% end %}\n"
-                        .to_string(),
-                ),
-                (
-                    "templates/shortcodes/quote.html".to_string(),
-                    "<blockquote>{{ body | safe }}</blockquote>\n".to_string(),
-                ),
-            ]),
-        );
-        let definition_id =
-            definition_id_for_path(&root, &workspace, "templates/shortcodes/badge.html");
-        let (_plan, receipt) = stage_validated_component_mutation(
-            &root,
-            &mut workspace,
-            ComponentMutationInput {
-                operation: ComponentMutationOperation::Rename,
-                definition_id: Some(definition_id),
-                kind: None,
-                name: None,
-                destination_name: Some("chip".to_string()),
-                contents: None,
-                source_file: None,
-                source_range: None,
-                companions: Vec::new(),
-            },
-            2,
-        )
-        .unwrap();
-
-        assert_eq!(receipt.history.undo_count, 1);
-        assert!(workspace
-            .documents
-            .text_for("templates/shortcodes/badge.html")
-            .is_none());
-        assert!(workspace
-            .documents
-            .text_for("templates/shortcodes/chip.html")
-            .is_some());
-        let page = workspace.documents.text_for("content/_index.md").unwrap();
-        assert_eq!(page.matches("chip(").count(), 2);
-        assert!(!page.contains("badge("));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1632,6 +1869,7 @@ mod tests {
                 definition_id: Some(definition_id),
                 kind: None,
                 name: None,
+                symbol_name: None,
                 destination_name: Some("product/card".to_string()),
                 contents: Some("<article>{{ product.title }}</article>\n".to_string()),
                 source_file: None,
@@ -1757,6 +1995,7 @@ mod tests {
                 definition_id: Some(definition_id),
                 kind: None,
                 name: None,
+                symbol_name: None,
                 destination_name: Some("catalog/card".to_string()),
                 contents: None,
                 source_file: None,
@@ -1851,6 +2090,7 @@ mod tests {
                 definition_id: Some(definition_id),
                 kind: None,
                 name: None,
+                symbol_name: None,
                 destination_name: None,
                 contents: None,
                 source_file: None,
@@ -1931,6 +2171,7 @@ mod tests {
                 definition_id: None,
                 kind: Some(ComponentDraftKind::Partial),
                 name: Some("hero".to_string()),
+                symbol_name: None,
                 destination_name: None,
                 contents: None,
                 source_file: Some("templates/index.html".to_string()),
@@ -1973,93 +2214,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_loop_catalog_migrates_to_real_partial_and_canonical_date_in_one_undo() {
-        let root = test_root("legacy-loop-migration");
-        let legacy = r#"{
-  "schemaVersion": 1,
-  "definitions": [{
-    "id": "loop-servicii",
-    "label": "Servicii",
-    "sourceKind": "dataFile",
-    "alias": "service",
-    "layout": "cardGrid",
-    "dataPath": "data/services.toml",
-    "collectionKey": "services",
-    "titleExpression": "service.title",
-    "descriptionExpression": "service.description",
-    "urlExpression": "service.url"
-  }]
-}"#;
-        let mut workspace = test_workspace(
-            &root,
-            HashMap::from([
-                (
-                    "zola.toml".to_string(),
-                    "base_url = \"https://example.test\"\n".to_string(),
-                ),
-                (
-                    "data/pana-studio/loops.json".to_string(),
-                    legacy.to_string(),
-                ),
-                (
-                    "data/services.toml".to_string(),
-                    "[[services]]\ntitle = \"Audit\"\n".to_string(),
-                ),
-            ]),
-        );
-
-        let receipt = crate::kernel::component_legacy_migration::migrate_legacy_component_catalog(
-            &root,
-            &mut workspace,
-            2,
-        )
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(receipt.history.undo_count, 1);
-        assert!(workspace
-            .documents
-            .text_for("data/pana-studio/loops.json")
-            .is_none());
-        assert!(workspace.documents.text_for("data/services.toml").is_none());
-        assert_eq!(
-            workspace
-                .documents
-                .text_for("date/services.toml")
-                .as_deref(),
-            Some("[[services]]\ntitle = \"Audit\"\n")
-        );
-        let partial = workspace
-            .documents
-            .text_for("templates/partials/migrat/loop-servicii.html")
-            .unwrap();
-        assert!(partial.contains("load_data(path=\"date/services.toml\")"));
-        assert!(partial.contains("{% for service in loop_data.services"));
-
-        workspace.undo(&current_identity(&workspace), 3).unwrap();
-        assert_eq!(
-            workspace
-                .documents
-                .text_for("data/pana-studio/loops.json")
-                .as_deref(),
-            Some(legacy)
-        );
-        assert_eq!(
-            workspace
-                .documents
-                .text_for("data/services.toml")
-                .as_deref(),
-            Some("[[services]]\ntitle = \"Audit\"\n")
-        );
-        assert!(workspace.documents.text_for("date/services.toml").is_none());
-        assert!(workspace
-            .documents
-            .text_for("templates/partials/migrat/loop-servicii.html")
-            .is_none());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn invalid_tera_update_is_rejected_without_mutating_workspace() {
         let root = test_root("invalid-update");
         let mut workspace = test_workspace(
@@ -2086,6 +2240,7 @@ mod tests {
                 definition_id: Some(definition_id),
                 kind: None,
                 name: None,
+                symbol_name: None,
                 destination_name: None,
                 contents: Some("{% if visible %}<article>{% endfor %}\n".to_string()),
                 source_file: None,
@@ -2099,6 +2254,7 @@ mod tests {
             error.contains("source-graph-tera-syntax-invalid"),
             "{error}"
         );
+        assert!(error.contains("EndFor") && error.contains("If"), "{error}");
         assert_eq!(workspace.revision, revision_before);
         assert_eq!(
             workspace
@@ -2107,6 +2263,157 @@ mod tests {
                 .as_deref(),
             Some("<article>Card</article>\n")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn create_typed_namespaced_tera_component_is_validated_by_zola() {
+        let root = test_root("create-tera-component");
+        let mut workspace = test_workspace(
+            &root,
+            HashMap::from([(
+                "zola.toml".to_string(),
+                "base_url = \"https://example.test\"\n".to_string(),
+            )]),
+        );
+        let source = concat!(
+            "{% component ui.card(title: string, tone: string = \"neutral\", ...attributes) %}\n",
+            "<article class=\"card card--{{ tone }}\">{{ title }}</article>\n",
+            "{% endcomponent ui.card %}\n",
+        );
+        let (plan, receipt) = stage_validated_component_mutation(
+            &root,
+            &mut workspace,
+            ComponentMutationInput {
+                operation: ComponentMutationOperation::Create,
+                definition_id: None,
+                kind: Some(ComponentDraftKind::TeraComponent),
+                name: Some("ui/card".to_string()),
+                symbol_name: Some("ui.card".to_string()),
+                destination_name: None,
+                contents: Some(source.to_string()),
+                source_file: None,
+                source_range: None,
+                companions: Vec::new(),
+            },
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(plan.schema_version, 3);
+        assert_eq!(plan.destination_symbol.as_deref(), Some("ui.card"));
+        assert_eq!(receipt.history.undo_count, 1);
+        assert_eq!(
+            workspace
+                .documents
+                .text_for("templates/components/ui/card.html")
+                .as_deref(),
+            Some(source)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rename_tera_component_rewrites_definition_and_all_resolved_calls() {
+        let root = test_root("rename-tera-component");
+        let mut workspace = test_workspace(
+            &root,
+            HashMap::from([
+                (
+                    "zola.toml".to_string(),
+                    "base_url = \"https://example.test\"\n".to_string(),
+                ),
+                (
+                    "templates/components.html".to_string(),
+                    concat!(
+                        "{% component ui.card(title: string) %}<article>{{ title }}{{ body | safe }}</article>{% endcomponent ui.card %}\n",
+                        "{{<ui.card title=\"Unu\" />}}\n",
+                        "{% <ui.card title=\"Doi\"> %}Corp{% </ui.card> %}\n",
+                    )
+                    .to_string(),
+                ),
+            ]),
+        );
+        let definition_id = definition_id_for_symbol(&root, &workspace, "ui.card");
+        let (plan, receipt) = stage_validated_component_mutation(
+            &root,
+            &mut workspace,
+            ComponentMutationInput {
+                operation: ComponentMutationOperation::Rename,
+                definition_id: Some(definition_id),
+                kind: None,
+                name: None,
+                symbol_name: Some("ui.card".to_string()),
+                destination_name: Some("ui.tile".to_string()),
+                contents: None,
+                source_file: None,
+                source_range: None,
+                companions: Vec::new(),
+            },
+            2,
+        )
+        .unwrap();
+
+        let rewritten = workspace
+            .documents
+            .text_for("templates/components.html")
+            .unwrap();
+        assert!(!rewritten.contains("ui.card"), "{rewritten}");
+        assert_eq!(rewritten.matches("ui.tile").count(), 5, "{rewritten}");
+        assert_eq!(plan.source_symbol.as_deref(), Some("ui.card"));
+        assert_eq!(plan.destination_symbol.as_deref(), Some("ui.tile"));
+        assert_eq!(receipt.history.undo_count, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn delete_tera_component_removes_only_the_selected_symbol() {
+        let root = test_root("delete-tera-component-symbol");
+        let mut workspace = test_workspace(
+            &root,
+            HashMap::from([
+                (
+                    "zola.toml".to_string(),
+                    "base_url = \"https://example.test\"\n".to_string(),
+                ),
+                (
+                    "templates/components.html".to_string(),
+                    concat!(
+                        "{% component ui.card() %}<article>Card</article>{% endcomponent ui.card %}\n",
+                        "{% component ui.badge() %}<span>Badge</span>{% endcomponent ui.badge %}\n",
+                    )
+                    .to_string(),
+                ),
+            ]),
+        );
+        let definition_id = definition_id_for_symbol(&root, &workspace, "ui.card");
+        let (plan, receipt) = stage_validated_component_mutation(
+            &root,
+            &mut workspace,
+            ComponentMutationInput {
+                operation: ComponentMutationOperation::Delete,
+                definition_id: Some(definition_id),
+                kind: None,
+                name: None,
+                symbol_name: Some("ui.card".to_string()),
+                destination_name: None,
+                contents: None,
+                source_file: None,
+                source_range: None,
+                companions: Vec::new(),
+            },
+            2,
+        )
+        .unwrap();
+
+        let remaining = workspace
+            .documents
+            .text_for("templates/components.html")
+            .unwrap();
+        assert!(!remaining.contains("ui.card"), "{remaining}");
+        assert!(remaining.contains("ui.badge"), "{remaining}");
+        assert!(plan.deletes.is_empty());
+        assert_eq!(receipt.history.undo_count, 1);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2123,6 +2430,22 @@ mod tests {
             .into_iter()
             .find(|definition| {
                 definition.file.as_deref() == Some(relative_path) && definition.active
+            })
+            .map(|definition| definition.id)
+            .unwrap()
+    }
+
+    fn definition_id_for_symbol(root: &Path, workspace: &ProjectWorkspace, symbol: &str) -> String {
+        let projection = workspace.capture_projection_snapshot().unwrap();
+        build_source_graph_from_workspace_projection(root, &projection)
+            .unwrap()
+            .component_graph
+            .definitions
+            .into_iter()
+            .find(|definition| {
+                definition.kind == ComponentDefinitionKind::TeraComponent
+                    && definition.symbol.as_deref() == Some(symbol)
+                    && definition.active
             })
             .map(|definition| definition.id)
             .unwrap()

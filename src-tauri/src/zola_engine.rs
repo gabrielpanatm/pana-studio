@@ -16,8 +16,8 @@ pub(crate) struct ZolaEngineGuard {
     _guard: std::sync::MutexGuard<'static, ()>,
 }
 
-pub(crate) const EMBEDDED_ZOLA_VERSION: &str = "0.22.1";
-pub(crate) const EMBEDDED_ZOLA_REVISION: &str = "29540e9897dbe8aca388b13f7bdf615985f6ca2c";
+pub(crate) const EMBEDDED_ZOLA_VERSION: &str = "0.23.4";
+pub(crate) const EMBEDDED_ZOLA_REVISION: &str = "28daab8d47cacb1e6c863b97739148f424433f5b";
 
 pub(crate) fn with_zola_engine<T>(
     operation: &str,
@@ -87,10 +87,10 @@ mod tests {
 
     #[test]
     fn embedded_revision_is_pinned_explicitly() {
-        assert_eq!(EMBEDDED_ZOLA_VERSION, "0.22.1");
+        assert_eq!(EMBEDDED_ZOLA_VERSION, "0.23.4");
         assert_eq!(
             EMBEDDED_ZOLA_REVISION,
-            "29540e9897dbe8aca388b13f7bdf615985f6ca2c"
+            "28daab8d47cacb1e6c863b97739148f424433f5b"
         );
     }
 

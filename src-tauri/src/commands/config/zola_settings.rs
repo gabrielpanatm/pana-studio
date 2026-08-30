@@ -1,17 +1,18 @@
 use std::path::{Path, PathBuf};
 
 use crate::commands::config::{
-    model::ZolaProjectSettings,
+    model::{HighlightDataAttrPosition, ZolaProjectSettings},
     toml_edit::{
-        remove_toml_key, toml_array, toml_bool, toml_paginated_sitemap, toml_quote, toml_string,
-        toml_string_array, toml_u32, upsert_or_remove_u32, upsert_toml_value,
+        remove_toml_key, toml_array, toml_bool, toml_paginated_sitemap, toml_quote,
+        toml_section_exists, toml_string, toml_string_array, toml_u32, upsert_or_remove_u32,
+        upsert_toml_value,
     },
 };
 
 pub(super) fn write_zola_settings_to_source(
     source: &str,
     settings: &ZolaProjectSettings,
-) -> String {
+) -> Result<String, String> {
     write_zola_settings_source(source, settings)
 }
 
@@ -63,6 +64,15 @@ fn parse_zola_project_settings(source: &str, config_path: &str) -> ZolaProjectSe
             }
         },
         feed_limit: toml_u32(source, None, "feed_limit"),
+        skip_content_templating: toml_string_array(source, None, "skip_content_templating"),
+        highlight_data_attr_position: toml_section_exists(source, "markdown.highlighting").then(
+            || {
+                toml_string(source, Some("markdown.highlighting"), "data_attr_position")
+                    .as_deref()
+                    .and_then(HighlightDataAttrPosition::from_zola_str)
+                    .unwrap_or(HighlightDataAttrPosition::Code)
+            },
+        ),
         render_emoji: toml_bool(source, Some("markdown"), "render_emoji").unwrap_or(false),
         smart_punctuation: toml_bool(source, Some("markdown"), "smart_punctuation")
             .unwrap_or(false),
@@ -101,7 +111,10 @@ fn parse_zola_project_settings(source: &str, config_path: &str) -> ZolaProjectSe
     }
 }
 
-fn write_zola_settings_source(source: &str, settings: &ZolaProjectSettings) -> String {
+fn write_zola_settings_source(
+    source: &str,
+    settings: &ZolaProjectSettings,
+) -> Result<String, String> {
     let mut next = source.to_string();
     next = upsert_toml_value(&next, None, "base_url", toml_quote(&settings.base_url));
     next = upsert_toml_value(&next, None, "title", toml_quote(&settings.title));
@@ -161,6 +174,33 @@ fn write_zola_settings_source(source: &str, settings: &ZolaProjectSettings) -> S
         toml_array(&settings.feed_filenames),
     );
     next = upsert_or_remove_u32(&next, None, "feed_limit", settings.feed_limit);
+    next = if settings.skip_content_templating.is_empty() {
+        remove_toml_key(&next, None, "skip_content_templating")
+    } else {
+        upsert_toml_value(
+            &next,
+            None,
+            "skip_content_templating",
+            toml_array(&settings.skip_content_templating),
+        )
+    };
+    next = match settings.highlight_data_attr_position {
+        Some(position) => {
+            if !toml_section_exists(source, "markdown.highlighting") {
+                return Err(
+                    "data_attr_position poate fi configurat numai după activarea secțiunii [markdown.highlighting]."
+                        .to_string(),
+                );
+            }
+            upsert_toml_value(
+                &next,
+                Some("markdown.highlighting"),
+                "data_attr_position",
+                toml_quote(position.as_zola_str()),
+            )
+        }
+        None => remove_toml_key(&next, Some("markdown.highlighting"), "data_attr_position"),
+    };
     next = upsert_toml_value(
         &next,
         Some("markdown"),
@@ -258,12 +298,15 @@ fn write_zola_settings_source(source: &str, settings: &ZolaProjectSettings) -> S
         "include_content",
         settings.search_include_content.to_string(),
     );
-    upsert_or_remove_u32(
+    next = upsert_or_remove_u32(
         &next,
         Some("search"),
         "truncate_content_length",
         settings.search_truncate_content_length,
-    )
+    );
+    zola_config::Config::parse(&next)
+        .map_err(|error| format!("Configurația Zola rezultată este invalidă: {error:#}"))?;
+    Ok(next)
 }
 
 #[cfg(test)]
@@ -289,6 +332,8 @@ mod tests {
             generate_feeds: true,
             feed_filenames: vec!["atom.xml".to_string(), "rss.xml".to_string()],
             feed_limit: Some(10),
+            skip_content_templating: vec!["documentatie/**".to_string()],
+            highlight_data_attr_position: Some(HighlightDataAttrPosition::Pre),
             render_emoji: true,
             smart_punctuation: true,
             insert_anchor_links: "left".to_string(),
@@ -344,13 +389,15 @@ mod tests {
 
     #[test]
     fn zola_settings_write_search_index_in_root_section() {
+        let mut settings = sample_settings();
+        settings.highlight_data_attr_position = None;
         let source = r#"base_url = "https://old.test"
 
 [search]
 build_search_index = false
 include_title = false
 "#;
-        let updated = write_zola_settings_to_source(source, &sample_settings());
+        let updated = write_zola_settings_to_source(source, &settings).unwrap();
 
         assert_eq!(
             toml_raw_value(&updated, None, "build_search_index"),
@@ -370,17 +417,77 @@ include_title = false
     fn zola_settings_write_paginated_sitemap_as_zola_string() {
         let mut settings = sample_settings();
         settings.exclude_paginated_pages_in_sitemap = true;
-        let updated = write_zola_settings_to_source("", &settings);
+        settings.highlight_data_attr_position = None;
+        let updated = write_zola_settings_to_source("", &settings).unwrap();
         assert_eq!(
             toml_raw_value(&updated, None, "exclude_paginated_pages_in_sitemap"),
             Some("\"all\"".to_string())
         );
 
         settings.exclude_paginated_pages_in_sitemap = false;
-        let updated = write_zola_settings_to_source("", &settings);
+        let updated = write_zola_settings_to_source("", &settings).unwrap();
         assert_eq!(
             toml_raw_value(&updated, None, "exclude_paginated_pages_in_sitemap"),
             Some("\"none\"".to_string())
         );
+    }
+
+    #[test]
+    fn zola_023_editor_settings_round_trip_without_touching_unrelated_toml() {
+        let source = r#"# comentariu păstrat
+base_url = "https://old.test"
+skip_content_templating = ["vechi/**"]
+
+[markdown.highlighting]
+style = "class"
+theme = "github-dark"
+data_attr_position = "code"
+
+[extra]
+custom = "păstrat"
+"#;
+        let mut settings = sample_settings();
+        settings.skip_content_templating =
+            vec!["documentatie/**".to_string(), "literal/*.md".to_string()];
+        settings.highlight_data_attr_position = Some(HighlightDataAttrPosition::Both);
+
+        let updated = write_zola_settings_to_source(source, &settings).unwrap();
+        let parsed = parse_zola_project_settings(&updated, "zola.toml");
+
+        assert_eq!(
+            parsed.skip_content_templating,
+            settings.skip_content_templating
+        );
+        assert_eq!(
+            parsed.highlight_data_attr_position,
+            Some(HighlightDataAttrPosition::Both)
+        );
+        assert!(updated.contains("# comentariu păstrat"));
+        assert!(updated.contains("custom = \"păstrat\""));
+        zola_config::Config::parse(&updated).expect("configurație acceptată de Zola");
+    }
+
+    #[test]
+    fn highlighting_position_requires_an_existing_valid_highlighting_section() {
+        let error = write_zola_settings_to_source(
+            "base_url = \"https://example.test\"\n",
+            &sample_settings(),
+        )
+        .expect_err("secțiunea highlighting nu trebuie creată incomplet");
+
+        assert!(error.contains("[markdown.highlighting]"));
+    }
+
+    #[test]
+    fn invalid_skip_content_glob_is_rejected_by_zola_config() {
+        let mut settings = sample_settings();
+        settings.highlight_data_attr_position = None;
+        settings.skip_content_templating = vec!["[invalid".to_string()];
+
+        let error =
+            write_zola_settings_to_source("base_url = \"https://example.test\"\n", &settings)
+                .expect_err("globul invalid trebuie respins");
+
+        assert!(error.contains("skip_content_templating"));
     }
 }

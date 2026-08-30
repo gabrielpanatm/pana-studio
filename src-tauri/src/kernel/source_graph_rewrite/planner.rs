@@ -180,15 +180,15 @@ fn plan_template_reference_workspace_mutation_with_graph(
                 "missing_section_page_template",
                 &mut diagnostics,
             )?,
-            SourceRelationKind::Extends
-            | SourceRelationKind::Includes
-            | SourceRelationKind::Imports => plan_tera_template_replacements(
-                store,
-                from_node,
-                &relation.kind,
-                target,
-                &mut diagnostics,
-            )?,
+            SourceRelationKind::Extends | SourceRelationKind::Includes => {
+                plan_tera_template_replacements(
+                    store,
+                    from_node,
+                    &relation.kind,
+                    target,
+                    &mut diagnostics,
+                )?
+            }
             SourceRelationKind::GetsPage
             | SourceRelationKind::GetsSection
             | SourceRelationKind::InternalContentLink => plan_zola_content_function_replacements(
@@ -397,7 +397,6 @@ fn is_rewriteable_relation_kind(kind: &SourceRelationKind) -> bool {
             | SourceRelationKind::ImageResize
             | SourceRelationKind::Extends
             | SourceRelationKind::Includes
-            | SourceRelationKind::Imports
     )
 }
 

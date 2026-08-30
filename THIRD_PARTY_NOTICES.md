@@ -3,17 +3,17 @@
 Pană Studio include și distribuie componente open-source ale altor autori.
 Licența Pană Studio nu înlocuiește și nu restrânge licențele acestor componente.
 
-## Zola 0.22.1
+## Zola 0.23.4
 
 Pană Studio integrează motorul Rust oficial Zola pentru preview-ul
 tranzacțional, Source Browser, validare și build. Nu distribuie și nu pornește
 un executabil Zola separat.
 
 - proiect upstream: <https://github.com/getzola/zola>;
-- versiune: `0.22.1`;
-- revizie sursă: `29540e9897dbe8aca388b13f7bdf615985f6ca2c`;
-- pachete Cargo integrate: `site` și `utils`, redenumite local `zola-site` și
-  `zola-utils`;
+- versiune: `0.23.4`;
+- revizie sursă: `28daab8d47cacb1e6c863b97739148f424433f5b`;
+- pachete Cargo integrate: `site`, `config` și `utils`, redenumite local
+  `zola-site`, `zola-config` și `zola-utils`;
 - modificări aduse sursei upstream: niciuna;
 - licențe upstream: EUPL-1.2 pentru codul nou și MIT pentru codul care precedă
   schimbarea licenței indicată de proiectul Zola.

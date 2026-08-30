@@ -790,6 +790,7 @@
     await projectDocuments.load(file, {
       preferredTemplatePagePath: options.templateContextPagePath,
       preferredTemplateRoute: options.templateContextUrl,
+      preferredComponentName: options.componentName,
     });
     await workbenchNavigation.setCenterView(options.surface === "visual" ? "preview" : "code");
   }

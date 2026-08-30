@@ -27,8 +27,6 @@ pub(crate) struct MarkdownTemplateAnalysis {
     pub(crate) projections: Vec<MarkdownProjection>,
     #[cfg(test)]
     pub(crate) projection_by_location: HashMap<String, MarkdownProjection>,
-    #[cfg(test)]
-    pub(crate) shortcode_projection: Option<MarkdownProjection>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,8 +150,8 @@ pub(crate) fn analyze_template_markdown(
 
 fn analyze_template(
     template_file: &str,
-    template_name: &str,
-    template_root_id: &str,
+    _template_name: &str,
+    _template_root_id: &str,
     source: &str,
     semantics: Option<&TeraSemanticDocument>,
     source_nodes: &[MarkdownSourceNode],
@@ -170,26 +168,9 @@ fn analyze_template(
         );
     }
 
-    let shortcode_projection = template_name
-        .strip_prefix("shortcodes/")
-        .filter(|name| name.ends_with(".html") || name.ends_with(".md"))
-        .map(|_| MarkdownProjection {
-            id: projection_id(template_root_id, MarkdownProjectionKind::Shortcode),
-            kind: MarkdownProjectionKind::Shortcode,
-            template_source_node_id: template_root_id.to_string(),
-            template_file: template_file.to_string(),
-            template_range: (!source.is_empty()).then(|| source_range(source, 0, source.len())),
-            binding_kind: MarkdownSourceBindingKind::ShortcodeInvocation,
-            static_content_path: None,
-            runtime_source_expression: None,
-        });
-    if let Some(shortcode) = shortcode_projection.as_ref() {
-        projections.push(shortcode.clone());
-    }
     #[cfg(test)]
     let projection_by_location = projections
         .iter()
-        .filter(|projection| projection.kind != MarkdownProjectionKind::Shortcode)
         .filter_map(|projection| {
             projection.template_range.as_ref().map(|range| {
                 (
@@ -206,8 +187,6 @@ fn analyze_template(
         projections,
         #[cfg(test)]
         projection_by_location,
-        #[cfg(test)]
-        shortcode_projection,
     }
 }
 
@@ -349,8 +328,18 @@ fn collect_markdown_projections(
                     );
                 }
             }
-            TeraSemanticNode::MacroDefinition { body, .. } => {
-                cursor.next(SourceNodeKind::Macro);
+            TeraSemanticNode::ComponentDefinition { body, .. } => {
+                cursor.next(SourceNodeKind::ComponentDefinition);
+                collect_markdown_projections(
+                    body,
+                    cursor,
+                    &mut environment.clone(),
+                    template_file,
+                    output,
+                );
+            }
+            TeraSemanticNode::ComponentCall { body, .. }
+            | TeraSemanticNode::SetBlock { body, .. } => {
                 collect_markdown_projections(
                     body,
                     cursor,
@@ -697,19 +686,6 @@ mod tests {
             analysis.projections[1].runtime_source_expression.as_deref(),
             Some("item.relative_path")
         );
-    }
-
-    #[test]
-    fn shortcode_is_a_distinct_atomic_projection() {
-        let analysis = analyze_template_markdown(
-            "templates/shortcodes/notice.html",
-            "<aside>{{ body | markdown | safe }}</aside>",
-        );
-        assert!(analysis
-            .projections
-            .iter()
-            .any(|projection| projection.kind == MarkdownProjectionKind::Shortcode));
-        assert!(analysis.shortcode_projection.is_some());
     }
 
     #[test]

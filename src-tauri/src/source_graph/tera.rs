@@ -60,16 +60,38 @@ fn item_from_cst(source: &str, node: &TeraCstNode) -> Option<TeraItem> {
 
     match &node.kind {
         TeraCstKind::Text => None,
-        TeraCstKind::Variable => Some(base(
-            TeraItemKind::Node,
-            Some(if content.trim() == "super()" {
-                SourceNodeKind::Super
-            } else {
-                SourceNodeKind::TeraVariable
-            }),
-            shorten(content, "variable"),
-            TeraScopeAction::None,
-        )),
+        TeraCstKind::Variable => {
+            let trimmed = content.trim_start();
+            if trimmed.starts_with("</") {
+                return Some(base(
+                    TeraItemKind::EndScope,
+                    None,
+                    component_call_name(content).unwrap_or_else(|| "component".to_string()),
+                    TeraScopeAction::Close,
+                ));
+            }
+            let component = trimmed.starts_with('<');
+            Some(base(
+                TeraItemKind::Node,
+                Some(if component {
+                    SourceNodeKind::ComponentCall
+                } else if content.trim() == "super()" {
+                    SourceNodeKind::Super
+                } else {
+                    SourceNodeKind::TeraVariable
+                }),
+                if component {
+                    component_call_name(content).unwrap_or_else(|| "component".to_string())
+                } else {
+                    shorten(content, "variable")
+                },
+                if component && !trimmed.ends_with("/>") {
+                    TeraScopeAction::Open
+                } else {
+                    TeraScopeAction::None
+                },
+            ))
+        }
         TeraCstKind::Comment => Some(base(
             TeraItemKind::Node,
             Some(SourceNodeKind::TeraComment),
@@ -116,12 +138,12 @@ fn item_from_tag(content: &str, tag: &TeraTagKind, node: &TeraCstNode) -> TeraIt
             start: node.start,
             end: node.end,
         },
-        TeraTagKind::Import => TeraItem {
+        TeraTagKind::LegacyImport => TeraItem {
             kind: TeraItemKind::Node,
-            node_kind: Some(SourceNodeKind::Import),
-            label: target_label("import", extract_first_string(content).as_deref()),
-            target: extract_first_string(content),
-            targets: extract_strings(content),
+            node_kind: Some(SourceNodeKind::LegacyTera),
+            label: "legacy import".to_string(),
+            target: None,
+            targets: Vec::new(),
             ignore_missing: false,
             scope_action: tag.scope_action(),
             start: node.start,
@@ -141,11 +163,12 @@ fn item_from_tag(content: &str, tag: &TeraTagKind, node: &TeraCstNode) -> TeraIt
                 end: node.end,
             }
         }
-        TeraTagKind::Macro => {
-            let name = macro_name(content).unwrap_or_else(|| "macro".to_string());
+        TeraTagKind::ComponentDefinition => {
+            let name =
+                component_definition_name(content).unwrap_or_else(|| "component".to_string());
             TeraItem {
                 kind: TeraItemKind::Node,
-                node_kind: Some(SourceNodeKind::Macro),
+                node_kind: Some(SourceNodeKind::ComponentDefinition),
                 label: name,
                 target: None,
                 targets: Vec::new(),
@@ -155,6 +178,28 @@ fn item_from_tag(content: &str, tag: &TeraTagKind, node: &TeraCstNode) -> TeraIt
                 end: node.end,
             }
         }
+        TeraTagKind::ComponentCall => TeraItem {
+            kind: TeraItemKind::Node,
+            node_kind: Some(SourceNodeKind::ComponentCall),
+            label: component_call_name(content).unwrap_or_else(|| "component".to_string()),
+            target: None,
+            targets: Vec::new(),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
+        },
+        TeraTagKind::LegacyDefinition => TeraItem {
+            kind: TeraItemKind::Node,
+            node_kind: Some(SourceNodeKind::LegacyTera),
+            label: "legacy definition".to_string(),
+            target: None,
+            targets: Vec::new(),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
+        },
         TeraTagKind::For => TeraItem {
             kind: TeraItemKind::Node,
             node_kind: Some(SourceNodeKind::For),
@@ -182,7 +227,7 @@ fn item_from_tag(content: &str, tag: &TeraTagKind, node: &TeraCstNode) -> TeraIt
             start: node.start,
             end: node.end,
         },
-        TeraTagKind::Set | TeraTagKind::SetGlobal => TeraItem {
+        TeraTagKind::Set | TeraTagKind::SetGlobal | TeraTagKind::SetBlock => TeraItem {
             kind: TeraItemKind::Node,
             node_kind: Some(if *tag == TeraTagKind::SetGlobal {
                 SourceNodeKind::SetGlobal
@@ -198,9 +243,12 @@ fn item_from_tag(content: &str, tag: &TeraTagKind, node: &TeraCstNode) -> TeraIt
             end: node.end,
         },
         TeraTagKind::EndBlock
-        | TeraTagKind::EndMacro
+        | TeraTagKind::EndComponentDefinition
+        | TeraTagKind::EndComponentCall
+        | TeraTagKind::EndLegacyDefinition
         | TeraTagKind::EndFor
         | TeraTagKind::EndIf
+        | TeraTagKind::EndSetBlock
         | TeraTagKind::EndFilter => TeraItem {
             kind: TeraItemKind::EndScope,
             node_kind: None,
@@ -303,14 +351,26 @@ fn word_after_keyword(value: &str) -> Option<String> {
         .filter(|word| !word.is_empty())
 }
 
-fn macro_name(value: &str) -> Option<String> {
-    let rest = value.trim_start_matches("macro").trim();
+fn component_definition_name(value: &str) -> Option<String> {
+    let rest = value.trim_start_matches("component").trim();
     let name = rest.split('(').next()?.trim();
     if name.is_empty() {
         None
     } else {
         Some(name.to_string())
     }
+}
+
+fn component_call_name(value: &str) -> Option<String> {
+    let rest = value
+        .trim()
+        .strip_prefix('<')?
+        .trim_start_matches('/')
+        .trim();
+    rest.split(|character: char| character.is_whitespace() || character == '/' || character == '>')
+        .next()
+        .map(str::to_string)
+        .filter(|name| !name.is_empty())
 }
 
 fn extract_first_string(value: &str) -> Option<String> {
@@ -377,9 +437,10 @@ mod tests {
     #[test]
     fn parses_core_tera_relations() {
         let source = r#"{% extends "base.html" %}
-{% import "macros/cards.html" as cards %}
+{% component cards.card(title: string) %}{{ title }}{% endcomponent cards.card %}
 {% block content %}
 {% include "partials/header.html" %}
+{{<cards.card title="Example" />}}
 {{ section.title }}
 {% endblock %}
 "#;
@@ -388,10 +449,13 @@ mod tests {
             .iter()
             .any(|item| item.node_kind == Some(SourceNodeKind::Extends)
                 && item.target.as_deref() == Some("base.html")));
-        assert!(items
-            .iter()
-            .any(|item| item.node_kind == Some(SourceNodeKind::Import)
-                && item.target.as_deref() == Some("macros/cards.html")));
+        assert!(items.iter().any(|item| {
+            item.node_kind == Some(SourceNodeKind::ComponentDefinition)
+                && item.label == "cards.card"
+        }));
+        assert!(items.iter().any(|item| {
+            item.node_kind == Some(SourceNodeKind::ComponentCall) && item.label == "cards.card"
+        }));
         assert!(items
             .iter()
             .any(|item| item.node_kind == Some(SourceNodeKind::Block) && item.label == "content"));

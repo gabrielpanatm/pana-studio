@@ -14,14 +14,12 @@ export function teraSnippetForItem(item: TeraPaletteItem) {
   if (item.kind === "include") {
     return `{% include "${item.target || "partials/cta.html"}" %}`;
   }
-  if (item.kind === "import") {
-    return `{% import "${item.target || "macros.html"}" as ${item.name || "macros"} %}`;
+  if (item.kind === "componentDefinition") {
+    const name = item.name || "component";
+    return `{% component ${name}() %}\n{% endcomponent ${name} %}`;
   }
-  if (item.kind === "macro") {
-    return `{% macro ${item.name || "component"}() %}\n{% endmacro %}`;
-  }
-  if (item.kind === "macroCall") {
-    return `{% import "${item.target || "macros.html"}" as pana_component %}\n{{ pana_component::${item.name || "component"}() }}`;
+  if (item.kind === "componentCall") {
+    return `{{<${item.name || item.target || "component"} />}}`;
   }
   if (item.kind === "for") {
     return `{% for ${item.expression || "item in items"} %}\n{% endfor %}`;

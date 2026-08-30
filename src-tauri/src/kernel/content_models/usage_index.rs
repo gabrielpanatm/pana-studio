@@ -252,7 +252,6 @@ fn template_files_for_binding_scope(
             files.insert(template.file.clone());
             pending.extend(template.extends.iter().cloned());
             pending.extend(template.includes.iter().cloned());
-            pending.extend(template.imports.iter().cloned());
         }
     }
     Some(files)

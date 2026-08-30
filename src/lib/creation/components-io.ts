@@ -21,7 +21,7 @@ export async function applyComponentMutation(
     identity,
   });
   requireProjectFileReceiptIdentity(receipt.workspace, identity, "apply_component_mutation");
-  if (receipt.plan.schemaVersion !== 2) {
+  if (receipt.plan.schemaVersion !== 3) {
     throw schemaMismatch(
       t("io-resource-component-plan"),
       receipt.plan.schemaVersion,

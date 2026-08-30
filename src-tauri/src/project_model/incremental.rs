@@ -1204,6 +1204,66 @@ mod tests {
     }
 
     #[test]
+    fn component_contract_change_rebuilds_the_unified_graph_and_matches_full_scan() {
+        let root = unique_test_dir();
+        fs::create_dir_all(&root).unwrap();
+        let before_projection = projection(&root, 9, None, initial_sources(), HashSet::new());
+        let before =
+            build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
+        let mut after_sources = initial_sources();
+        after_sources.insert(
+            "templates/components/ui.html".to_string(),
+            concat!(
+                "{% component ui.badge(text: string, tone: string = \"neutral\") %}",
+                "<strong data-tone=\"{{ tone }}\">{{ text }}</strong>",
+                "{% endcomponent ui.badge %}",
+            )
+            .to_string(),
+        );
+        let after_projection = projection(
+            &root,
+            10,
+            Some("component-contract-10"),
+            after_sources,
+            HashSet::from(["templates/components/ui.html".to_string()]),
+        );
+
+        let outcome = rebuild_project_model_after_workspace_change(
+            &root,
+            Some(&before),
+            Some(9),
+            &after_projection,
+            &["templates/components/ui.html".to_string()],
+            ProjectModelIncrementalIntent::HtmlStructural,
+        )
+        .unwrap();
+        let oracle =
+            build_project_model_from_workspace_projection(&root, &after_projection).unwrap();
+
+        assert_eq!(outcome.report.mode, ProjectModelRebuildMode::Incremental);
+        assert!(outcome
+            .report
+            .invalidated_template_files
+            .contains(&"templates/index.html".to_string()));
+        let definition = outcome
+            .model
+            .source_graph
+            .component_graph
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "ui.badge")
+            .unwrap();
+        assert_eq!(definition.parameters.len(), 2);
+        assert_eq!(
+            definition.parameters[0].argument_type.as_deref(),
+            Some("string")
+        );
+        assert!(!definition.parameters[1].required);
+        assert_model_semantics_match(&outcome.model, &oracle);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn rich_derived_projections_and_undo_match_the_full_builder() {
         let root = unique_test_dir();
         fs::create_dir_all(&root).unwrap();
@@ -1648,7 +1708,6 @@ mod tests {
             SourceRelationKind::SectionPageTemplate,
             SourceRelationKind::Extends,
             SourceRelationKind::Includes,
-            SourceRelationKind::Imports,
             SourceRelationKind::DefinesBlock,
             SourceRelationKind::OverridesBlock,
             SourceRelationKind::DataFileLoad,
@@ -1663,8 +1722,11 @@ mod tests {
                 .any(|relation| relation.kind == kind));
         }
         assert!(before.source_graph.templates.iter().any(|template| {
-            template.file == "templates/macros/ui.html"
-                && template.macros.contains(&"badge".to_string())
+            template.file == "templates/components/ui.html"
+                && template
+                    .component_definitions
+                    .iter()
+                    .any(|component| component.name == "ui.badge")
         }));
         assert!(before
             .source_graph
@@ -1673,7 +1735,7 @@ mod tests {
             .iter()
             .any(|invocation| {
                 invocation.file == "templates/index.html"
-                    && invocation.kind == ComponentInvocationKind::MacroCall
+                    && invocation.kind == ComponentInvocationKind::TeraComponent
             }));
 
         let initial = initial_index_source();
@@ -2330,8 +2392,8 @@ mod tests {
                 "<footer>Subsol</footer>".to_string(),
             ),
             (
-                "templates/macros/ui.html".to_string(),
-                "{% macro badge(text) %}<strong>{{ text }}</strong>{% endmacro %}".to_string(),
+                "templates/components/ui.html".to_string(),
+                "{% component ui.badge(text) %}<strong>{{ text }}</strong>{% endcomponent ui.badge %}".to_string(),
             ),
             (
                 "templates/pagina.html".to_string(),
@@ -2367,11 +2429,10 @@ mod tests {
     fn initial_index_source() -> String {
         concat!(
             "{% extends \"base.html\" %}",
-            "{% import \"macros/ui.html\" as ui %}",
             "{% block content %}",
             "{% set catalog = load_data(path=\"data/catalog.toml\") %}",
             "<main><h1>Titlu</h1><p class=\"lead\">Text</p>",
-            "{{ ui::badge(text=catalog.title) }}",
+            "{{<ui.badge text={catalog.title} />}}",
             "{% include \"partials/footer.html\" %}",
             "<img src=\"{{ get_url(path='icon.svg') }}\" alt=\"Icon\">",
             "<script src=\"{{ get_url(path='app.js') }}\"></script></main>",

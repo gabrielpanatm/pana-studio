@@ -44,8 +44,8 @@ function isStructuralTeraNode(node: SourceGraphNode) {
     "extends",
     "block",
     "include",
-    "import",
-    "macro",
+    "componentDefinition",
+    "componentCall",
     "for",
     "if",
     "set",
@@ -57,7 +57,7 @@ function isStructuralTeraNode(node: SourceGraphNode) {
 }
 
 function isBodyTeraNode(node: SourceGraphNode) {
-  return ["block", "macro", "for", "if", "raw"].includes(node.kind);
+  return ["block", "componentDefinition", "componentCall", "for", "if", "raw"].includes(node.kind);
 }
 
 function canReceiveTeraInsideTag(tag: string) {
@@ -100,6 +100,16 @@ function templateTargetExists(graph: SourceGraph | null, target: string | null |
   const normalized = normalizeTemplateReference(target);
   if (!normalized || !graph) return false;
   return graph.templates.some((template) => normalizeTemplateReference(template.name) === normalized);
+}
+
+function componentDefinitionExists(graph: SourceGraph | null, name: string | null | undefined) {
+  const normalized = (name || "").trim();
+  if (!normalized || !graph) return false;
+  return graph.componentGraph.definitions.some((definition) => (
+    definition.kind === "teraComponent"
+    && definition.active
+    && definition.name === normalized
+  ));
 }
 
 function validateTeraDrop(
@@ -180,12 +190,12 @@ function validateTeraDrop(
     }
   }
 
-  if (request.item.kind === "macro") {
+  if (request.item.kind === "componentDefinition") {
     const name = request.item.name || "component";
-    if (template?.macros.includes(name)) {
+    if (componentDefinitionExists(graph, name)) {
       return {
         allowed: false,
-        reason: t("tera-drop-macro-exists", {
+        reason: t("tera-drop-component-exists", {
           name,
           template: templateReferenceForFile(anchor.file),
         }),
@@ -195,9 +205,7 @@ function validateTeraDrop(
   }
 
   if (
-    (request.item.kind === "include"
-      || request.item.kind === "import"
-      || request.item.kind === "macroCall")
+    request.item.kind === "include"
     && !templateTargetExists(graph, request.item.target)
   ) {
     return {
@@ -209,10 +217,15 @@ function validateTeraDrop(
     };
   }
 
-  if (request.item.kind === "import" && request.position === "inside") {
+  if (
+    request.item.kind === "componentCall"
+    && !componentDefinitionExists(graph, request.item.name || request.item.target)
+  ) {
     return {
       allowed: false,
-      reason: t("tera-drop-import-template-level"),
+      reason: t("tera-drop-component-missing", {
+        name: request.item.name || request.item.target || t("tera-drop-empty"),
+      }),
       anchor,
     };
   }

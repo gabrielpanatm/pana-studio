@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="{{ lang }}">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ config.title }} · {{ section.title }}</title>
+    <link rel="stylesheet" href="{{ get_url(path='site.css') }}">
+  </head>
+  <body>
+    {% set optimized = resize_image(path='pixel.png', width=1, height=1, op='fit') %}
+    <main data-kind="root">{{ section.content | safe }}</main>
+    <img src="{{ optimized.url }}" alt="Pixel procesat">
+  </body>
+</html>

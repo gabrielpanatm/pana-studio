@@ -52,6 +52,7 @@
   let projectSettingsRevision = $state(0);
   let feedFilenamesText = $state("");
   let feedLimitText = $state("");
+  let skipContentTemplatingText = $state("");
   let searchTruncateText = $state("");
   let loading = $state(false);
   let loaded = $state(false);
@@ -64,6 +65,7 @@
   const searchIndexFormatOptions = [
     "elasticlunr_javascript", "elasticlunr_json", "fuse_javascript", "fuse_json",
   ];
+  const highlightDataAttrPositionOptions = ["pre", "code", "both", "none"];
   const buildFields = $derived<ToggleField[]>([
     { key: "compileSass", label: t("deploy-compile-sass"), help: t("deploy-compile-sass-help") },
     { key: "minifyHtml", label: t("deploy-minify-html"), help: t("deploy-minify-html-help") },
@@ -150,6 +152,7 @@
         zolaSettings: zolaSettingsWithTextFields(zolaSettings, {
           feedFilenamesText,
           feedLimitText,
+          skipContentTemplatingText,
           searchTruncateText,
         }),
       });
@@ -180,6 +183,7 @@
     const fields = textFieldsFromZolaSettings(settings);
     feedFilenamesText = fields.feedFilenamesText;
     feedLimitText = fields.feedLimitText;
+    skipContentTemplatingText = fields.skipContentTemplatingText;
     searchTruncateText = fields.searchTruncateText;
   }
 
@@ -306,6 +310,29 @@
           <label class="ui-form-field">
             <span class="ui-form-label">insert_anchor_links</span>
             <SelectControl size="default" value={zolaSettings.insertAnchorLinks} options={insertAnchorOptions} disabled={saving} ariaLabel={t("deploy-anchor-links-label")} onchange={(value) => setSetting("insertAnchorLinks", value)} />
+          </label>
+          <label class="ui-form-field">
+            <span class="ui-form-label">skip_content_templating</span>
+            <textarea
+              class="ui-textarea"
+              rows="4"
+              placeholder={t("deploy-skip-content-templating-placeholder")}
+              value={skipContentTemplatingText}
+              oninput={(event) => { skipContentTemplatingText = event.currentTarget.value; markDirty(); }}
+            ></textarea>
+            <span class="ui-form-help">{t("deploy-skip-content-templating-help")}</span>
+          </label>
+          <label class="ui-form-field">
+            <span class="ui-form-label">markdown.highlighting.data_attr_position</span>
+            <SelectControl
+              size="default"
+              value={zolaSettings.highlightDataAttrPosition ?? "code"}
+              options={highlightDataAttrPositionOptions}
+              disabled={saving || zolaSettings.highlightDataAttrPosition === null}
+              ariaLabel={t("deploy-highlight-data-position-label")}
+              onchange={(value) => setSetting("highlightDataAttrPosition", value as "pre" | "code" | "both" | "none")}
+            />
+            <span class="ui-form-help">{zolaSettings.highlightDataAttrPosition === null ? t("deploy-highlighting-disabled-help") : t("deploy-highlight-data-position-help")}</span>
           </label>
           <h3 class="ui-form-subheading">{t("deploy-external-links")}</h3>
           <div class="ui-form-grid columns-2">

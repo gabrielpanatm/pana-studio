@@ -42,7 +42,11 @@ source-graph-data-format-invalid = Invalid { $format } data document: { $details
 source-graph-config-toml-invalid = Invalid TOML configuration: { $details }
 source-graph-content-target-missing = Referenced Zola content was not found: { $target }
 source-graph-template-target-missing = Referenced template was not found: { $target }
-source-graph-shortcode-syntax-invalid = The Markdown content has invalid Zola shortcode syntax: { $details }
+source-graph-content-tera-syntax-invalid = The Markdown content contains invalid Tera 2 syntax: { $details }
+source-graph-legacy-tera-incompatible = This template uses Tera 1 macro/import syntax, which is incompatible with Zola 0.23.4 and Tera 2.
+source-graph-legacy-shortcode-template-incompatible = Legacy shortcode template directories are incompatible with Zola 0.23.4; define a Tera 2 component instead.
+source-graph-legacy-shortcode-incompatible = Legacy shortcode call “{ $name }” is incompatible with Zola 0.23.4; use a Tera 2 component call.
+source-graph-zola-runtime-argument-deprecated = { $function } argument “{ $argument }” is deprecated; use “{ $replacement }” instead.
 source-graph-page-template-missing = The page template was not found: { $template }
 source-graph-section-page-template-missing = The section page_template was not found: { $template }
 source-graph-frontmatter-invalid = Invalid { $format } front matter: { $details }
@@ -52,7 +56,6 @@ source-graph-partial-extends-invalid = Partials must not use extends. Create a p
 source-graph-partial-block-invalid = Partial { $name } contains Tera block “{ $block }”. Partials must be included fragments without block/endblock.
 source-graph-multiple-extends = The template has multiple extends directives; Zola/Tera expects exactly one.
 source-graph-duplicate-tera-block = Duplicate Tera block in the same template: { $block }
-source-graph-tera-cst-ast-mismatch = The lossless CST and Tera AST did not reconcile the same blocks.
 source-graph-dynamic-load-data =
     { $count ->
         [one] One load_data call in { $file } uses a dynamic path and cannot be resolved statically.

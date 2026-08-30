@@ -122,7 +122,7 @@ pub(crate) fn rebuild_local_template_graph(
         return Err(SourceGraphIncrementalFallback::ExistingDiagnostics);
     }
 
-    let (invalidated_template_files, invalidated_page_files) =
+    let (mut invalidated_template_files, mut invalidated_page_files) =
         reverse_template_consumers(&graph, &previous_template);
     let template_parse_started = Instant::now();
     let mut fragment_builder =
@@ -162,6 +162,24 @@ pub(crate) fn rebuild_local_template_graph(
         .first()
         .cloned()
         .ok_or(SourceGraphIncrementalFallback::MissingTemplate)?;
+    if !previous_template.component_definitions.is_empty()
+        || !next_template.component_definitions.is_empty()
+    {
+        let (component_templates, component_pages) = component_consumers(
+            &graph,
+            previous_template
+                .component_definitions
+                .iter()
+                .chain(next_template.component_definitions.iter())
+                .map(|definition| definition.name.as_str()),
+        );
+        invalidated_template_files.extend(component_templates);
+        invalidated_template_files.sort();
+        invalidated_template_files.dedup();
+        invalidated_page_files.extend(component_pages);
+        invalidated_page_files.sort();
+        invalidated_page_files.dedup();
+    }
     let template_parse_us = elapsed_us(template_parse_started);
     if fragment
         .diagnostics
@@ -227,6 +245,14 @@ pub(crate) fn rebuild_local_template_graph(
         .nodes
         .splice(first_node_index..=last_node_index, fragment.nodes);
     graph.templates[template_index] = next_template;
+    // Every derived graph resolves source nodes through the O(1) index. The
+    // splice may shift all following nodes even when their stable IDs survive,
+    // so the old positional index must not escape into component ranges.
+    let node_index_started = Instant::now();
+    graph
+        .rebuild_node_index()
+        .map_err(|_| SourceGraphIncrementalFallback::IdentityCollision)?;
+    let node_index_us = elapsed_us(node_index_started);
     let component_graph_started = Instant::now();
     let previous_component_graph = std::mem::take(&mut graph.component_graph);
     graph.component_graph = crate::source_graph::component_graph::upsert_component_graph_template(
@@ -281,12 +307,6 @@ pub(crate) fn rebuild_local_template_graph(
     );
     graph.markdown_projections = markdown_projections;
     let markdown_us = elapsed_us(markdown_started);
-    let node_index_started = Instant::now();
-    graph
-        .rebuild_node_index()
-        .map_err(|_| SourceGraphIncrementalFallback::IdentityCollision)?;
-    let node_index_us = elapsed_us(node_index_started);
-
     Ok((
         graph,
         SourceGraphIncrementalTemplateReport {
@@ -323,7 +343,6 @@ fn same_dependency_contract(previous: &SourceGraphTemplate, next: &SourceGraphTe
         && previous.extends == next.extends
         && previous.includes == next.includes
         && previous.include_groups == next.include_groups
-        && previous.imports == next.imports
         && previous.get_pages == next.get_pages
         && previous.get_sections == next.get_sections
         && previous.internal_links == next.internal_links
@@ -336,7 +355,39 @@ fn same_dependency_contract(previous: &SourceGraphTemplate, next: &SourceGraphTe
         && previous.image_metadata == next.image_metadata
         && previous.image_resizes == next.image_resizes
         && previous.blocks == next.blocks
-        && previous.macros == next.macros
+}
+
+fn component_consumers<'a>(
+    graph: &SourceGraph,
+    component_names: impl Iterator<Item = &'a str>,
+) -> (Vec<String>, Vec<String>) {
+    let names = component_names.collect::<HashSet<_>>();
+    let template_files = graph
+        .templates
+        .iter()
+        .filter(|template| {
+            template
+                .component_calls
+                .iter()
+                .any(|call| names.contains(call.name.as_str()))
+        })
+        .map(|template| template.file.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let page_files = graph
+        .pages
+        .iter()
+        .filter(|page| {
+            page.component_calls
+                .iter()
+                .any(|call| names.contains(call.name.as_str()))
+        })
+        .map(|page| page.file.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    (template_files, page_files)
 }
 
 fn same_internal_relations(
@@ -385,7 +436,6 @@ fn relation_kind_key(kind: &SourceRelationKind) -> &'static str {
         SourceRelationKind::ImageResize => "image_resize",
         SourceRelationKind::Extends => "extends",
         SourceRelationKind::Includes => "includes",
-        SourceRelationKind::Imports => "imports",
         SourceRelationKind::DefinesBlock => "defines_block",
         SourceRelationKind::OverridesBlock => "overrides_block",
         SourceRelationKind::UsesStyle => "uses_style",
@@ -416,9 +466,7 @@ fn reverse_template_consumers(
             relation.to == node_id
                 && matches!(
                     relation.kind,
-                    SourceRelationKind::Extends
-                        | SourceRelationKind::Includes
-                        | SourceRelationKind::Imports
+                    SourceRelationKind::Extends | SourceRelationKind::Includes
                 )
         }) {
             queue.push_back(relation.from.clone());

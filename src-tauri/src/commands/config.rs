@@ -93,7 +93,7 @@ pub fn save_project_configuration(
                 let updated_zola = zola_settings::write_zola_settings_to_source(
                     &existing_zola,
                     &requested_zola_settings,
-                );
+                )?;
                 let parsed_zola = zola_settings::parse_zola_project_settings_source(
                     &updated_zola,
                     &zola_relative_path,

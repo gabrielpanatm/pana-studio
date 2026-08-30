@@ -9,9 +9,8 @@ use super::contracts::{
 use crate::{
     js::PageJsDraftStore,
     kernel::{
-        component_legacy_migration::migrate_legacy_component_catalog,
         file_buffer_store::{bootstrap_file_buffer_store, now_ms as file_buffer_now_ms},
-        observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
+        observability::{append_event, KernelEventKind, KernelLogEvent, KernelLogLevel},
         preview_projection::{CanvasPatch, CanvasPatchOperation},
         project_runtime_access::{
             refresh_recovery_coordinator_scan, require_current_project_root,
@@ -503,7 +502,6 @@ pub fn recover_project_workspace_save(
         PageJsDraftStore::new(&session),
     )?;
     restore_project_workspace_recovery(&app, &mut rebuilt)?;
-    migrate_legacy_component_catalog(&root, &mut rebuilt, now_ms())?;
     let workspace_snapshot = rebuilt.snapshot();
 
     {

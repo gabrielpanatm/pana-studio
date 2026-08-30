@@ -34,19 +34,15 @@ pub fn preprocess_template_with_revision(
     let line_index = LineIndex::new(source);
     let mut insertions = BTreeMap::<usize, String>::new();
     let mut visual_scope_ids = BTreeSet::<String>::new();
-    let shortcode_projection =
-        source_ids.and_then(|index| index.shortcode_projection_for(relative_path));
-    if shortcode_projection.is_none() {
-        project_tera_provenance_insertions(
-            source,
-            relative_path,
-            source_ids,
-            &document,
-            &line_index,
-            &mut insertions,
-            &mut visual_scope_ids,
-        );
-    }
+    project_tera_provenance_insertions(
+        source,
+        relative_path,
+        source_ids,
+        &document,
+        &line_index,
+        &mut insertions,
+        &mut visual_scope_ids,
+    );
     project_html_provenance_insertions(
         source,
         relative_path,
@@ -69,17 +65,7 @@ pub fn preprocess_template_with_revision(
         cursor = position;
     }
     result.push_str(&source[cursor..]);
-    let result = inject_empty_tera_slot_placeholders(&result, preview_revision, &visual_scope_ids);
-    if let Some(projection) = shortcode_projection {
-        format!(
-            "{}{}{}",
-            markdown_start_marker(projection),
-            result,
-            markdown_end_marker(projection)
-        )
-    } else {
-        result
-    }
+    inject_empty_tera_slot_placeholders(&result, preview_revision, &visual_scope_ids)
 }
 
 fn project_tera_provenance_insertions(
@@ -172,7 +158,7 @@ fn project_tera_provenance_insertions(
                     TeraTagKind::Block
                     | TeraTagKind::For
                     | TeraTagKind::If
-                    | TeraTagKind::Macro
+                    | TeraTagKind::ComponentDefinition
                     | TeraTagKind::Filter => {
                         let keyword = tera_keyword(content);
                         let markdown_projection = source_ids
@@ -219,7 +205,7 @@ fn project_tera_provenance_insertions(
                     TeraTagKind::EndBlock
                     | TeraTagKind::EndFor
                     | TeraTagKind::EndIf
-                    | TeraTagKind::EndMacro
+                    | TeraTagKind::EndComponentDefinition
                     | TeraTagKind::EndFilter => {
                         if let Some(Some(template_source_id)) = scope_stack.pop() {
                             append_insertion(
@@ -348,7 +334,7 @@ fn tera_keyword(content: &str) -> &str {
 
 #[cfg(test)]
 fn opens_tera_scope(keyword: &str) -> bool {
-    matches!(keyword, "block" | "for" | "if" | "macro" | "filter")
+    matches!(keyword, "block" | "for" | "if" | "component" | "filter")
 }
 
 fn tera_block_name(content: &str) -> Option<&str> {
@@ -408,9 +394,7 @@ fn is_partial_template_relative_path(relative_path: &str) -> bool {
             .unwrap_or(normalized.as_str())
     };
 
-    logical.starts_with("partials/")
-        || logical.starts_with("macros/")
-        || logical.starts_with("shortcodes/")
+    logical.starts_with("partials/") || logical.starts_with("components/")
 }
 
 fn should_mark_tera_scope(content: &str, keyword: &str, relative_path: &str) -> bool {
@@ -427,7 +411,7 @@ fn should_mark_tera_scope(content: &str, keyword: &str, relative_path: &str) -> 
 fn closes_tera_scope(keyword: &str) -> bool {
     matches!(
         keyword,
-        "endblock" | "endfor" | "endif" | "endmacro" | "endfilter"
+        "endblock" | "endfor" | "endif" | "endcomponent" | "endfilter"
     )
 }
 

@@ -569,6 +569,18 @@ function parseZolaImage(value: unknown): CanvasElementObservation["zolaImage"] {
     ]),
   );
   const quality = boundedSafeInteger(value.quality, 1, 100);
+  const filter = value.filter === null
+    ? null
+    : enumValue(
+      value.filter,
+      new Set<"nearest" | "triangle" | "catmull_rom" | "gaussian" | "lanczos3">([
+        "nearest",
+        "triangle",
+        "catmull_rom",
+        "gaussian",
+        "lanczos3",
+      ]),
+    );
   if (
     !sourceUrl
     || !sourcePath
@@ -577,8 +589,9 @@ function parseZolaImage(value: unknown): CanvasElementObservation["zolaImage"] {
     || !operation
     || !format
     || quality === null
+    || (value.filter !== null && filter === null)
   ) return null;
-  return { sourceUrl, sourcePath, width, height, operation, format, quality };
+  return { sourceUrl, sourcePath, width, height, operation, format, quality, filter };
 }
 
 function parseStringArray(value: unknown, maximumItems: number, maximumBytes: number) {

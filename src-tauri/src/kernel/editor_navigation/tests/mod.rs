@@ -344,9 +344,9 @@ fn editor_navigation_inheritance_test_project(label: &str) -> PathBuf {
     fs::write(
         root.join("templates/partials/widget.html"),
         concat!(
-            "{% macro widget(value) %}\n",
+            "{% component widget(value) %}\n",
             "{% if value %}<span>{{ value }}</span>{% endif %}\n",
-            "{% endmacro %}\n",
+            "{% endcomponent widget %}\n",
         ),
     )
     .unwrap();

@@ -7,39 +7,24 @@ use crate::{
     localization::LocalizedDiagnostic,
     source_graph::{
         model::{
-            ComponentArgument, ComponentCapabilities, ComponentDataBinding, ComponentDefinition,
-            ComponentDefinitionKind, ComponentDependency, ComponentDependencyKind,
-            ComponentDiagnostic, ComponentGraph, ComponentInvocation, ComponentInvocationKind,
-            ComponentOrigin, ComponentParameter, ComponentResolutionStatus,
-            SourceDiagnosticSeverity, SourceGraph, SourceGraphTemplate, SourceNode, SourceNodeKind,
-            SourceOrigin, SourceRelationKind,
+            ComponentArgument, ComponentCapabilities, ComponentDefinition, ComponentDefinitionKind,
+            ComponentDependency, ComponentDependencyKind, ComponentDiagnostic, ComponentGraph,
+            ComponentInvocation, ComponentInvocationKind, ComponentOrigin, ComponentParameter,
+            ComponentResolutionStatus, SourceDiagnosticSeverity, SourceGraph, SourceGraphTemplate,
+            SourceNode, SourceNodeKind, SourceOrigin, SourceRange, SourceRelationKind,
         },
         tera_semantics::{
-            TeraSemanticCall, TeraSemanticDocument, TeraSemanticExpression, TeraSemanticNode,
-            TeraSemanticValue,
+            TeraComponentArgument, TeraComponentCall, TeraComponentDefinition,
+            TeraComponentParameter, TeraSemanticExpression, TeraSemanticValue, TeraSourceRange,
         },
-        zola::{
-            collect_zola_runtime_uses, normalize_zola_template_reference,
-            ZolaTeraRuntimeAvailability, ZolaTeraRuntimeKind, PINNED_ZOLA_REVISION,
-        },
-        zola_shortcode::{ZolaShortcodeInvocation, ZolaShortcodeValue},
+        zola::{collect_zola_runtime_uses, normalize_zola_template_reference},
     },
 };
 
-pub(crate) const COMPONENT_GRAPH_SCHEMA_VERSION: u32 = 3;
+pub(crate) const COMPONENT_GRAPH_SCHEMA_VERSION: u32 = 4;
 
 pub(crate) fn build_component_graph(source_graph: &SourceGraph) -> ComponentGraph {
-    let mut builder = ComponentGraphBuilder::new(source_graph);
-    builder.project_template_file_definitions(None);
-    builder.reconcile_template_shadowing();
-    builder.project_template_symbol_definitions(None);
-    builder.project_include_invocations(None);
-    builder.project_macro_invocations(None);
-    builder.project_shortcode_invocations();
-    builder.project_repeat_invocations(None);
-    builder.project_inline_control_invocations(None);
-    builder.reconcile_consumers();
-    builder.finish()
+    ComponentGraphBuilder::new(source_graph).build()
 }
 
 pub(crate) fn upsert_component_graph_template(
@@ -48,1045 +33,117 @@ pub(crate) fn upsert_component_graph_template(
     template_file: &str,
 ) -> ComponentGraph {
     let mut builder = ComponentGraphBuilder::from_previous(source_graph, previous, template_file);
-    builder.project_template_file_definitions(Some(template_file));
+    builder.project_template_definitions(Some(template_file));
     builder.reconcile_template_shadowing();
-    builder.project_template_symbol_definitions(Some(template_file));
+    builder.project_tera_component_definitions(Some(template_file));
+    builder.project_structural_definitions(Some(template_file));
     builder.project_include_invocations(Some(template_file));
-    builder.project_macro_invocations(Some(template_file));
-    builder.project_repeat_invocations(Some(template_file));
-    builder.project_inline_control_invocations(Some(template_file));
+    // Component names are global in Tera 2. Definitions from unaffected files
+    // are reusable, but every component call must be resolved again against the
+    // resulting global symbol table.
+    builder.project_tera_component_invocations();
+    builder.project_structural_invocations(Some(template_file));
     builder.reconcile_consumers();
-    builder.finish()
+    builder.sort_output();
+    ComponentGraph {
+        schema_version: COMPONENT_GRAPH_SCHEMA_VERSION,
+        definitions: builder.definitions,
+        invocations: builder.invocations,
+        rendered_instances: Vec::new(),
+        diagnostics: builder.diagnostics,
+    }
 }
 
 struct ComponentGraphBuilder<'a> {
-    source_graph: &'a SourceGraph,
+    graph: &'a SourceGraph,
+    nodes_by_file: HashMap<&'a str, Vec<&'a SourceNode>>,
     definitions: Vec<ComponentDefinition>,
     invocations: Vec<ComponentInvocation>,
     diagnostics: Vec<ComponentDiagnostic>,
-    file_definition_by_template_node: HashMap<String, String>,
-    effective_file_definition_by_template_name: HashMap<String, String>,
-    macro_definition_by_template_and_name: HashMap<(String, String), String>,
-    shortcode_definition_by_name: HashMap<String, String>,
-    repeat_definition_by_source_node: HashMap<String, String>,
-    conditional_definition_by_source_node: HashMap<String, String>,
-    transform_definition_by_source_node: HashMap<String, String>,
+    template_definition_by_node: HashMap<String, String>,
+    effective_template_definition_by_name: HashMap<String, String>,
+    component_definitions_by_name: HashMap<String, Vec<String>>,
 }
 
 impl<'a> ComponentGraphBuilder<'a> {
-    fn new(source_graph: &'a SourceGraph) -> Self {
+    fn new(graph: &'a SourceGraph) -> Self {
+        let mut nodes_by_file = HashMap::<&str, Vec<&SourceNode>>::new();
+        for node in &graph.nodes {
+            nodes_by_file
+                .entry(node.file.as_str())
+                .or_default()
+                .push(node);
+        }
         Self {
-            source_graph,
+            graph,
+            nodes_by_file,
             definitions: Vec::new(),
             invocations: Vec::new(),
             diagnostics: Vec::new(),
-            file_definition_by_template_node: HashMap::new(),
-            effective_file_definition_by_template_name: HashMap::new(),
-            macro_definition_by_template_and_name: HashMap::new(),
-            shortcode_definition_by_name: HashMap::new(),
-            repeat_definition_by_source_node: HashMap::new(),
-            conditional_definition_by_source_node: HashMap::new(),
-            transform_definition_by_source_node: HashMap::new(),
+            template_definition_by_node: HashMap::new(),
+            effective_template_definition_by_name: HashMap::new(),
+            component_definitions_by_name: HashMap::new(),
         }
     }
 
     fn from_previous(
-        source_graph: &'a SourceGraph,
+        graph: &'a SourceGraph,
         previous: ComponentGraph,
         template_file: &str,
     ) -> Self {
-        let definitions = previous
+        let mut definitions = previous
             .definitions
             .into_iter()
             .filter(|definition| definition.file.as_deref() != Some(template_file))
             .collect::<Vec<_>>();
+        for definition in &mut definitions {
+            definition
+                .diagnostics
+                .retain(|diagnostic| diagnostic.code != "duplicate_tera_component");
+        }
         let invocations = previous
             .invocations
             .into_iter()
-            .filter(|invocation| invocation.file != template_file)
+            .filter(|invocation| {
+                invocation.file != template_file
+                    && invocation.kind != ComponentInvocationKind::TeraComponent
+            })
             .collect::<Vec<_>>();
-        let file_definition_by_template_node = definitions
+        let template_definition_by_node = definitions
             .iter()
             .filter(|definition| definition.owner_definition_id.is_none())
             .filter_map(|definition| {
                 Some((definition.source_node_id.clone()?, definition.id.clone()))
             })
             .collect();
-        let repeat_definition_by_source_node = definitions
+        let mut component_definitions_by_name = HashMap::<String, Vec<String>>::new();
+        for definition in definitions
             .iter()
-            .filter(|definition| definition.kind == ComponentDefinitionKind::InlineRepeat)
-            .filter_map(|definition| {
-                Some((definition.source_node_id.clone()?, definition.id.clone()))
-            })
-            .collect();
-        let conditional_definition_by_source_node = definitions
-            .iter()
-            .filter(|definition| definition.kind == ComponentDefinitionKind::InlineConditional)
-            .filter_map(|definition| {
-                Some((definition.source_node_id.clone()?, definition.id.clone()))
-            })
-            .collect();
-        let transform_definition_by_source_node = definitions
-            .iter()
-            .filter(|definition| definition.kind == ComponentDefinitionKind::InlineTransform)
-            .filter_map(|definition| {
-                Some((definition.source_node_id.clone()?, definition.id.clone()))
-            })
-            .collect();
-        Self {
-            source_graph,
-            definitions,
-            invocations,
-            diagnostics: Vec::new(),
-            file_definition_by_template_node,
-            effective_file_definition_by_template_name: HashMap::new(),
-            macro_definition_by_template_and_name: HashMap::new(),
-            shortcode_definition_by_name: HashMap::new(),
-            repeat_definition_by_source_node,
-            conditional_definition_by_source_node,
-            transform_definition_by_source_node,
-        }
-    }
-
-    fn project_template_file_definitions(&mut self, template_file: Option<&str>) {
-        for template in self
-            .source_graph
-            .templates
-            .iter()
-            .filter(|template| template_file.is_none_or(|file| template.file == file))
+            .filter(|definition| definition.kind == ComponentDefinitionKind::TeraComponent)
         {
-            let kind = template_definition_kind(&template.name);
-            let id = component_id("definition", &["template-file", template.node_id.as_str()]);
-            let origin = component_origin(&template.origin);
-            let editable = matches!(template.origin, SourceOrigin::Local);
-            let dependencies = dependencies_for_template(self.source_graph, template);
-            let diagnostics = zola_runtime_diagnostics_for_template(template, &kind);
-            let context_dependencies = template
-                .semantics
-                .as_ref()
-                .map(context_dependencies_for_document)
-                .unwrap_or_default();
-            let definition = ComponentDefinition {
-                id: id.clone(),
-                kind,
-                name: template.name.clone(),
-                display_name: display_name_for_template(&template.name),
-                origin,
-                theme_name: template.theme_name.clone(),
-                file: Some(template.file.clone()),
-                template_name: Some(template.name.clone()),
-                source_node_id: Some(template.node_id.clone()),
-                owner_definition_id: None,
-                symbol: None,
-                parameters: Vec::new(),
-                context_dependencies,
-                data_bindings: data_bindings_for_document(
-                    template.semantics.as_ref(),
-                    Some(template.node_id.as_str()),
-                ),
-                dependencies,
-                consumer_invocation_ids: Vec::new(),
-                shadowed_by: None,
-                active: true,
-                capabilities: file_capabilities(editable),
-                diagnostics,
-            };
-            self.file_definition_by_template_node
-                .insert(template.node_id.clone(), id);
-            self.definitions.push(definition);
+            component_definitions_by_name
+                .entry(definition.name.clone())
+                .or_default()
+                .push(definition.id.clone());
         }
+        let mut builder = Self::new(graph);
+        builder.definitions = definitions;
+        builder.invocations = invocations;
+        builder.template_definition_by_node = template_definition_by_node;
+        builder.component_definitions_by_name = component_definitions_by_name;
+        builder
     }
 
-    fn reconcile_template_shadowing(&mut self) {
-        self.effective_file_definition_by_template_name.clear();
-        let mut by_name = BTreeMap::<String, Vec<usize>>::new();
-        for (index, definition) in self.definitions.iter().enumerate() {
-            if definition.template_name.is_none() || definition.owner_definition_id.is_some() {
-                continue;
-            }
-            let name = normalize_zola_template_reference(
-                definition.template_name.as_deref().unwrap_or_default(),
-            );
-            by_name.entry(name).or_default().push(index);
-        }
-
-        for (name, indexes) in by_name {
-            let active_index = indexes
-                .iter()
-                .copied()
-                .find(|index| self.definitions[*index].origin == ComponentOrigin::Project)
-                .or_else(|| indexes.first().copied());
-            let Some(active_index) = active_index else {
-                continue;
-            };
-            let active_id = self.definitions[active_index].id.clone();
-            self.effective_file_definition_by_template_name
-                .insert(name, active_id.clone());
-            for index in indexes {
-                let active = index == active_index;
-                self.definitions[index].active = active;
-                self.definitions[index].shadowed_by = (!active).then(|| active_id.clone());
-            }
-        }
-        self.shortcode_definition_by_name = self
-            .definitions
-            .iter()
-            .filter(|definition| {
-                definition.active && definition.kind == ComponentDefinitionKind::Shortcode
-            })
-            .filter_map(|definition| {
-                shortcode_name_from_template(
-                    definition.template_name.as_deref().unwrap_or_default(),
-                )
-                .map(|name| (name, definition.id.clone()))
-            })
-            .collect();
-    }
-
-    fn project_template_symbol_definitions(&mut self, template_file: Option<&str>) {
-        for template in self
-            .source_graph
-            .templates
-            .iter()
-            .filter(|template| template_file.is_none_or(|file| template.file == file))
-        {
-            let owner_definition_id = self
-                .file_definition_by_template_node
-                .get(&template.node_id)
-                .cloned();
-            let editable = matches!(template.origin, SourceOrigin::Local);
-            let owner_active = owner_definition_id
-                .as_deref()
-                .and_then(|id| self.definition(id))
-                .map(|definition| definition.active)
-                .unwrap_or(true);
-            let owner_data_bindings = owner_definition_id
-                .as_deref()
-                .and_then(|id| self.definition(id))
-                .map(|definition| definition.data_bindings.clone())
-                .unwrap_or_default();
-            let base_dependencies = dependencies_for_template(self.source_graph, template);
-
-            let macro_nodes =
-                source_nodes_for_template(self.source_graph, template, SourceNodeKind::Macro);
-            let mut macro_node_occurrences = HashMap::<String, usize>::new();
-            if let Some(semantics) = template.semantics.as_ref() {
-                for node in semantics.walk() {
-                    let TeraSemanticNode::MacroDefinition {
-                        name,
-                        arguments,
-                        body,
-                    } = node
-                    else {
-                        continue;
-                    };
-                    let occurrence = macro_node_occurrences.entry(name.clone()).or_default();
-                    let source_node = macro_nodes
-                        .iter()
-                        .filter(|node| node.label == *name)
-                        .nth(*occurrence)
-                        .copied();
-                    *occurrence += 1;
-                    let source_node_id = source_node.map(|node| node.id.clone());
-                    let id = component_id(
-                        "definition",
-                        &[
-                            "macro",
-                            template.node_id.as_str(),
-                            name.as_str(),
-                            source_node_id.as_deref().unwrap_or("semantic-only"),
-                        ],
-                    );
-                    let parameter_names = arguments.keys().cloned().collect::<BTreeSet<_>>();
-                    let mut context_dependencies = context_dependencies_for_nodes(body);
-                    context_dependencies.retain(|dependency| {
-                        !parameter_names.contains(root_identifier(dependency))
-                    });
-                    let parameters = arguments
-                        .iter()
-                        .map(|(name, default_value)| ComponentParameter {
-                            name: name.clone(),
-                            required: default_value.is_none(),
-                            default_value: default_value.clone(),
-                        })
-                        .collect();
-                    let definition = ComponentDefinition {
-                        id: id.clone(),
-                        kind: ComponentDefinitionKind::Macro,
-                        name: format!("{}::{name}", template.name),
-                        display_name: name.clone(),
-                        origin: component_origin(&template.origin),
-                        theme_name: template.theme_name.clone(),
-                        file: Some(template.file.clone()),
-                        template_name: Some(template.name.clone()),
-                        source_node_id,
-                        owner_definition_id: owner_definition_id.clone(),
-                        symbol: Some(name.clone()),
-                        parameters,
-                        context_dependencies,
-                        data_bindings: data_bindings_for_nodes(
-                            body,
-                            source_node.map(|node| node.id.as_str()),
-                        ),
-                        dependencies: base_dependencies.clone(),
-                        consumer_invocation_ids: Vec::new(),
-                        shadowed_by: None,
-                        active: owner_active,
-                        capabilities: symbol_capabilities(editable),
-                        diagnostics: Vec::new(),
-                    };
-                    self.macro_definition_by_template_and_name.insert(
-                        (
-                            normalize_zola_template_reference(&template.name),
-                            name.clone(),
-                        ),
-                        id,
-                    );
-                    self.definitions.push(definition);
-                }
-            }
-
-            for block_node in
-                source_nodes_for_template(self.source_graph, template, SourceNodeKind::Block)
-            {
-                let id = component_id(
-                    "definition",
-                    &["block", template.node_id.as_str(), block_node.id.as_str()],
-                );
-                self.definitions.push(ComponentDefinition {
-                    id,
-                    kind: ComponentDefinitionKind::TemplateBlock,
-                    name: format!("{}#{}", template.name, block_node.label),
-                    display_name: block_node.label.clone(),
-                    origin: component_origin(&template.origin),
-                    theme_name: template.theme_name.clone(),
-                    file: Some(template.file.clone()),
-                    template_name: Some(template.name.clone()),
-                    source_node_id: Some(block_node.id.clone()),
-                    owner_definition_id: owner_definition_id.clone(),
-                    symbol: Some(block_node.label.clone()),
-                    parameters: Vec::new(),
-                    context_dependencies: Vec::new(),
-                    data_bindings: Vec::new(),
-                    dependencies: base_dependencies.clone(),
-                    consumer_invocation_ids: Vec::new(),
-                    shadowed_by: None,
-                    active: owner_active,
-                    capabilities: symbol_capabilities(editable),
-                    diagnostics: Vec::new(),
-                });
-            }
-
-            let for_nodes =
-                source_nodes_for_template(self.source_graph, template, SourceNodeKind::For);
-            let semantic_loops = template
-                .semantics
-                .as_ref()
-                .map(semantic_loops)
-                .unwrap_or_default();
-            for (index, source_node) in for_nodes.into_iter().enumerate() {
-                let semantic = semantic_loops.get(index).copied();
-                let (name, context_dependencies, data_bindings) = match semantic {
-                    Some(TeraSemanticNode::For {
-                        key,
-                        value,
-                        container,
-                        body,
-                        empty_body,
-                    }) => {
-                        let mut dependencies = context_dependencies_for_expression(container);
-                        dependencies.extend(context_dependencies_for_nodes(body));
-                        if let Some(empty_body) = empty_body {
-                            dependencies.extend(context_dependencies_for_nodes(empty_body));
-                        }
-                        dependencies.sort();
-                        dependencies.dedup();
-                        dependencies.retain(|dependency| {
-                            root_identifier(dependency) != value
-                                && key
-                                    .as_deref()
-                                    .is_none_or(|key| root_identifier(dependency) != key)
-                        });
-                        let inherited_binding = owner_data_bindings
-                            .iter()
-                            .find(|binding| binding.name == *value);
-                        let collection_path = expression_path(container);
-                        let collection_producer =
-                            producer_for_expression(container, &HashMap::new());
-                        let mut bindings = vec![ComponentDataBinding {
-                            name: value.clone(),
-                            path: inherited_binding
-                                .map(|binding| binding.path.clone())
-                                .unwrap_or_else(|| format!("{collection_path}[]")),
-                            producer: inherited_binding
-                                .map(|binding| binding.producer.clone())
-                                .unwrap_or_else(|| format!("{collection_producer}[]")),
-                            source_node_id: Some(source_node.id.clone()),
-                        }];
-                        if let Some(key) = key {
-                            bindings.push(ComponentDataBinding {
-                                name: key.clone(),
-                                path: format!("{collection_path}.__key"),
-                                producer: format!("{collection_producer}.__key"),
-                                source_node_id: Some(source_node.id.clone()),
-                            });
-                        }
-                        (format!("Listă dinamică · {value}"), dependencies, bindings)
-                    }
-                    _ => ("Listă dinamică".to_string(), Vec::new(), Vec::new()),
-                };
-                let id = component_id(
-                    "definition",
-                    &["repeat", template.node_id.as_str(), source_node.id.as_str()],
-                );
-                self.repeat_definition_by_source_node
-                    .insert(source_node.id.clone(), id.clone());
-                self.definitions.push(ComponentDefinition {
-                    id,
-                    kind: ComponentDefinitionKind::InlineRepeat,
-                    name: format!("{}#{}", template.name, source_node.id),
-                    display_name: name,
-                    origin: component_origin(&template.origin),
-                    theme_name: template.theme_name.clone(),
-                    file: Some(template.file.clone()),
-                    template_name: Some(template.name.clone()),
-                    source_node_id: Some(source_node.id.clone()),
-                    owner_definition_id: owner_definition_id.clone(),
-                    symbol: None,
-                    parameters: Vec::new(),
-                    context_dependencies,
-                    data_bindings,
-                    dependencies: base_dependencies.clone(),
-                    consumer_invocation_ids: Vec::new(),
-                    shadowed_by: None,
-                    active: owner_active,
-                    capabilities: symbol_capabilities(editable),
-                    diagnostics: Vec::new(),
-                });
-            }
-
-            let semantic_conditionals = template
-                .semantics
-                .as_ref()
-                .map(semantic_conditionals)
-                .unwrap_or_default();
-            for (index, source_node) in
-                source_nodes_for_template(self.source_graph, template, SourceNodeKind::If)
-                    .into_iter()
-                    .enumerate()
-            {
-                let mut context_dependencies = match semantic_conditionals.get(index).copied() {
-                    Some(TeraSemanticNode::If {
-                        branches,
-                        otherwise,
-                    }) => {
-                        let mut dependencies = Vec::new();
-                        for branch in branches {
-                            dependencies
-                                .extend(context_dependencies_for_expression(&branch.condition));
-                            dependencies.extend(context_dependencies_for_nodes(&branch.body));
-                        }
-                        if let Some(otherwise) = otherwise {
-                            dependencies.extend(context_dependencies_for_nodes(otherwise));
-                        }
-                        dependencies
-                    }
-                    _ => Vec::new(),
-                };
-                context_dependencies.sort();
-                context_dependencies.dedup();
-                let id = component_id(
-                    "definition",
-                    &[
-                        "conditional",
-                        template.node_id.as_str(),
-                        source_node.id.as_str(),
-                    ],
-                );
-                self.conditional_definition_by_source_node
-                    .insert(source_node.id.clone(), id.clone());
-                self.definitions.push(ComponentDefinition {
-                    id,
-                    kind: ComponentDefinitionKind::InlineConditional,
-                    name: format!("{}#{}", template.name, source_node.id),
-                    display_name: format!("Condiție · {}", source_node.label),
-                    origin: component_origin(&template.origin),
-                    theme_name: template.theme_name.clone(),
-                    file: Some(template.file.clone()),
-                    template_name: Some(template.name.clone()),
-                    source_node_id: Some(source_node.id.clone()),
-                    owner_definition_id: owner_definition_id.clone(),
-                    symbol: None,
-                    parameters: Vec::new(),
-                    context_dependencies,
-                    data_bindings: Vec::new(),
-                    dependencies: base_dependencies.clone(),
-                    consumer_invocation_ids: Vec::new(),
-                    shadowed_by: None,
-                    active: owner_active,
-                    capabilities: symbol_capabilities(editable),
-                    diagnostics: Vec::new(),
-                });
-            }
-
-            let semantic_transforms = template
-                .semantics
-                .as_ref()
-                .map(semantic_transforms)
-                .unwrap_or_default();
-            for (index, source_node) in
-                source_nodes_for_template(self.source_graph, template, SourceNodeKind::Filter)
-                    .into_iter()
-                    .enumerate()
-            {
-                let mut context_dependencies = match semantic_transforms.get(index).copied() {
-                    Some(TeraSemanticNode::FilterSection { filter, body }) => {
-                        let mut dependencies = context_dependencies_for_call(filter);
-                        dependencies.extend(context_dependencies_for_nodes(body));
-                        dependencies
-                    }
-                    _ => Vec::new(),
-                };
-                context_dependencies.sort();
-                context_dependencies.dedup();
-                let id = component_id(
-                    "definition",
-                    &[
-                        "transform",
-                        template.node_id.as_str(),
-                        source_node.id.as_str(),
-                    ],
-                );
-                self.transform_definition_by_source_node
-                    .insert(source_node.id.clone(), id.clone());
-                self.definitions.push(ComponentDefinition {
-                    id,
-                    kind: ComponentDefinitionKind::InlineTransform,
-                    name: format!("{}#{}", template.name, source_node.id),
-                    display_name: format!("Transformare · {}", source_node.label),
-                    origin: component_origin(&template.origin),
-                    theme_name: template.theme_name.clone(),
-                    file: Some(template.file.clone()),
-                    template_name: Some(template.name.clone()),
-                    source_node_id: Some(source_node.id.clone()),
-                    owner_definition_id: owner_definition_id.clone(),
-                    symbol: None,
-                    parameters: Vec::new(),
-                    context_dependencies,
-                    data_bindings: Vec::new(),
-                    dependencies: base_dependencies.clone(),
-                    consumer_invocation_ids: Vec::new(),
-                    shadowed_by: None,
-                    active: owner_active,
-                    capabilities: symbol_capabilities(editable),
-                    diagnostics: Vec::new(),
-                });
-            }
-        }
-
-        self.reconcile_symbol_shadowing();
-    }
-
-    fn reconcile_symbol_shadowing(&mut self) {
-        let mut active_macros = HashMap::<(String, String), String>::new();
-        for definition in &self.definitions {
-            if definition.kind != ComponentDefinitionKind::Macro || !definition.active {
-                continue;
-            }
-            let Some(template_name) = definition.template_name.as_ref() else {
-                continue;
-            };
-            let Some(symbol) = definition.symbol.as_ref() else {
-                continue;
-            };
-            active_macros.insert(
-                (
-                    normalize_zola_template_reference(template_name),
-                    symbol.clone(),
-                ),
-                definition.id.clone(),
-            );
-        }
-        for definition in &mut self.definitions {
-            if definition.kind != ComponentDefinitionKind::Macro || definition.active {
-                continue;
-            }
-            let Some(template_name) = definition.template_name.as_ref() else {
-                continue;
-            };
-            let Some(symbol) = definition.symbol.as_ref() else {
-                continue;
-            };
-            definition.shadowed_by = active_macros
-                .get(&(
-                    normalize_zola_template_reference(template_name),
-                    symbol.clone(),
-                ))
-                .cloned();
-        }
-        self.macro_definition_by_template_and_name = active_macros;
-    }
-
-    fn project_include_invocations(&mut self, template_file: Option<&str>) {
-        for template in self
-            .source_graph
-            .templates
-            .iter()
-            .filter(|template| template_file.is_none_or(|file| template.file == file))
-        {
-            let include_nodes =
-                source_nodes_for_template(self.source_graph, template, SourceNodeKind::Include);
-            for (index, group) in template.include_groups.iter().enumerate() {
-                let source_node = include_nodes.get(index).copied();
-                let mut resolved = Vec::new();
-                let mut selected_index = None;
-                for (fallback_index, target) in group.targets.iter().enumerate() {
-                    let normalized = normalize_zola_template_reference(target);
-                    if let Some(definition_id) = self
-                        .effective_file_definition_by_template_name
-                        .get(&normalized)
-                    {
-                        resolved.push(definition_id.clone());
-                        if selected_index.is_none() {
-                            selected_index = Some(fallback_index);
-                        }
-                    }
-                }
-                let status = match selected_index {
-                    Some(0) => ComponentResolutionStatus::Resolved,
-                    Some(_) => ComponentResolutionStatus::FallbackResolved,
-                    None if group.ignore_missing => ComponentResolutionStatus::External,
-                    None => ComponentResolutionStatus::Unresolved,
-                };
-                let mut invocation_diagnostics = Vec::new();
-                if status == ComponentResolutionStatus::Unresolved {
-                    invocation_diagnostics.push(component_diagnostic(
-                        "unresolved_include",
-                        LocalizedDiagnostic::new("components-diagnostic-unresolved-include")
-                            .with_argument("targets", group.targets.join(", ")),
-                        SourceDiagnosticSeverity::Error,
-                        Some(template.file.clone()),
-                        source_node.map(|node| node.id.clone()),
-                    ));
-                }
-                let target_reference = group.targets.first().cloned().unwrap_or_default();
-                let id = component_id(
-                    "invocation",
-                    &[
-                        "include",
-                        template.node_id.as_str(),
-                        source_node
-                            .map(|node| node.id.as_str())
-                            .unwrap_or(target_reference.as_str()),
-                    ],
-                );
-                self.invocations.push(ComponentInvocation {
-                    id,
-                    kind: ComponentInvocationKind::Include,
-                    name: format!("Include {}", target_reference),
-                    file: template.file.clone(),
-                    source_node_id: source_node.map(|node| node.id.clone()),
-                    owner_definition_id: self
-                        .file_definition_by_template_node
-                        .get(&template.node_id)
-                        .cloned(),
-                    parent_invocation_id: None,
-                    target_reference,
-                    resolved_definition_ids: resolved,
-                    fallback_references: group.targets.iter().skip(1).cloned().collect(),
-                    arguments: Vec::new(),
-                    context_dependencies: template
-                        .semantics
-                        .as_ref()
-                        .map(context_dependencies_for_document)
-                        .unwrap_or_default(),
-                    data_bindings: Vec::new(),
-                    status,
-                    diagnostics: invocation_diagnostics,
-                });
-            }
-        }
-    }
-
-    fn project_macro_invocations(&mut self, template_file: Option<&str>) {
-        for template in self
-            .source_graph
-            .templates
-            .iter()
-            .filter(|template| template_file.is_none_or(|file| template.file == file))
-        {
-            let Some(semantics) = template.semantics.as_ref() else {
-                continue;
-            };
-            let import_bindings = import_bindings(semantics);
-            let call_uses = semantic_macro_call_uses(self.source_graph, template, semantics);
-            for (index, call_use) in call_uses.into_iter().enumerate() {
-                let namespace = call_use.call.namespace.clone().unwrap_or_default();
-                let target_template = if namespace == "self" {
-                    Some(template.name.clone())
-                } else {
-                    import_bindings.get(&namespace).cloned()
-                };
-                let resolved_definition_id = target_template.as_ref().and_then(|target| {
-                    self.macro_definition_by_template_and_name
-                        .get(&(
-                            normalize_zola_template_reference(target),
-                            call_use.call.name.clone(),
-                        ))
-                        .cloned()
-                });
-                let status = if resolved_definition_id.is_some() {
-                    ComponentResolutionStatus::Resolved
-                } else {
-                    ComponentResolutionStatus::Unresolved
-                };
-                let target_reference = format!("{namespace}::{}", call_use.call.name);
-                let mut invocation_diagnostics = Vec::new();
-                if status == ComponentResolutionStatus::Unresolved {
-                    invocation_diagnostics.push(component_diagnostic(
-                        "unresolved_macro_call",
-                        LocalizedDiagnostic::new("components-diagnostic-unresolved-macro")
-                            .with_argument("reference", target_reference.clone()),
-                        SourceDiagnosticSeverity::Error,
-                        Some(template.file.clone()),
-                        call_use.source_node_id.clone(),
-                    ));
-                }
-                let context_dependencies = context_dependencies_for_call(&call_use.call);
-                let data_bindings = call_use
-                    .call
-                    .arguments
-                    .iter()
-                    .map(|(name, expression)| ComponentDataBinding {
-                        name: name.clone(),
-                        path: expression_path(expression),
-                        producer: producer_for_expression(expression, &HashMap::new()),
-                        source_node_id: call_use.source_node_id.clone(),
-                    })
-                    .collect();
-                let arguments = call_use
-                    .call
-                    .arguments
-                    .into_iter()
-                    .map(|(name, expression)| ComponentArgument { name, expression })
-                    .collect();
-                let id = component_id(
-                    "invocation",
-                    &[
-                        "macro",
-                        template.node_id.as_str(),
-                        call_use
-                            .source_node_id
-                            .as_deref()
-                            .unwrap_or(target_reference.as_str()),
-                        index.to_string().as_str(),
-                    ],
-                );
-                self.invocations.push(ComponentInvocation {
-                    id,
-                    kind: ComponentInvocationKind::MacroCall,
-                    name: format!("Macro {target_reference}"),
-                    file: template.file.clone(),
-                    source_node_id: call_use.source_node_id,
-                    owner_definition_id: self
-                        .file_definition_by_template_node
-                        .get(&template.node_id)
-                        .cloned(),
-                    parent_invocation_id: None,
-                    target_reference,
-                    resolved_definition_ids: resolved_definition_id.into_iter().collect(),
-                    fallback_references: Vec::new(),
-                    arguments,
-                    context_dependencies,
-                    data_bindings,
-                    status,
-                    diagnostics: invocation_diagnostics,
-                });
-            }
-        }
-    }
-
-    fn project_shortcode_invocations(&mut self) {
-        let mut projected = Vec::new();
-        for page in &self.source_graph.pages {
-            project_shortcode_tree(
-                &page.file,
-                &page.shortcodes,
-                None,
-                &self.shortcode_definition_by_name,
-                &mut projected,
-            );
-        }
-        self.invocations.extend(projected);
-    }
-
-    fn project_repeat_invocations(&mut self, template_file: Option<&str>) {
-        for template in self
-            .source_graph
-            .templates
-            .iter()
-            .filter(|template| template_file.is_none_or(|file| template.file == file))
-        {
-            for source_node in
-                source_nodes_for_template(self.source_graph, template, SourceNodeKind::For)
-            {
-                let Some(definition_id) = self
-                    .repeat_definition_by_source_node
-                    .get(&source_node.id)
-                    .cloned()
-                else {
-                    continue;
-                };
-                let definition = self.definition(&definition_id);
-                let id = component_id(
-                    "invocation",
-                    &["repeat", template.node_id.as_str(), source_node.id.as_str()],
-                );
-                self.invocations.push(ComponentInvocation {
-                    id,
-                    kind: ComponentInvocationKind::Repeat,
-                    name: definition
-                        .map(|definition| definition.display_name.clone())
-                        .unwrap_or_else(|| "Listă dinamică".to_string()),
-                    file: template.file.clone(),
-                    source_node_id: Some(source_node.id.clone()),
-                    owner_definition_id: self
-                        .file_definition_by_template_node
-                        .get(&template.node_id)
-                        .cloned(),
-                    parent_invocation_id: None,
-                    target_reference: source_node.label.clone(),
-                    resolved_definition_ids: vec![definition_id],
-                    fallback_references: Vec::new(),
-                    arguments: Vec::new(),
-                    context_dependencies: definition
-                        .map(|definition| definition.context_dependencies.clone())
-                        .unwrap_or_default(),
-                    data_bindings: definition
-                        .map(|definition| definition.data_bindings.clone())
-                        .unwrap_or_default(),
-                    status: ComponentResolutionStatus::Resolved,
-                    diagnostics: Vec::new(),
-                });
-            }
-        }
-    }
-
-    fn project_inline_control_invocations(&mut self, template_file: Option<&str>) {
-        for template in self
-            .source_graph
-            .templates
-            .iter()
-            .filter(|template| template_file.is_none_or(|file| template.file == file))
-        {
-            for (source_kind, invocation_kind, definitions, id_kind, fallback_name) in [
-                (
-                    SourceNodeKind::If,
-                    ComponentInvocationKind::Conditional,
-                    &self.conditional_definition_by_source_node,
-                    "conditional",
-                    "Condiție",
-                ),
-                (
-                    SourceNodeKind::Filter,
-                    ComponentInvocationKind::Transform,
-                    &self.transform_definition_by_source_node,
-                    "transform",
-                    "Transformare",
-                ),
-            ] {
-                for source_node in
-                    source_nodes_for_template(self.source_graph, template, source_kind)
-                {
-                    let Some(definition_id) = definitions.get(&source_node.id).cloned() else {
-                        continue;
-                    };
-                    let definition = self.definition(&definition_id);
-                    self.invocations.push(ComponentInvocation {
-                        id: component_id(
-                            "invocation",
-                            &[id_kind, template.node_id.as_str(), source_node.id.as_str()],
-                        ),
-                        kind: invocation_kind.clone(),
-                        name: definition
-                            .map(|definition| definition.display_name.clone())
-                            .unwrap_or_else(|| fallback_name.to_string()),
-                        file: template.file.clone(),
-                        source_node_id: Some(source_node.id.clone()),
-                        owner_definition_id: self
-                            .file_definition_by_template_node
-                            .get(&template.node_id)
-                            .cloned(),
-                        parent_invocation_id: None,
-                        target_reference: source_node.label.clone(),
-                        resolved_definition_ids: vec![definition_id],
-                        fallback_references: Vec::new(),
-                        arguments: Vec::new(),
-                        context_dependencies: definition
-                            .map(|definition| definition.context_dependencies.clone())
-                            .unwrap_or_default(),
-                        data_bindings: Vec::new(),
-                        status: ComponentResolutionStatus::Resolved,
-                        diagnostics: Vec::new(),
-                    });
-                }
-            }
-        }
-    }
-
-    fn reconcile_consumers(&mut self) {
-        self.sort_invocations_by_source_order();
-        for definition in &mut self.definitions {
-            definition.consumer_invocation_ids.clear();
-        }
-        let consumers = self
-            .invocations
-            .iter()
-            .flat_map(|invocation| {
-                invocation
-                    .resolved_definition_ids
-                    .iter()
-                    .map(move |definition_id| (definition_id.clone(), invocation.id.clone()))
-            })
-            .collect::<Vec<_>>();
-        for (definition_id, invocation_id) in consumers {
-            if let Some(definition) = self
-                .definitions
-                .iter_mut()
-                .find(|definition| definition.id == definition_id)
-            {
-                if !definition.consumer_invocation_ids.contains(&invocation_id) {
-                    definition.consumer_invocation_ids.push(invocation_id);
-                }
-            }
-        }
-        self.reconcile_shortcode_parameters();
-
-        for invocation in &self.invocations {
-            self.diagnostics.extend(invocation.diagnostics.clone());
-        }
-        for definition in &self.definitions {
-            self.diagnostics.extend(definition.diagnostics.clone());
-        }
-        self.diagnostics.sort_by(|left, right| {
-            (
-                left.file.as_deref().unwrap_or_default(),
-                left.source_node_id.as_deref().unwrap_or_default(),
-                left.code.as_str(),
-            )
-                .cmp(&(
-                    right.file.as_deref().unwrap_or_default(),
-                    right.source_node_id.as_deref().unwrap_or_default(),
-                    right.code.as_str(),
-                ))
-        });
-        self.diagnostics.dedup_by(|left, right| {
-            left.code == right.code
-                && left.file == right.file
-                && left.source_node_id == right.source_node_id
-                && left.diagnostic == right.diagnostic
-        });
-    }
-
-    fn sort_invocations_by_source_order(&mut self) {
-        let source_positions = self
-            .source_graph
-            .nodes
-            .iter()
-            .filter_map(|node| {
-                Some((
-                    node.id.as_str(),
-                    (node.file.as_str(), node.range.as_ref()?.start),
-                ))
-            })
-            .collect::<HashMap<_, _>>();
-        self.invocations.sort_by(|left, right| {
-            let left_start = left
-                .source_node_id
-                .as_deref()
-                .and_then(|id| source_positions.get(id))
-                .map(|(_, start)| *start)
-                .unwrap_or(usize::MAX);
-            let right_start = right
-                .source_node_id
-                .as_deref()
-                .and_then(|id| source_positions.get(id))
-                .map(|(_, start)| *start)
-                .unwrap_or(usize::MAX);
-            (left.file.as_str(), left_start).cmp(&(right.file.as_str(), right_start))
-        });
-    }
-
-    fn reconcile_shortcode_parameters(&mut self) {
-        let arguments_by_definition = self
-            .invocations
-            .iter()
-            .filter(|invocation| invocation.kind == ComponentInvocationKind::Shortcode)
-            .flat_map(|invocation| {
-                invocation
-                    .resolved_definition_ids
-                    .iter()
-                    .flat_map(move |definition_id| {
-                        invocation
-                            .arguments
-                            .iter()
-                            .map(move |argument| (definition_id.clone(), argument.name.clone()))
-                    })
-            })
-            .fold(
-                HashMap::<String, BTreeSet<String>>::new(),
-                |mut grouped, (definition_id, argument)| {
-                    grouped.entry(definition_id).or_default().insert(argument);
-                    grouped
-                },
-            );
-        for definition in &mut self.definitions {
-            if definition.kind != ComponentDefinitionKind::Shortcode {
-                continue;
-            }
-            let mut names = arguments_by_definition
-                .get(&definition.id)
-                .cloned()
-                .unwrap_or_default();
-            for dependency in &definition.context_dependencies {
-                let root = root_identifier(dependency);
-                if !is_builtin_shortcode_context(root) {
-                    names.insert(root.to_string());
-                }
-            }
-            definition.parameters = names
-                .into_iter()
-                .map(|name| ComponentParameter {
-                    name,
-                    required: false,
-                    default_value: None,
-                })
-                .collect();
-        }
-    }
-
-    fn definition(&self, id: &str) -> Option<&ComponentDefinition> {
-        self.definitions
-            .iter()
-            .find(|definition| definition.id == id)
-    }
-
-    fn finish(mut self) -> ComponentGraph {
-        self.definitions.sort_by(|left, right| {
-            (
-                !left.active,
-                component_origin_order(&left.origin),
-                left.name.as_str(),
-                left.id.as_str(),
-            )
-                .cmp(&(
-                    !right.active,
-                    component_origin_order(&right.origin),
-                    right.name.as_str(),
-                    right.id.as_str(),
-                ))
-        });
-        self.sort_invocations_by_source_order();
+    fn build(mut self) -> ComponentGraph {
+        self.project_template_definitions(None);
+        self.reconcile_template_shadowing();
+        self.project_tera_component_definitions(None);
+        self.project_structural_definitions(None);
+        self.project_include_invocations(None);
+        self.project_tera_component_invocations();
+        self.project_structural_invocations(None);
+        self.reconcile_consumers();
+        self.sort_output();
         ComponentGraph {
             schema_version: COMPONENT_GRAPH_SCHEMA_VERSION,
             definitions: self.definitions,
@@ -1095,144 +152,963 @@ impl<'a> ComponentGraphBuilder<'a> {
             diagnostics: self.diagnostics,
         }
     }
-}
 
-fn template_definition_kind(name: &str) -> ComponentDefinitionKind {
-    let name = normalize_zola_template_reference(name);
-    if name.starts_with("shortcodes/") {
-        ComponentDefinitionKind::Shortcode
-    } else if name.starts_with("macros/") {
-        ComponentDefinitionKind::MacroLibrary
-    } else if name.starts_with("partials/") {
-        ComponentDefinitionKind::Partial
-    } else {
-        ComponentDefinitionKind::TemplateFile
-    }
-}
-
-fn shortcode_name_from_template(template_name: &str) -> Option<String> {
-    let normalized = normalize_zola_template_reference(template_name);
-    let relative = normalized.strip_prefix("shortcodes/")?;
-    relative
-        .strip_suffix(".html")
-        .or_else(|| relative.strip_suffix(".md"))
-        .map(str::to_string)
-        .filter(|name| !name.is_empty())
-}
-
-fn project_shortcode_tree(
-    file: &str,
-    shortcodes: &[ZolaShortcodeInvocation],
-    parent_invocation_id: Option<String>,
-    definitions: &HashMap<String, String>,
-    output: &mut Vec<ComponentInvocation>,
-) {
-    for shortcode in shortcodes {
-        let resolved = definitions.get(&shortcode.name).cloned();
-        let status = if resolved.is_some() {
-            ComponentResolutionStatus::Resolved
-        } else {
-            ComponentResolutionStatus::Unresolved
-        };
-        let mut diagnostics = Vec::new();
-        if resolved.is_none() {
-            diagnostics.push(component_diagnostic(
-                "unresolved_shortcode",
-                LocalizedDiagnostic::new("components-diagnostic-unresolved-shortcode")
-                    .with_argument("name", shortcode.name.clone()),
-                SourceDiagnosticSeverity::Error,
-                Some(file.to_string()),
-                shortcode.source_node_id.clone(),
-            ));
-        }
-        let id = component_id(
-            "invocation",
-            &[
-                "shortcode",
-                file,
-                shortcode
-                    .source_node_id
-                    .as_deref()
-                    .unwrap_or(shortcode.name.as_str()),
-                shortcode.nth.to_string().as_str(),
-            ],
-        );
-        let arguments = shortcode
-            .arguments
+    fn project_template_definitions(&mut self, only_file: Option<&str>) {
+        for template in self
+            .graph
+            .templates
             .iter()
-            .map(|(name, value)| ComponentArgument {
-                name: name.clone(),
-                expression: shortcode_value_expression(value),
-            })
-            .collect::<Vec<_>>();
-        let mut data_bindings = arguments
-            .iter()
-            .map(|argument| ComponentDataBinding {
-                name: argument.name.clone(),
-                path: expression_path(&argument.expression),
-                producer: "shortcode_literal".to_string(),
-                source_node_id: shortcode.source_node_id.clone(),
-            })
-            .collect::<Vec<_>>();
-        if let Some(body) = shortcode.body_range.as_ref() {
-            data_bindings.push(ComponentDataBinding {
-                name: "body".to_string(),
-                path: format!("{}:{}..{}", file, body.start, body.end),
-                producer: "markdown_shortcode_body".to_string(),
-                source_node_id: shortcode.source_node_id.clone(),
+            .filter(|template| only_file.is_none_or(|file| template.file == file))
+        {
+            let id = component_id("definition", &["template", template.node_id.as_str()]);
+            self.template_definition_by_node
+                .insert(template.node_id.clone(), id.clone());
+            self.definitions.push(ComponentDefinition {
+                id,
+                kind: if template.is_partial {
+                    ComponentDefinitionKind::Partial
+                } else {
+                    ComponentDefinitionKind::TemplateFile
+                },
+                name: template.name.clone(),
+                display_name: display_name_for_template(&template.name),
+                origin: component_origin(&template.origin),
+                theme_name: template.theme_name.clone(),
+                file: Some(template.file.clone()),
+                template_name: Some(template.name.clone()),
+                source_node_id: Some(template.node_id.clone()),
+                owner_definition_id: None,
+                symbol: None,
+                range: self
+                    .graph
+                    .node_by_id(&template.node_id)
+                    .and_then(|node| node.range.clone()),
+                body_range: None,
+                rest_parameter: None,
+                parameters: Vec::new(),
+                context_dependencies: Vec::new(),
+                data_bindings: Vec::new(),
+                dependencies: dependencies_for_template(self.graph, template),
+                consumer_invocation_ids: Vec::new(),
+                shadowed_by: None,
+                active: true,
+                capabilities: file_capabilities(matches!(template.origin, SourceOrigin::Local)),
+                diagnostics: Vec::new(),
             });
         }
-        output.push(ComponentInvocation {
-            id: id.clone(),
-            kind: ComponentInvocationKind::Shortcode,
-            name: format!("Shortcode {}", shortcode.name),
-            file: file.to_string(),
-            source_node_id: shortcode.source_node_id.clone(),
-            owner_definition_id: None,
-            parent_invocation_id: parent_invocation_id.clone(),
-            target_reference: shortcode.name.clone(),
-            resolved_definition_ids: resolved.into_iter().collect(),
-            fallback_references: Vec::new(),
-            arguments,
-            context_dependencies: Vec::new(),
-            data_bindings,
-            status,
-            diagnostics,
-        });
-        project_shortcode_tree(file, &shortcode.inner, Some(id), definitions, output);
     }
-}
 
-fn shortcode_value_expression(value: &ZolaShortcodeValue) -> TeraSemanticExpression {
-    let value = match value {
-        ZolaShortcodeValue::String(value) => TeraSemanticValue::String(value.clone()),
-        ZolaShortcodeValue::Integer(value) => TeraSemanticValue::Integer(*value),
-        ZolaShortcodeValue::Float(value) => TeraSemanticValue::Float(*value),
-        ZolaShortcodeValue::Boolean(value) => TeraSemanticValue::Boolean(*value),
-        ZolaShortcodeValue::Array(values) => {
-            TeraSemanticValue::Array(values.iter().map(shortcode_value_expression).collect())
+    fn reconcile_template_shadowing(&mut self) {
+        let mut grouped = BTreeMap::<String, Vec<usize>>::new();
+        for (index, definition) in self.definitions.iter().enumerate() {
+            if definition.owner_definition_id.is_none() {
+                if let Some(name) = definition.template_name.as_deref() {
+                    grouped
+                        .entry(normalize_zola_template_reference(name))
+                        .or_default()
+                        .push(index);
+                }
+            }
         }
-    };
-    TeraSemanticExpression {
-        value,
-        negated: false,
-        filters: Vec::new(),
+        for (name, indexes) in grouped {
+            let active = indexes
+                .iter()
+                .copied()
+                .find(|index| self.definitions[*index].origin == ComponentOrigin::Project)
+                .or_else(|| indexes.first().copied());
+            let Some(active) = active else {
+                continue;
+            };
+            let active_id = self.definitions[active].id.clone();
+            self.effective_template_definition_by_name
+                .insert(name, active_id.clone());
+            for index in indexes {
+                self.definitions[index].active = index == active;
+                self.definitions[index].shadowed_by = (index != active).then(|| active_id.clone());
+            }
+        }
+    }
+
+    fn project_tera_component_definitions(&mut self, only_file: Option<&str>) {
+        for template in self
+            .graph
+            .templates
+            .iter()
+            .filter(|template| only_file.is_none_or(|file| template.file == file))
+        {
+            let Some(owner_id) = self
+                .template_definition_by_node
+                .get(&template.node_id)
+                .cloned()
+            else {
+                continue;
+            };
+            let owner_active = self
+                .definitions
+                .iter()
+                .find(|definition| definition.id == owner_id)
+                .is_none_or(|definition| definition.active);
+            for definition in &template.component_definitions {
+                let source_node = source_node_for_range(
+                    self.graph,
+                    &template.file,
+                    SourceNodeKind::ComponentDefinition,
+                    &definition.range,
+                );
+                let id = component_id(
+                    "definition",
+                    &[
+                        "tera-component",
+                        definition.name.as_str(),
+                        template.node_id.as_str(),
+                        &definition.range.start.to_string(),
+                    ],
+                );
+                let mut diagnostics = Vec::new();
+                if !owner_active {
+                    diagnostics.push(component_diagnostic(
+                        "component_shadowed_template",
+                        LocalizedDiagnostic::new("components-diagnostic-shadowed-component")
+                            .with_argument("name", definition.name.clone()),
+                        SourceDiagnosticSeverity::Warning,
+                        Some(template.file.clone()),
+                        source_node.map(|node| node.id.clone()),
+                    ));
+                }
+                let component = ComponentDefinition {
+                    id: id.clone(),
+                    kind: ComponentDefinitionKind::TeraComponent,
+                    name: definition.name.clone(),
+                    display_name: definition.name.clone(),
+                    origin: component_origin(&template.origin),
+                    theme_name: template.theme_name.clone(),
+                    file: Some(template.file.clone()),
+                    template_name: Some(template.name.clone()),
+                    source_node_id: source_node.map(|node| node.id.clone()),
+                    owner_definition_id: Some(owner_id.clone()),
+                    symbol: Some(definition.name.clone()),
+                    range: Some(tera_range_to_source_range(&definition.range)),
+                    body_range: definition
+                        .body_range
+                        .as_ref()
+                        .map(tera_range_to_source_range),
+                    rest_parameter: definition.rest_argument.clone(),
+                    parameters: component_parameters(definition),
+                    context_dependencies: Vec::new(),
+                    data_bindings: Vec::new(),
+                    dependencies: dependencies_for_template(self.graph, template),
+                    consumer_invocation_ids: Vec::new(),
+                    shadowed_by: None,
+                    active: owner_active,
+                    capabilities: symbol_capabilities(matches!(
+                        template.origin,
+                        SourceOrigin::Local
+                    )),
+                    diagnostics,
+                };
+                self.component_definitions_by_name
+                    .entry(definition.name.clone())
+                    .or_default()
+                    .push(id);
+                self.definitions.push(component);
+            }
+        }
+
+        for definition_ids in self.component_definitions_by_name.values() {
+            let active = definition_ids
+                .iter()
+                .filter(|id| {
+                    self.definitions
+                        .iter()
+                        .find(|definition| definition.id == **id)
+                        .is_some_and(|definition| definition.active)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if active.len() <= 1 {
+                continue;
+            }
+            for id in active {
+                if let Some(definition) = self
+                    .definitions
+                    .iter_mut()
+                    .find(|definition| definition.id == id)
+                {
+                    let diagnostic = component_diagnostic(
+                        "duplicate_tera_component",
+                        LocalizedDiagnostic::new("components-diagnostic-duplicate-component")
+                            .with_argument("name", definition.name.clone()),
+                        SourceDiagnosticSeverity::Error,
+                        definition.file.clone(),
+                        definition.source_node_id.clone(),
+                    );
+                    definition.diagnostics.push(diagnostic.clone());
+                    self.diagnostics.push(diagnostic);
+                }
+            }
+        }
+    }
+
+    fn project_structural_definitions(&mut self, only_file: Option<&str>) {
+        let structural = [
+            (
+                SourceNodeKind::Block,
+                ComponentDefinitionKind::TemplateBlock,
+            ),
+            (SourceNodeKind::For, ComponentDefinitionKind::InlineRepeat),
+            (
+                SourceNodeKind::If,
+                ComponentDefinitionKind::InlineConditional,
+            ),
+            (
+                SourceNodeKind::Filter,
+                ComponentDefinitionKind::InlineTransform,
+            ),
+        ];
+        for template in self
+            .graph
+            .templates
+            .iter()
+            .filter(|template| only_file.is_none_or(|file| template.file == file))
+        {
+            let owner_id = self
+                .template_definition_by_node
+                .get(&template.node_id)
+                .cloned();
+            let template_nodes = self
+                .nodes_by_file
+                .get(template.file.as_str())
+                .cloned()
+                .unwrap_or_default();
+            for (node_kind, definition_kind) in &structural {
+                for node in template_nodes
+                    .iter()
+                    .copied()
+                    .filter(|node| node.kind == *node_kind)
+                {
+                    self.definitions.push(ComponentDefinition {
+                        id: component_id("definition", &["structural", node.id.as_str()]),
+                        kind: definition_kind.clone(),
+                        name: format!("{}#{}", template.name, node.label),
+                        display_name: node.label.clone(),
+                        origin: component_origin(&template.origin),
+                        theme_name: template.theme_name.clone(),
+                        file: Some(template.file.clone()),
+                        template_name: Some(template.name.clone()),
+                        source_node_id: Some(node.id.clone()),
+                        owner_definition_id: owner_id.clone(),
+                        symbol: Some(node.label.clone()),
+                        range: node.range.clone(),
+                        body_range: None,
+                        rest_parameter: None,
+                        parameters: Vec::new(),
+                        context_dependencies: Vec::new(),
+                        data_bindings: Vec::new(),
+                        dependencies: dependencies_for_template(self.graph, template),
+                        consumer_invocation_ids: Vec::new(),
+                        shadowed_by: None,
+                        active: true,
+                        capabilities: symbol_capabilities(matches!(
+                            template.origin,
+                            SourceOrigin::Local
+                        )),
+                        diagnostics: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+
+    fn project_include_invocations(&mut self, only_file: Option<&str>) {
+        for template in self
+            .graph
+            .templates
+            .iter()
+            .filter(|template| only_file.is_none_or(|file| template.file == file))
+        {
+            let owner = self
+                .template_definition_by_node
+                .get(&template.node_id)
+                .cloned();
+            let source_nodes = self
+                .nodes_by_file
+                .get(template.file.as_str())
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|node| node.kind == SourceNodeKind::Include)
+                .collect::<Vec<_>>();
+            for (index, include) in template.include_groups.iter().enumerate() {
+                let source_node = source_nodes.get(index).copied();
+                let resolved = include
+                    .targets
+                    .iter()
+                    .find_map(|target| {
+                        self.effective_template_definition_by_name
+                            .get(&normalize_zola_template_reference(target))
+                            .cloned()
+                    })
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                let mut diagnostics = Vec::new();
+                if resolved.is_empty() && !include.ignore_missing {
+                    diagnostics.push(component_diagnostic(
+                        "unresolved_include",
+                        LocalizedDiagnostic::new("components-diagnostic-unresolved-include")
+                            .with_argument("targets", include.targets.join(", ")),
+                        SourceDiagnosticSeverity::Error,
+                        Some(template.file.clone()),
+                        source_node.map(|node| node.id.clone()),
+                    ));
+                }
+                self.invocations.push(ComponentInvocation {
+                    id: component_id(
+                        "invocation",
+                        &[
+                            "include",
+                            template.node_id.as_str(),
+                            source_node
+                                .map(|node| node.id.as_str())
+                                .unwrap_or("dynamic"),
+                        ],
+                    ),
+                    kind: ComponentInvocationKind::Include,
+                    name: format!("Include {}", include.targets.join(" | ")),
+                    file: template.file.clone(),
+                    source_node_id: source_node.map(|node| node.id.clone()),
+                    owner_definition_id: owner.clone(),
+                    parent_invocation_id: None,
+                    target_reference: include.targets.first().cloned().unwrap_or_default(),
+                    resolved_definition_ids: resolved.clone(),
+                    fallback_references: include.targets.iter().skip(1).cloned().collect(),
+                    range: source_node.and_then(|node| node.range.clone()),
+                    call_range: source_node.and_then(|node| node.range.clone()),
+                    body_range: None,
+                    arguments: Vec::new(),
+                    context_dependencies: Vec::new(),
+                    data_bindings: Vec::new(),
+                    status: if resolved.is_empty() {
+                        if include.ignore_missing {
+                            ComponentResolutionStatus::External
+                        } else {
+                            ComponentResolutionStatus::Unresolved
+                        }
+                    } else if include.targets.first().is_some_and(|target| {
+                        self.effective_template_definition_by_name
+                            .contains_key(&normalize_zola_template_reference(target))
+                    }) {
+                        ComponentResolutionStatus::Resolved
+                    } else {
+                        ComponentResolutionStatus::FallbackResolved
+                    },
+                    diagnostics,
+                });
+            }
+        }
+    }
+
+    fn project_tera_component_invocations(&mut self) {
+        for template in &self.graph.templates {
+            let owner = self
+                .template_definition_by_node
+                .get(&template.node_id)
+                .cloned();
+            self.project_calls(
+                &template.file,
+                owner,
+                &template.component_calls,
+                Some(template),
+            );
+        }
+        for page in &self.graph.pages {
+            self.project_calls(&page.file, None, &page.component_calls, None);
+        }
+    }
+
+    fn project_calls(
+        &mut self,
+        file: &str,
+        owner: Option<String>,
+        calls: &[TeraComponentCall],
+        template: Option<&SourceGraphTemplate>,
+    ) {
+        let mut invocation_ids = Vec::with_capacity(calls.len());
+        for call in calls {
+            let source_node = source_node_for_range(
+                self.graph,
+                file,
+                SourceNodeKind::ComponentCall,
+                &call.call_range,
+            );
+            let resolved = self
+                .component_definitions_by_name
+                .get(&call.name)
+                .into_iter()
+                .flat_map(|ids| ids.iter())
+                .filter(|id| {
+                    self.definitions
+                        .iter()
+                        .find(|definition| definition.id == **id)
+                        .is_some_and(|definition| definition.active)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut diagnostics =
+                self.component_call_diagnostics(call, file, source_node, &resolved);
+            let status = match resolved.len() {
+                0 => ComponentResolutionStatus::Unresolved,
+                1 => ComponentResolutionStatus::Resolved,
+                _ => ComponentResolutionStatus::Ambiguous,
+            };
+            if resolved.is_empty() {
+                diagnostics.push(component_diagnostic(
+                    "unresolved_tera_component",
+                    LocalizedDiagnostic::new("components-diagnostic-unresolved-component")
+                        .with_argument("name", call.name.clone()),
+                    SourceDiagnosticSeverity::Error,
+                    Some(file.to_string()),
+                    source_node.map(|node| node.id.clone()),
+                ));
+            }
+            let id = component_id(
+                "invocation",
+                &[
+                    "tera-component",
+                    file,
+                    call.name.as_str(),
+                    &call.range.start.to_string(),
+                ],
+            );
+            let parent_invocation_id = call
+                .parent_call
+                .and_then(|index| invocation_ids.get(index))
+                .cloned();
+            invocation_ids.push(id.clone());
+            self.invocations.push(ComponentInvocation {
+                id,
+                kind: ComponentInvocationKind::TeraComponent,
+                name: call.name.clone(),
+                file: file.to_string(),
+                source_node_id: source_node.map(|node| node.id.clone()),
+                owner_definition_id: owner.clone(),
+                parent_invocation_id,
+                target_reference: call.name.clone(),
+                resolved_definition_ids: resolved,
+                fallback_references: Vec::new(),
+                range: Some(tera_range_to_source_range(&call.range)),
+                call_range: Some(tera_range_to_source_range(&call.call_range)),
+                body_range: call.body_range.as_ref().map(tera_range_to_source_range),
+                arguments: call.arguments.iter().map(component_argument).collect(),
+                context_dependencies: context_dependencies_for_call(call),
+                data_bindings: Vec::new(),
+                status,
+                diagnostics,
+            });
+        }
+
+        if let Some(template) = template {
+            for invocation in self
+                .invocations
+                .iter_mut()
+                .filter(|invocation| invocation.file == template.file)
+            {
+                if invocation.owner_definition_id.is_none() {
+                    invocation.owner_definition_id = owner.clone();
+                }
+            }
+        }
+    }
+
+    fn component_call_diagnostics(
+        &self,
+        call: &TeraComponentCall,
+        file: &str,
+        source_node: Option<&SourceNode>,
+        resolved: &[String],
+    ) -> Vec<ComponentDiagnostic> {
+        let Some(definition) = resolved.first().and_then(|id| {
+            self.definitions
+                .iter()
+                .find(|definition| definition.id == *id)
+        }) else {
+            return Vec::new();
+        };
+        let supplied = call
+            .arguments
+            .iter()
+            .filter_map(|argument| argument.name.as_deref())
+            .collect::<BTreeSet<_>>();
+        let has_spread = call.arguments.iter().any(|argument| argument.spread);
+        let mut diagnostics = Vec::new();
+        for parameter in &definition.parameters {
+            if parameter.rest || !parameter.required || supplied.contains(parameter.name.as_str()) {
+                continue;
+            }
+            diagnostics.push(component_diagnostic(
+                "missing_component_argument",
+                LocalizedDiagnostic::new("components-diagnostic-missing-argument")
+                    .with_argument("component", call.name.clone())
+                    .with_argument("argument", parameter.name.clone()),
+                SourceDiagnosticSeverity::Error,
+                Some(file.to_string()),
+                source_node.map(|node| node.id.clone()),
+            ));
+        }
+        if definition.rest_parameter.is_none() && !has_spread {
+            for argument in &call.arguments {
+                let Some(name) = argument.name.as_deref() else {
+                    continue;
+                };
+                if !definition
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.name == name)
+                {
+                    diagnostics.push(component_diagnostic(
+                        "unknown_component_argument",
+                        LocalizedDiagnostic::new("components-diagnostic-unknown-argument")
+                            .with_argument("component", call.name.clone())
+                            .with_argument("argument", name.to_string()),
+                        SourceDiagnosticSeverity::Error,
+                        Some(file.to_string()),
+                        source_node.map(|node| node.id.clone()),
+                    ));
+                }
+            }
+        }
+        for argument in &call.arguments {
+            let Some(name) = argument.name.as_deref() else {
+                continue;
+            };
+            let Some(parameter) = definition
+                .parameters
+                .iter()
+                .find(|parameter| parameter.name == name)
+            else {
+                continue;
+            };
+            if parameter
+                .argument_type
+                .as_deref()
+                .is_some_and(|kind| !expression_matches_type(&argument.expression, kind))
+            {
+                diagnostics.push(component_diagnostic(
+                    "incompatible_component_argument",
+                    LocalizedDiagnostic::new("components-diagnostic-incompatible-argument")
+                        .with_argument("component", call.name.clone())
+                        .with_argument("argument", name.to_string())
+                        .with_argument("type", parameter.argument_type.clone().unwrap_or_default()),
+                    SourceDiagnosticSeverity::Error,
+                    Some(file.to_string()),
+                    source_node.map(|node| node.id.clone()),
+                ));
+            }
+        }
+        diagnostics
+    }
+
+    fn project_structural_invocations(&mut self, only_file: Option<&str>) {
+        let mappings = [
+            (
+                ComponentDefinitionKind::InlineRepeat,
+                ComponentInvocationKind::Repeat,
+            ),
+            (
+                ComponentDefinitionKind::InlineConditional,
+                ComponentInvocationKind::Conditional,
+            ),
+            (
+                ComponentDefinitionKind::InlineTransform,
+                ComponentInvocationKind::Transform,
+            ),
+        ];
+        for (definition_kind, invocation_kind) in mappings {
+            let definitions = self
+                .definitions
+                .iter()
+                .filter(|definition| definition.kind == definition_kind)
+                .filter(|definition| {
+                    only_file.is_none_or(|file| definition.file.as_deref() == Some(file))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            for definition in definitions {
+                self.invocations.push(ComponentInvocation {
+                    id: component_id("invocation", &["structural", definition.id.as_str()]),
+                    kind: invocation_kind.clone(),
+                    name: definition.display_name.clone(),
+                    file: definition.file.clone().unwrap_or_default(),
+                    source_node_id: definition.source_node_id.clone(),
+                    owner_definition_id: definition.owner_definition_id.clone(),
+                    parent_invocation_id: None,
+                    target_reference: definition.name.clone(),
+                    resolved_definition_ids: vec![definition.id],
+                    fallback_references: Vec::new(),
+                    range: definition.range.clone(),
+                    call_range: definition.range,
+                    body_range: definition.body_range,
+                    arguments: Vec::new(),
+                    context_dependencies: Vec::new(),
+                    data_bindings: Vec::new(),
+                    status: ComponentResolutionStatus::Resolved,
+                    diagnostics: Vec::new(),
+                });
+            }
+        }
+    }
+
+    fn reconcile_consumers(&mut self) {
+        let consumers = self
+            .invocations
+            .iter()
+            .flat_map(|invocation| {
+                invocation
+                    .resolved_definition_ids
+                    .iter()
+                    .map(move |definition| (definition.clone(), invocation.id.clone()))
+            })
+            .fold(
+                HashMap::<String, Vec<String>>::new(),
+                |mut result, (definition, invocation)| {
+                    result.entry(definition).or_default().push(invocation);
+                    result
+                },
+            );
+        for definition in &mut self.definitions {
+            definition.consumer_invocation_ids =
+                consumers.get(&definition.id).cloned().unwrap_or_default();
+            definition.consumer_invocation_ids.sort();
+            definition.consumer_invocation_ids.dedup();
+        }
+        self.diagnostics.extend(
+            self.definitions
+                .iter()
+                .flat_map(|definition| definition.diagnostics.iter().cloned()),
+        );
+        self.diagnostics.extend(
+            self.invocations
+                .iter()
+                .flat_map(|invocation| invocation.diagnostics.iter().cloned()),
+        );
+        self.diagnostics.sort_by(|left, right| {
+            left.file
+                .cmp(&right.file)
+                .then_with(|| left.code.cmp(&right.code))
+                .then_with(|| left.source_node_id.cmp(&right.source_node_id))
+        });
+        self.diagnostics.dedup_by(|left, right| {
+            left.code == right.code
+                && left.file == right.file
+                && left.source_node_id == right.source_node_id
+        });
+    }
+
+    fn sort_output(&mut self) {
+        self.definitions.sort_by(|left, right| {
+            left.file
+                .cmp(&right.file)
+                .then_with(|| {
+                    range_start(left.range.as_ref()).cmp(&range_start(right.range.as_ref()))
+                })
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        self.invocations.sort_by(|left, right| {
+            left.file
+                .cmp(&right.file)
+                .then_with(|| {
+                    range_start(left.range.as_ref()).cmp(&range_start(right.range.as_ref()))
+                })
+                .then_with(|| left.id.cmp(&right.id))
+        });
     }
 }
 
-fn is_builtin_shortcode_context(name: &str) -> bool {
+fn component_parameters(definition: &TeraComponentDefinition) -> Vec<ComponentParameter> {
+    let mut parameters = definition
+        .arguments
+        .iter()
+        .map(component_parameter)
+        .collect::<Vec<_>>();
+    if let Some(rest) = definition.rest_argument.as_ref() {
+        parameters.push(ComponentParameter {
+            name: rest.clone(),
+            argument_type: Some("map".to_string()),
+            required: false,
+            rest: true,
+            default_value: None,
+            range: None,
+        });
+    }
+    parameters
+}
+
+fn component_parameter(parameter: &TeraComponentParameter) -> ComponentParameter {
+    ComponentParameter {
+        name: parameter.name.clone(),
+        argument_type: parameter.argument_type.clone(),
+        required: parameter.required,
+        rest: false,
+        default_value: parameter.default_value.clone(),
+        range: Some(tera_range_to_source_range(&parameter.range)),
+    }
+}
+
+fn component_argument(argument: &TeraComponentArgument) -> ComponentArgument {
+    ComponentArgument {
+        name: argument.name.clone(),
+        expression: argument.expression.clone(),
+        spread: argument.spread,
+        range: Some(tera_range_to_source_range(&argument.range)),
+    }
+}
+
+fn expression_matches_type(expression: &TeraSemanticExpression, expected: &str) -> bool {
     matches!(
-        name,
-        "body" | "nth" | "config" | "page" | "section" | "lang" | "current_url"
+        (&expression.value, expected),
+        (TeraSemanticValue::String(_), "string")
+            | (TeraSemanticValue::Boolean(_), "bool")
+            | (TeraSemanticValue::Integer(_), "integer" | "number")
+            | (TeraSemanticValue::Float(_), "float" | "number")
+            | (TeraSemanticValue::Array(_), "array")
+            | (TeraSemanticValue::Map(_), "map")
+            | (
+                TeraSemanticValue::Identifier(_)
+                    | TeraSemanticValue::FunctionCall(_)
+                    | TeraSemanticValue::OptionalChain { .. }
+                    | TeraSemanticValue::Ternary { .. }
+                    | TeraSemanticValue::Raw(_),
+                _,
+            )
+            | (_, "bytes")
     )
 }
 
-fn display_name_for_template(name: &str) -> String {
-    name.rsplit('/')
-        .next()
-        .unwrap_or(name)
-        .trim_end_matches(".html")
-        .replace(['_', '-'], " ")
+fn context_dependencies_for_call(call: &TeraComponentCall) -> Vec<String> {
+    let mut dependencies = BTreeSet::new();
+    for argument in &call.arguments {
+        collect_identifiers(&argument.expression.value, &mut dependencies);
+    }
+    dependencies.into_iter().collect()
+}
+
+fn collect_identifiers(value: &TeraSemanticValue, output: &mut BTreeSet<String>) {
+    match value {
+        TeraSemanticValue::Identifier(identifier) => {
+            output.insert(identifier.clone());
+        }
+        TeraSemanticValue::Math { left, right, .. }
+        | TeraSemanticValue::Logic { left, right, .. }
+        | TeraSemanticValue::In {
+            needle: left,
+            haystack: right,
+            ..
+        } => {
+            collect_identifiers(&left.value, output);
+            collect_identifiers(&right.value, output);
+        }
+        TeraSemanticValue::Test { arguments, .. } | TeraSemanticValue::Array(arguments) => {
+            for argument in arguments {
+                collect_identifiers(&argument.value, output);
+            }
+        }
+        TeraSemanticValue::FunctionCall(call) => {
+            for argument in call.arguments.values() {
+                collect_identifiers(&argument.value, output);
+            }
+        }
+        TeraSemanticValue::Map(values) => {
+            for value in values.values() {
+                collect_identifiers(&value.value, output);
+            }
+        }
+        TeraSemanticValue::Spread(value) | TeraSemanticValue::OptionalChain { value, .. } => {
+            collect_identifiers(&value.value, output);
+        }
+        TeraSemanticValue::Slice { value, start, end } => {
+            collect_identifiers(&value.value, output);
+            if let Some(start) = start {
+                collect_identifiers(&start.value, output);
+            }
+            if let Some(end) = end {
+                collect_identifiers(&end.value, output);
+            }
+        }
+        TeraSemanticValue::Ternary {
+            condition,
+            truthy,
+            falsy,
+        } => {
+            collect_identifiers(&condition.value, output);
+            collect_identifiers(&truthy.value, output);
+            collect_identifiers(&falsy.value, output);
+        }
+        TeraSemanticValue::Comprehension {
+            value,
+            binding,
+            iterable,
+            condition,
+        } => {
+            collect_identifiers(&value.value, output);
+            collect_identifiers(&iterable.value, output);
+            if let Some(condition) = condition {
+                collect_identifiers(&condition.value, output);
+            }
+            output.retain(|identifier| identifier != binding);
+        }
+        TeraSemanticValue::StringConcat(values) => {
+            for value in values {
+                collect_identifiers(value, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn source_node_for_range<'a>(
+    graph: &'a SourceGraph,
+    file: &str,
+    kind: SourceNodeKind,
+    range: &TeraSourceRange,
+) -> Option<&'a SourceNode> {
+    graph.nodes.iter().find(|node| {
+        node.file == file
+            && node.kind == kind
+            && node
+                .range
+                .as_ref()
+                .is_some_and(|node_range| node_range.start == range.start)
+    })
+}
+
+fn dependencies_for_template(
+    graph: &SourceGraph,
+    template: &SourceGraphTemplate,
+) -> Vec<ComponentDependency> {
+    let mut dependencies = graph
+        .relations
+        .iter()
+        .filter(|relation| relation.from == template.node_id)
+        .filter_map(|relation| {
+            let kind = match relation.kind {
+                SourceRelationKind::Extends | SourceRelationKind::Includes => {
+                    ComponentDependencyKind::Template
+                }
+                SourceRelationKind::GetsPage | SourceRelationKind::GetsSection => {
+                    ComponentDependencyKind::Content
+                }
+                SourceRelationKind::UsesStyle => ComponentDependencyKind::Style,
+                SourceRelationKind::UsesScript => ComponentDependencyKind::Script,
+                SourceRelationKind::AssetReference
+                | SourceRelationKind::AssetHash
+                | SourceRelationKind::AssetUrl => ComponentDependencyKind::Asset,
+                SourceRelationKind::DataLoad
+                | SourceRelationKind::DataFileLoad
+                | SourceRelationKind::ContentDataLoad => ComponentDependencyKind::Data,
+                _ => return None,
+            };
+            Some(ComponentDependency {
+                kind,
+                reference: relation.label.clone(),
+                source_node_id: Some(relation.from.clone()),
+                target_node_id: Some(relation.to.clone()),
+                resolved: true,
+            })
+        })
+        .collect::<Vec<_>>();
+    if let Some(semantics) = template.semantics.as_ref() {
+        dependencies.extend(
+            collect_zola_runtime_uses(semantics)
+                .into_iter()
+                .map(|runtime| ComponentDependency {
+                    kind: ComponentDependencyKind::Runtime,
+                    reference: runtime_dependency_reference(runtime),
+                    source_node_id: Some(template.node_id.clone()),
+                    target_node_id: None,
+                    resolved: true,
+                }),
+        );
+    }
+    dependencies.sort_by(|left, right| {
+        format!("{:?}:{}", left.kind, left.reference)
+            .cmp(&format!("{:?}:{}", right.kind, right.reference))
+    });
+    dependencies
+        .dedup_by(|left, right| left.kind == right.kind && left.reference == right.reference);
+    dependencies
+}
+
+fn runtime_dependency_reference(
+    runtime: crate::source_graph::zola::ZolaTeraRuntimeDescriptor,
+) -> String {
+    let mut arguments = runtime
+        .required_arguments
+        .iter()
+        .map(|argument| (*argument).to_string())
+        .collect::<Vec<_>>();
+    arguments.extend(
+        runtime
+            .optional_arguments
+            .iter()
+            .map(|argument| format!("{argument}?")),
+    );
+    arguments.extend(
+        runtime
+            .deprecated_arguments
+            .iter()
+            .map(|(argument, replacement)| format!("{argument}->{replacement}")),
+    );
+    format!(
+        "{:?}:{}({})@{:?}",
+        runtime.kind,
+        runtime.name,
+        arguments.join(","),
+        runtime.availability
+    )
+}
+
+fn file_capabilities(editable: bool) -> ComponentCapabilities {
+    if editable {
+        ComponentCapabilities {
+            can_create: true,
+            can_edit: true,
+            can_duplicate: true,
+            can_move: true,
+            can_rename: true,
+            can_extract: true,
+            can_delete: true,
+            reason_diagnostic: None,
+        }
+    } else {
+        ComponentCapabilities {
+            can_create: false,
+            can_edit: false,
+            can_duplicate: true,
+            can_move: false,
+            can_rename: false,
+            can_extract: false,
+            can_delete: false,
+            reason_diagnostic: Some(LocalizedDiagnostic::new(
+                "components-capability-theme-definition-readonly",
+            )),
+        }
+    }
+}
+
+fn symbol_capabilities(editable: bool) -> ComponentCapabilities {
+    let mut capabilities = file_capabilities(editable);
+    capabilities.can_create = false;
+    // A Tera 2 component is a symbol inside a template, not the template file
+    // itself. File duplication/move/extract would create duplicate global
+    // symbols or operate at the wrong semantic level.
+    capabilities.can_duplicate = false;
+    capabilities.can_move = false;
+    capabilities.can_extract = false;
+    if !editable {
+        capabilities.reason_diagnostic = Some(LocalizedDiagnostic::new(
+            "components-capability-theme-symbol-readonly",
+        ));
+    }
+    capabilities
 }
 
 fn component_origin(origin: &SourceOrigin) -> ComponentOrigin {
@@ -1242,757 +1118,30 @@ fn component_origin(origin: &SourceOrigin) -> ComponentOrigin {
     }
 }
 
-fn component_origin_order(origin: &ComponentOrigin) -> u8 {
-    match origin {
-        ComponentOrigin::Project => 0,
-        ComponentOrigin::Theme => 1,
+fn display_name_for_template(name: &str) -> String {
+    name.rsplit('/').next().unwrap_or(name).to_string()
+}
+
+fn tera_range_to_source_range(range: &TeraSourceRange) -> SourceRange {
+    SourceRange {
+        start: range.start,
+        end: range.end,
+        line: range.line,
+        column: range.column,
+        end_line: range.end_line,
+        end_column: range.end_column,
     }
-}
-
-fn file_capabilities(editable: bool) -> ComponentCapabilities {
-    ComponentCapabilities {
-        can_create: true,
-        can_edit: editable,
-        can_duplicate: true,
-        can_move: editable,
-        can_rename: editable,
-        can_extract: false,
-        can_delete: editable,
-        reason_diagnostic: (!editable)
-            .then(|| LocalizedDiagnostic::new("components-capability-theme-definition-readonly")),
-    }
-}
-
-fn symbol_capabilities(editable: bool) -> ComponentCapabilities {
-    ComponentCapabilities {
-        can_create: true,
-        can_edit: editable,
-        can_duplicate: editable,
-        can_move: editable,
-        can_rename: editable,
-        can_extract: editable,
-        can_delete: editable,
-        reason_diagnostic: (!editable)
-            .then(|| LocalizedDiagnostic::new("components-capability-theme-symbol-readonly")),
-    }
-}
-
-fn source_nodes_for_template<'a>(
-    source_graph: &'a SourceGraph,
-    template: &SourceGraphTemplate,
-    kind: SourceNodeKind,
-) -> Vec<&'a SourceNode> {
-    let mut nodes = source_graph
-        .nodes
-        .iter()
-        .filter(|node| node.file == template.file && node.kind == kind)
-        .collect::<Vec<_>>();
-    nodes.sort_by_key(|node| {
-        (
-            node.range
-                .as_ref()
-                .map(|range| range.start)
-                .unwrap_or(usize::MAX),
-            node.id.as_str(),
-        )
-    });
-    nodes
-}
-
-fn dependencies_for_template(
-    source_graph: &SourceGraph,
-    template: &SourceGraphTemplate,
-) -> Vec<ComponentDependency> {
-    let mut dependencies = source_graph
-        .relations
-        .iter()
-        .filter(|relation| relation.from == template.node_id)
-        .map(|relation| {
-            let kind = match relation.kind {
-                SourceRelationKind::PageTemplate
-                | SourceRelationKind::SectionPageTemplate
-                | SourceRelationKind::Extends
-                | SourceRelationKind::Includes
-                | SourceRelationKind::Imports
-                | SourceRelationKind::DefinesBlock
-                | SourceRelationKind::OverridesBlock => ComponentDependencyKind::Template,
-                SourceRelationKind::DataLoad | SourceRelationKind::DataFileLoad => {
-                    ComponentDependencyKind::Data
-                }
-                SourceRelationKind::ContentDataLoad
-                | SourceRelationKind::GetsPage
-                | SourceRelationKind::GetsSection
-                | SourceRelationKind::InternalContentLink => ComponentDependencyKind::Content,
-                SourceRelationKind::UsesStyle => ComponentDependencyKind::Style,
-                SourceRelationKind::UsesScript => ComponentDependencyKind::Script,
-                SourceRelationKind::AssetUrl
-                | SourceRelationKind::AssetHash
-                | SourceRelationKind::AssetReference
-                | SourceRelationKind::ImageMetadata
-                | SourceRelationKind::ImageResize => ComponentDependencyKind::Asset,
-            };
-            ComponentDependency {
-                kind,
-                reference: relation.label.clone(),
-                source_node_id: Some(relation.from.clone()),
-                target_node_id: Some(relation.to.clone()),
-                resolved: true,
-            }
-        })
-        .collect::<Vec<_>>();
-    if let Some(document) = template.semantics.as_ref() {
-        dependencies.extend(
-            collect_zola_runtime_uses(document)
-                .into_iter()
-                .map(|runtime| ComponentDependency {
-                    kind: ComponentDependencyKind::Runtime,
-                    reference: format!(
-                        "zola:{}:{}",
-                        match runtime.kind {
-                            ZolaTeraRuntimeKind::Function => "function",
-                            ZolaTeraRuntimeKind::Filter => "filter",
-                        },
-                        runtime.name
-                    ),
-                    source_node_id: Some(template.node_id.clone()),
-                    target_node_id: None,
-                    resolved: true,
-                }),
-        );
-    }
-    dependencies.sort_by(|left, right| {
-        (
-            format!("{:?}", left.kind),
-            left.reference.as_str(),
-            left.target_node_id.as_deref().unwrap_or_default(),
-        )
-            .cmp(&(
-                format!("{:?}", right.kind),
-                right.reference.as_str(),
-                right.target_node_id.as_deref().unwrap_or_default(),
-            ))
-    });
-    dependencies.dedup_by(|left, right| {
-        left.kind == right.kind
-            && left.reference == right.reference
-            && left.target_node_id == right.target_node_id
-    });
-    dependencies
-}
-
-fn zola_runtime_diagnostics_for_template(
-    template: &SourceGraphTemplate,
-    kind: &ComponentDefinitionKind,
-) -> Vec<ComponentDiagnostic> {
-    if *kind != ComponentDefinitionKind::Shortcode {
-        return Vec::new();
-    }
-    template
-        .semantics
-        .as_ref()
-        .map(collect_zola_runtime_uses)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|runtime| runtime.availability == ZolaTeraRuntimeAvailability::Late)
-        .map(|runtime| {
-            component_diagnostic(
-                "zola_runtime_unavailable_in_shortcode",
-                LocalizedDiagnostic::new("components-diagnostic-shortcode-runtime-unavailable")
-                    .with_argument("name", runtime.name)
-                    .with_argument("revision", PINNED_ZOLA_REVISION),
-                SourceDiagnosticSeverity::Warning,
-                Some(template.file.clone()),
-                Some(template.node_id.clone()),
-            )
-        })
-        .collect()
-}
-
-fn import_bindings(document: &TeraSemanticDocument) -> HashMap<String, String> {
-    document
-        .walk()
-        .into_iter()
-        .filter_map(|node| match node {
-            TeraSemanticNode::Import {
-                template,
-                namespace,
-            } => Some((namespace.clone(), template.clone())),
-            _ => None,
-        })
-        .collect()
-}
-
-fn semantic_loops(document: &TeraSemanticDocument) -> Vec<&TeraSemanticNode> {
-    document
-        .walk()
-        .into_iter()
-        .filter(|node| matches!(node, TeraSemanticNode::For { .. }))
-        .collect()
-}
-
-fn semantic_conditionals(document: &TeraSemanticDocument) -> Vec<&TeraSemanticNode> {
-    document
-        .walk()
-        .into_iter()
-        .filter(|node| matches!(node, TeraSemanticNode::If { .. }))
-        .collect()
-}
-
-fn semantic_transforms(document: &TeraSemanticDocument) -> Vec<&TeraSemanticNode> {
-    document
-        .walk()
-        .into_iter()
-        .filter(|node| matches!(node, TeraSemanticNode::FilterSection { .. }))
-        .collect()
-}
-
-#[derive(Clone)]
-struct SemanticMacroCallUse {
-    call: TeraSemanticCall,
-    source_node_id: Option<String>,
-}
-
-fn semantic_macro_call_uses(
-    source_graph: &SourceGraph,
-    template: &SourceGraphTemplate,
-    document: &TeraSemanticDocument,
-) -> Vec<SemanticMacroCallUse> {
-    let mut cursor = SemanticSourceCursor::new(source_graph, template);
-    let mut result = Vec::new();
-    collect_macro_calls_from_nodes(&document.nodes, &mut cursor, &mut result);
-    result
-}
-
-struct SemanticSourceCursor<'a> {
-    nodes: HashMap<SourceNodeKind, Vec<&'a SourceNode>>,
-    indexes: HashMap<SourceNodeKind, usize>,
-}
-
-impl<'a> SemanticSourceCursor<'a> {
-    fn new(source_graph: &'a SourceGraph, template: &SourceGraphTemplate) -> Self {
-        let mut nodes = HashMap::<SourceNodeKind, Vec<&SourceNode>>::new();
-        for kind in [
-            SourceNodeKind::TeraVariable,
-            SourceNodeKind::Macro,
-            SourceNodeKind::Set,
-            SourceNodeKind::SetGlobal,
-            SourceNodeKind::Filter,
-            SourceNodeKind::Block,
-            SourceNodeKind::For,
-            SourceNodeKind::If,
-        ] {
-            nodes.insert(
-                kind.clone(),
-                source_nodes_for_template(source_graph, template, kind),
-            );
-        }
-        Self {
-            nodes,
-            indexes: HashMap::new(),
-        }
-    }
-
-    fn next(&mut self, kind: SourceNodeKind) -> Option<String> {
-        let index = self.indexes.entry(kind.clone()).or_default();
-        let node = self
-            .nodes
-            .get(&kind)
-            .and_then(|nodes| nodes.get(*index))
-            .map(|node| node.id.clone());
-        *index += 1;
-        node
-    }
-}
-
-fn collect_macro_calls_from_nodes(
-    nodes: &[TeraSemanticNode],
-    cursor: &mut SemanticSourceCursor<'_>,
-    result: &mut Vec<SemanticMacroCallUse>,
-) {
-    for node in nodes {
-        match node {
-            TeraSemanticNode::Variable { expression } => {
-                let source_node_id = cursor.next(SourceNodeKind::TeraVariable);
-                collect_macro_calls_from_expression(expression, source_node_id, result);
-            }
-            TeraSemanticNode::MacroDefinition {
-                arguments, body, ..
-            } => {
-                let source_node_id = cursor.next(SourceNodeKind::Macro);
-                for expression in arguments.values().flatten() {
-                    collect_macro_calls_from_expression(expression, source_node_id.clone(), result);
-                }
-                collect_macro_calls_from_nodes(body, cursor, result);
-            }
-            TeraSemanticNode::Set { global, value, .. } => {
-                let source_node_id = cursor.next(if *global {
-                    SourceNodeKind::SetGlobal
-                } else {
-                    SourceNodeKind::Set
-                });
-                collect_macro_calls_from_expression(value, source_node_id, result);
-            }
-            TeraSemanticNode::FilterSection { filter, body } => {
-                let source_node_id = cursor.next(SourceNodeKind::Filter);
-                collect_macro_calls_from_call_arguments(filter, source_node_id, result);
-                collect_macro_calls_from_nodes(body, cursor, result);
-            }
-            TeraSemanticNode::Block { body, .. } => {
-                cursor.next(SourceNodeKind::Block);
-                collect_macro_calls_from_nodes(body, cursor, result);
-            }
-            TeraSemanticNode::For {
-                container,
-                body,
-                empty_body,
-                ..
-            } => {
-                let source_node_id = cursor.next(SourceNodeKind::For);
-                collect_macro_calls_from_expression(container, source_node_id, result);
-                collect_macro_calls_from_nodes(body, cursor, result);
-                if let Some(empty_body) = empty_body {
-                    collect_macro_calls_from_nodes(empty_body, cursor, result);
-                }
-            }
-            TeraSemanticNode::If {
-                branches,
-                otherwise,
-            } => {
-                let source_node_id = cursor.next(SourceNodeKind::If);
-                for branch in branches {
-                    collect_macro_calls_from_expression(
-                        &branch.condition,
-                        source_node_id.clone(),
-                        result,
-                    );
-                    collect_macro_calls_from_nodes(&branch.body, cursor, result);
-                }
-                if let Some(otherwise) = otherwise {
-                    collect_macro_calls_from_nodes(otherwise, cursor, result);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn collect_macro_calls_from_expression(
-    expression: &TeraSemanticExpression,
-    source_node_id: Option<String>,
-    result: &mut Vec<SemanticMacroCallUse>,
-) {
-    for filter in &expression.filters {
-        collect_macro_calls_from_call_arguments(filter, source_node_id.clone(), result);
-    }
-    match &expression.value {
-        TeraSemanticValue::MacroCall(call) => {
-            result.push(SemanticMacroCallUse {
-                call: call.clone(),
-                source_node_id: source_node_id.clone(),
-            });
-            collect_macro_calls_from_call_arguments(call, source_node_id, result);
-        }
-        TeraSemanticValue::FunctionCall(call) => {
-            collect_macro_calls_from_call_arguments(call, source_node_id, result)
-        }
-        TeraSemanticValue::Math { left, right, .. }
-        | TeraSemanticValue::Logic { left, right, .. } => {
-            collect_macro_calls_from_expression(left, source_node_id.clone(), result);
-            collect_macro_calls_from_expression(right, source_node_id, result);
-        }
-        TeraSemanticValue::Test { arguments, .. } | TeraSemanticValue::Array(arguments) => {
-            for argument in arguments {
-                collect_macro_calls_from_expression(argument, source_node_id.clone(), result);
-            }
-        }
-        TeraSemanticValue::StringConcat(values) => {
-            for value in values {
-                collect_macro_calls_from_value(value, source_node_id.clone(), result);
-            }
-        }
-        TeraSemanticValue::In {
-            needle, haystack, ..
-        } => {
-            collect_macro_calls_from_expression(needle, source_node_id.clone(), result);
-            collect_macro_calls_from_expression(haystack, source_node_id, result);
-        }
-        _ => {}
-    }
-}
-
-fn collect_macro_calls_from_value(
-    value: &TeraSemanticValue,
-    source_node_id: Option<String>,
-    result: &mut Vec<SemanticMacroCallUse>,
-) {
-    let expression = TeraSemanticExpression {
-        value: value.clone(),
-        negated: false,
-        filters: Vec::new(),
-    };
-    collect_macro_calls_from_expression(&expression, source_node_id, result);
-}
-
-fn collect_macro_calls_from_call_arguments(
-    call: &TeraSemanticCall,
-    source_node_id: Option<String>,
-    result: &mut Vec<SemanticMacroCallUse>,
-) {
-    for argument in call.arguments.values() {
-        collect_macro_calls_from_expression(argument, source_node_id.clone(), result);
-    }
-}
-
-fn context_dependencies_for_document(document: &TeraSemanticDocument) -> Vec<String> {
-    context_dependencies_for_nodes(&document.nodes)
-}
-
-fn context_dependencies_for_nodes(nodes: &[TeraSemanticNode]) -> Vec<String> {
-    let mut dependencies = BTreeSet::new();
-    let mut locals = BTreeSet::new();
-    collect_context_from_nodes(nodes, &mut dependencies, &mut locals);
-    dependencies
-        .into_iter()
-        .filter(|dependency| !locals.contains(root_identifier(dependency)))
-        .collect()
-}
-
-fn collect_context_from_nodes(
-    nodes: &[TeraSemanticNode],
-    dependencies: &mut BTreeSet<String>,
-    locals: &mut BTreeSet<String>,
-) {
-    for node in nodes {
-        match node {
-            TeraSemanticNode::Variable { expression } => {
-                collect_identifiers_from_expression(expression, dependencies);
-            }
-            TeraSemanticNode::MacroDefinition {
-                arguments, body, ..
-            } => {
-                let mut macro_locals = locals.clone();
-                macro_locals.extend(arguments.keys().cloned());
-                for expression in arguments.values().flatten() {
-                    collect_identifiers_from_expression(expression, dependencies);
-                }
-                collect_context_from_nodes(body, dependencies, &mut macro_locals);
-            }
-            TeraSemanticNode::Set { key, value, .. } => {
-                collect_identifiers_from_expression(value, dependencies);
-                locals.insert(key.clone());
-            }
-            TeraSemanticNode::FilterSection { filter, body } => {
-                collect_identifiers_from_call(filter, dependencies);
-                collect_context_from_nodes(body, dependencies, &mut locals.clone());
-            }
-            TeraSemanticNode::Block { body, .. } => {
-                collect_context_from_nodes(body, dependencies, &mut locals.clone());
-            }
-            TeraSemanticNode::For {
-                key,
-                value,
-                container,
-                body,
-                empty_body,
-            } => {
-                collect_identifiers_from_expression(container, dependencies);
-                let mut loop_locals = locals.clone();
-                loop_locals.insert(value.clone());
-                if let Some(key) = key {
-                    loop_locals.insert(key.clone());
-                }
-                collect_context_from_nodes(body, dependencies, &mut loop_locals);
-                if let Some(empty_body) = empty_body {
-                    collect_context_from_nodes(empty_body, dependencies, &mut locals.clone());
-                }
-            }
-            TeraSemanticNode::If {
-                branches,
-                otherwise,
-            } => {
-                for branch in branches {
-                    collect_identifiers_from_expression(&branch.condition, dependencies);
-                    collect_context_from_nodes(&branch.body, dependencies, &mut locals.clone());
-                }
-                if let Some(otherwise) = otherwise {
-                    collect_context_from_nodes(otherwise, dependencies, &mut locals.clone());
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn context_dependencies_for_expression(expression: &TeraSemanticExpression) -> Vec<String> {
-    let mut dependencies = BTreeSet::new();
-    collect_identifiers_from_expression(expression, &mut dependencies);
-    dependencies.into_iter().collect()
-}
-
-fn context_dependencies_for_call(call: &TeraSemanticCall) -> Vec<String> {
-    let mut dependencies = BTreeSet::new();
-    collect_identifiers_from_call(call, &mut dependencies);
-    dependencies.into_iter().collect()
-}
-
-fn collect_identifiers_from_expression(
-    expression: &TeraSemanticExpression,
-    dependencies: &mut BTreeSet<String>,
-) {
-    for filter in &expression.filters {
-        collect_identifiers_from_call(filter, dependencies);
-    }
-    collect_identifiers_from_value(&expression.value, dependencies);
-}
-
-fn collect_identifiers_from_value(value: &TeraSemanticValue, dependencies: &mut BTreeSet<String>) {
-    match value {
-        TeraSemanticValue::Identifier(identifier) => {
-            dependencies.insert(identifier.clone());
-        }
-        TeraSemanticValue::Math { left, right, .. }
-        | TeraSemanticValue::Logic { left, right, .. } => {
-            collect_identifiers_from_expression(left, dependencies);
-            collect_identifiers_from_expression(right, dependencies);
-        }
-        TeraSemanticValue::Test {
-            identifier,
-            arguments,
-            ..
-        } => {
-            dependencies.insert(identifier.clone());
-            for argument in arguments {
-                collect_identifiers_from_expression(argument, dependencies);
-            }
-        }
-        TeraSemanticValue::MacroCall(call) | TeraSemanticValue::FunctionCall(call) => {
-            collect_identifiers_from_call(call, dependencies)
-        }
-        TeraSemanticValue::Array(values) => {
-            for value in values {
-                collect_identifiers_from_expression(value, dependencies);
-            }
-        }
-        TeraSemanticValue::StringConcat(values) => {
-            for value in values {
-                collect_identifiers_from_value(value, dependencies);
-            }
-        }
-        TeraSemanticValue::In {
-            needle, haystack, ..
-        } => {
-            collect_identifiers_from_expression(needle, dependencies);
-            collect_identifiers_from_expression(haystack, dependencies);
-        }
-        _ => {}
-    }
-}
-
-fn collect_identifiers_from_call(call: &TeraSemanticCall, dependencies: &mut BTreeSet<String>) {
-    for argument in call.arguments.values() {
-        collect_identifiers_from_expression(argument, dependencies);
-    }
-}
-
-fn data_bindings_for_document(
-    document: Option<&TeraSemanticDocument>,
-    source_node_id: Option<&str>,
-) -> Vec<ComponentDataBinding> {
-    document
-        .map(|document| data_bindings_for_nodes(&document.nodes, source_node_id))
-        .unwrap_or_default()
-}
-
-fn data_bindings_for_nodes(
-    nodes: &[TeraSemanticNode],
-    source_node_id: Option<&str>,
-) -> Vec<ComponentDataBinding> {
-    let mut environment = HashMap::<String, String>::new();
-    let mut bindings = Vec::new();
-    collect_data_bindings(nodes, source_node_id, &mut environment, &mut bindings);
-    bindings.sort_by(|left, right| {
-        (
-            left.name.as_str(),
-            left.path.as_str(),
-            left.producer.as_str(),
-        )
-            .cmp(&(
-                right.name.as_str(),
-                right.path.as_str(),
-                right.producer.as_str(),
-            ))
-    });
-    bindings.dedup();
-    bindings
-}
-
-fn collect_data_bindings(
-    nodes: &[TeraSemanticNode],
-    source_node_id: Option<&str>,
-    environment: &mut HashMap<String, String>,
-    bindings: &mut Vec<ComponentDataBinding>,
-) {
-    for node in nodes {
-        match node {
-            TeraSemanticNode::Set { key, value, .. } => {
-                let producer = producer_for_expression(value, environment);
-                environment.insert(key.clone(), producer.clone());
-                bindings.push(ComponentDataBinding {
-                    name: key.clone(),
-                    path: expression_path(value),
-                    producer,
-                    source_node_id: source_node_id.map(str::to_string),
-                });
-            }
-            TeraSemanticNode::For {
-                key,
-                value,
-                container,
-                body,
-                empty_body,
-            } => {
-                let producer = producer_for_expression(container, environment);
-                let path = expression_path(container);
-                let mut loop_environment = environment.clone();
-                loop_environment.insert(value.clone(), format!("{producer}[]"));
-                bindings.push(ComponentDataBinding {
-                    name: value.clone(),
-                    path: format!("{path}[]"),
-                    producer: format!("{producer}[]"),
-                    source_node_id: source_node_id.map(str::to_string),
-                });
-                if let Some(key) = key {
-                    loop_environment.insert(key.clone(), format!("{producer}.__key"));
-                    bindings.push(ComponentDataBinding {
-                        name: key.clone(),
-                        path: format!("{path}.__key"),
-                        producer: format!("{producer}.__key"),
-                        source_node_id: source_node_id.map(str::to_string),
-                    });
-                }
-                collect_data_bindings(body, source_node_id, &mut loop_environment, bindings);
-                if let Some(empty_body) = empty_body {
-                    collect_data_bindings(
-                        empty_body,
-                        source_node_id,
-                        &mut environment.clone(),
-                        bindings,
-                    );
-                }
-            }
-            TeraSemanticNode::MacroDefinition { body, .. }
-            | TeraSemanticNode::FilterSection { body, .. }
-            | TeraSemanticNode::Block { body, .. } => {
-                collect_data_bindings(body, source_node_id, &mut environment.clone(), bindings);
-            }
-            TeraSemanticNode::If {
-                branches,
-                otherwise,
-            } => {
-                for branch in branches {
-                    collect_data_bindings(
-                        &branch.body,
-                        source_node_id,
-                        &mut environment.clone(),
-                        bindings,
-                    );
-                }
-                if let Some(otherwise) = otherwise {
-                    collect_data_bindings(
-                        otherwise,
-                        source_node_id,
-                        &mut environment.clone(),
-                        bindings,
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn producer_for_expression(
-    expression: &TeraSemanticExpression,
-    environment: &HashMap<String, String>,
-) -> String {
-    match &expression.value {
-        TeraSemanticValue::Identifier(identifier) => {
-            let root = root_identifier(identifier);
-            environment
-                .get(root)
-                .map(|producer| {
-                    identifier
-                        .strip_prefix(root)
-                        .map(|suffix| format!("{producer}{suffix}"))
-                        .unwrap_or_else(|| producer.clone())
-                })
-                .unwrap_or_else(|| identifier.clone())
-        }
-        TeraSemanticValue::FunctionCall(call) => {
-            let reference = ["path", "url", "literal"]
-                .iter()
-                .find_map(|name| call.arguments.get(*name))
-                .and_then(static_string_expression);
-            reference
-                .map(|reference| format!("{}:{reference}", call.name))
-                .unwrap_or_else(|| format!("{}:dynamic", call.name))
-        }
-        TeraSemanticValue::MacroCall(call) => format!(
-            "macro:{}::{}",
-            call.namespace.as_deref().unwrap_or_default(),
-            call.name
-        ),
-        _ => expression_path(expression),
-    }
-}
-
-fn expression_path(expression: &TeraSemanticExpression) -> String {
-    match &expression.value {
-        TeraSemanticValue::Identifier(identifier) => identifier.clone(),
-        TeraSemanticValue::String(value) => value.clone(),
-        TeraSemanticValue::Integer(value) => value.to_string(),
-        TeraSemanticValue::Float(value) => value.to_string(),
-        TeraSemanticValue::Boolean(value) => value.to_string(),
-        TeraSemanticValue::FunctionCall(call) => {
-            format!("{}(...)", call.name)
-        }
-        TeraSemanticValue::MacroCall(call) => format!(
-            "{}::{}(...)",
-            call.namespace.as_deref().unwrap_or_default(),
-            call.name
-        ),
-        TeraSemanticValue::Array(_) => "[...]".to_string(),
-        TeraSemanticValue::Math { operator, .. } | TeraSemanticValue::Logic { operator, .. } => {
-            format!("expresie {operator}")
-        }
-        TeraSemanticValue::Test {
-            identifier, name, ..
-        } => format!("{identifier} is {name}"),
-        TeraSemanticValue::StringConcat(_) => "concatenare".to_string(),
-        TeraSemanticValue::In { .. } => "expresie in".to_string(),
-    }
-}
-
-fn static_string_expression(expression: &TeraSemanticExpression) -> Option<String> {
-    match &expression.value {
-        TeraSemanticValue::String(value) => Some(value.clone()),
-        _ => None,
-    }
-}
-
-fn root_identifier(identifier: &str) -> &str {
-    identifier.split(['.', '[']).next().unwrap_or(identifier)
 }
 
 fn component_diagnostic(
-    code: impl Into<String>,
+    code: &str,
     diagnostic: LocalizedDiagnostic,
     severity: SourceDiagnosticSeverity,
     file: Option<String>,
     source_node_id: Option<String>,
 ) -> ComponentDiagnostic {
     ComponentDiagnostic {
-        code: code.into(),
+        code: code.to_string(),
         diagnostic,
         severity,
         file,
@@ -2002,241 +1151,34 @@ fn component_diagnostic(
 
 fn component_id(prefix: &str, parts: &[&str]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "pana-component-graph-v1".hash(&mut hasher);
     prefix.hash(&mut hasher);
     for part in parts {
         part.hash(&mut hasher);
     }
-    format!("{prefix}_{:016x}", hasher.finish())
+    format!("component:{prefix}:{:016x}", hasher.finish())
+}
+
+fn range_start(range: Option<&SourceRange>) -> usize {
+    range.map(|range| range.start).unwrap_or(usize::MAX)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{HashMap, HashSet},
-        fs,
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    use crate::{
-        kernel::project_workspace::WorkspaceProjectionSnapshot,
-        project::{AcceptedProjectDiskManifest, ProjectDiskManifest},
-        source_graph::build_source_graph_from_workspace_projection,
-    };
+    use super::*;
 
     #[test]
-    fn projects_definitions_invocations_shadowing_and_data_bindings() {
-        let root = test_project_root("semantic-components");
-        let canonical = root.canonicalize().unwrap().to_string_lossy().to_string();
-        let session = "component-graph-test".to_string();
-        let projection = WorkspaceProjectionSnapshot {
-            project_root: canonical.clone(),
-            runtime_session_id: session.clone(),
-            revision: 1,
-            workspace_transaction_id: Some("component-graph-test-1".to_string()),
-            source_texts: HashMap::from([
-                (
-                    "zola.toml".to_string(),
-                    "base_url = '/'\ntheme = 'demo'\n".to_string(),
-                ),
-                (
-                    "templates/index.html".to_string(),
-                    r#"{% import "macros/cards.html" as cards %}
-{% set items = load_data(path="date/items.toml") %}
-{% include ["partials/card.html", "partials/fallback.html"] %}
-{% for item in items %}
-{{ cards::render(item=item) }}
-{{ cards::missing() }}
-{{ missing::render() }}
-{% endfor %}
-{% if page.extra.featured %}<strong>{{ page.title }}</strong>{% endif %}
-{% filter upper %}<span>{{ page.description }}</span>{% endfilter %}
-<div data-pana-block="tabs"></div>
-"#
-                    .to_string(),
-                ),
-                (
-                    "templates/partials/card.html".to_string(),
-                    "<article>{{ title }}</article>".to_string(),
-                ),
-                (
-                    "themes/demo/templates/partials/card.html".to_string(),
-                    "<article>Theme</article>".to_string(),
-                ),
-                (
-                    "templates/macros/cards.html".to_string(),
-                    "{% macro render(item) %}<article>{{ item.title }}</article>{% endmacro %}"
-                        .to_string(),
-                ),
-                (
-                    "date/items.toml".to_string(),
-                    "[[items]]\ntitle = 'Unu'\n".to_string(),
-                ),
-                (
-                    "content/_index.md".to_string(),
-                    "+++\ntitle = 'Acasă'\n+++\n{{ video(id='abc') }}\n".to_string(),
-                ),
-                (
-                    "templates/shortcodes/video.md".to_string(),
-                    "{% set article = get_page(path='blog/post.md') %}\n**Video {{ id }} ({{ nth }}) — {{ article.title }}**"
-                        .to_string(),
-                ),
-            ])
-            .into(),
-            resource_bytes: HashMap::new().into(),
-            deleted_sources: HashSet::new(),
-            changed_paths: HashSet::new(),
-            accepted_disk: AcceptedProjectDiskManifest::new(
-                session,
-                canonical.clone(),
-                ProjectDiskManifest {
-                    root: canonical,
-                    files: Vec::new(),
-                    truncated: false,
-                    max_files: 100,
-                },
-            )
-            .unwrap()
-            .into(),
-        };
-        let graph = build_source_graph_from_workspace_projection(&root, &projection).unwrap();
-        let components = &graph.component_graph;
-
-        let local_partial = components
-            .definitions
-            .iter()
-            .find(|definition| {
-                definition.name == "partials/card.html"
-                    && definition.origin == crate::source_graph::model::ComponentOrigin::Project
-            })
-            .unwrap();
-        let theme_partial = components
-            .definitions
-            .iter()
-            .find(|definition| {
-                definition.name == "partials/card.html"
-                    && definition.origin == crate::source_graph::model::ComponentOrigin::Theme
-            })
-            .unwrap();
-        assert!(local_partial.active);
-        assert_eq!(
-            theme_partial.shadowed_by.as_deref(),
-            Some(local_partial.id.as_str())
-        );
-
-        assert!(components.invocations.iter().any(|invocation| {
-            invocation.kind == crate::source_graph::model::ComponentInvocationKind::Include
-                && invocation.status
-                    == crate::source_graph::model::ComponentResolutionStatus::Resolved
-        }));
-        assert!(components.invocations.iter().any(|invocation| {
-            invocation.kind == crate::source_graph::model::ComponentInvocationKind::MacroCall
-                && invocation.status
-                    == crate::source_graph::model::ComponentResolutionStatus::Resolved
-        }));
-        for reference in ["cards::missing", "missing::render"] {
-            let unresolved = components
-                .invocations
-                .iter()
-                .find(|invocation| invocation.target_reference == reference)
-                .expect("unresolved macro invocation");
-            assert_eq!(
-                unresolved.status,
-                crate::source_graph::model::ComponentResolutionStatus::Unresolved
-            );
-            assert!(unresolved
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "unresolved_macro_call"));
-        }
-        assert!(components
-            .invocations
-            .iter()
-            .all(|invocation| invocation.target_reference != "tabs"));
-        assert!(graph.block_graph.source_instances.iter().any(|instance| {
-            instance.provider_id == "tabs"
-                && instance.status == crate::source_graph::model::BlockResolutionStatus::Resolved
-        }));
-        assert!(components.invocations.iter().any(|invocation| {
-            invocation.kind == crate::source_graph::model::ComponentInvocationKind::Shortcode
-                && invocation.target_reference == "video"
-                && invocation.status
-                    == crate::source_graph::model::ComponentResolutionStatus::Resolved
-        }));
-        let shortcode = components
-            .definitions
-            .iter()
-            .find(|definition| {
-                definition.kind == crate::source_graph::model::ComponentDefinitionKind::Shortcode
-                    && definition.name == "shortcodes/video.md"
-            })
-            .unwrap();
-        assert!(shortcode.dependencies.iter().any(|dependency| {
-            dependency.kind == crate::source_graph::model::ComponentDependencyKind::Runtime
-                && dependency.reference == "zola:function:get_page"
-        }));
-        assert!(shortcode.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "zola_runtime_unavailable_in_shortcode"
-                && diagnostic.diagnostic.arguments.get("name")
-                    == Some(&serde_json::Value::String("get_page".to_string()))
-        }));
-        let index_template = components
-            .definitions
-            .iter()
-            .find(|definition| definition.name == "index.html")
-            .unwrap();
-        assert!(index_template.dependencies.iter().any(|dependency| {
-            dependency.kind == crate::source_graph::model::ComponentDependencyKind::Runtime
-                && dependency.reference == "zola:function:load_data"
-        }));
-        assert!(components
-            .definitions
-            .iter()
-            .filter(|definition| {
-                definition.kind == crate::source_graph::model::ComponentDefinitionKind::InlineRepeat
-            })
-            .any(|definition| definition.data_bindings.iter().any(|binding| {
-                binding.name == "item" && binding.producer.contains("load_data")
-            })));
-        for (definition_kind, invocation_kind) in [
-            (
-                crate::source_graph::model::ComponentDefinitionKind::InlineConditional,
-                crate::source_graph::model::ComponentInvocationKind::Conditional,
-            ),
-            (
-                crate::source_graph::model::ComponentDefinitionKind::InlineTransform,
-                crate::source_graph::model::ComponentInvocationKind::Transform,
-            ),
-        ] {
-            let definition = components
-                .definitions
-                .iter()
-                .find(|definition| definition.kind == definition_kind)
-                .expect("inline control definition");
-            assert!(definition
-                .context_dependencies
-                .iter()
-                .any(|dependency| dependency.starts_with("page.")));
-            assert!(components.invocations.iter().any(|invocation| {
-                invocation.kind == invocation_kind
-                    && invocation.resolved_definition_ids == vec![definition.id.clone()]
-            }));
-        }
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    fn test_project_root(label: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "pana-component-graph-{label}-{}-{nonce}",
-            std::process::id()
+    fn literal_type_validation_is_strict_but_dynamic_values_remain_deferred_to_tera() {
+        assert!(expression_matches_type(
+            &TeraSemanticExpression::parse("3"),
+            "integer"
         ));
-        fs::create_dir_all(&root).unwrap();
-        root
+        assert!(!expression_matches_type(
+            &TeraSemanticExpression::parse("3"),
+            "string"
+        ));
+        assert!(expression_matches_type(
+            &TeraSemanticExpression::parse("page.extra.value"),
+            "string"
+        ));
     }
 }

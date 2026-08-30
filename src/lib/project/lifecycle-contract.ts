@@ -33,6 +33,8 @@ export type ZolaProjectSettings = {
   generateFeeds: boolean;
   feedFilenames: string[];
   feedLimit: number | null;
+  skipContentTemplating: string[];
+  highlightDataAttrPosition: "pre" | "code" | "both" | "none" | null;
   renderEmoji: boolean;
   smartPunctuation: boolean;
   insertAnchorLinks: string;

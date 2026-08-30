@@ -7,7 +7,7 @@ use std::{
 use std::fs;
 
 use tokio_util::sync::CancellationToken;
-use zola_site::{sass, Site};
+use zola_site::Site;
 
 use crate::kernel::write_authority::ZolaArtifactPublicationLease;
 use crate::zola_engine::{
@@ -22,6 +22,15 @@ pub fn run_zola_build_cancellable(
     project_root: &Path,
     zola_root: &Path,
     cancellation_token: &CancellationToken,
+) -> Result<String, String> {
+    run_zola_build_with_after_render(project_root, zola_root, cancellation_token, || {})
+}
+
+fn run_zola_build_with_after_render(
+    project_root: &Path,
+    zola_root: &Path,
+    cancellation_token: &CancellationToken,
+    after_render: impl FnOnce(),
 ) -> Result<String, String> {
     let artifact_root = resolve_artifact_root(project_root, zola_root)?;
     cancellation_checkpoint(cancellation_token, "înainte de pregătirea build-ului")?;
@@ -64,6 +73,7 @@ pub fn run_zola_build_cancellable(
         })?;
         cancellation_checkpoint(cancellation_token, "după încărcarea proiectului")?;
         build_site_cooperatively(&site, cancellation_token)?;
+        after_render();
         cancellation_checkpoint(cancellation_token, "după randarea artifactului")?;
         Ok(())
     });
@@ -111,87 +121,10 @@ pub fn run_zola_build_cancellable(
 }
 
 fn build_site_cooperatively(site: &Site, token: &CancellationToken) -> Result<(), String> {
-    engine_phase(token, "curățarea generației staged", || site.clean())?;
-    if let Some(theme) = &site.config.theme {
-        let theme_path = site.base_path.join("themes").join(theme);
-        if theme_path.join("sass").exists() {
-            engine_phase(token, "compilarea Sass a temei", || {
-                sass::compile_sass(&theme_path, &site.output_path)
-            })?;
-        }
-    }
-    if site.config.compile_sass {
-        engine_phase(token, "compilarea Sass a proiectului", || {
-            sass::compile_sass(&site.base_path, &site.output_path)
-        })?;
-    }
-    if site.config.build_search_index {
-        engine_phase(token, "construirea indexului de căutare", || {
-            site.build_search_index()
-        })?;
-    }
-    engine_phase(token, "randarea aliasurilor", || site.render_aliases())?;
-    engine_phase(token, "randarea secțiunilor", || site.render_sections())?;
-    engine_phase(token, "randarea paginilor independente", || {
-        site.render_orphan_pages()
-    })?;
-    if site.config.generate_sitemap {
-        engine_phase(token, "randarea sitemap-ului", || site.render_sitemap())?;
-    }
-
-    if site.config.generate_feeds {
-        cancellation_checkpoint(token, "înainte de feed-ul limbii implicite")?;
-        let library = site
-            .library
-            .read()
-            .map_err(|_| "Biblioteca Zola este indisponibilă pentru feed.".to_string())?;
-        let pages = if site.config.is_multilingual() {
-            library
-                .pages
-                .values()
-                .filter(|page| page.lang == site.config.default_language)
-                .collect()
-        } else {
-            library.pages.values().collect()
-        };
-        site.render_feeds(pages, None, &site.config.default_language, |context| {
-            context
-        })
-        .map_err(|error| embedded_phase_error("randarea feed-ului implicit", error))?;
-    }
-    for (code, language) in site.config.other_languages() {
-        if !language.generate_feeds {
-            continue;
-        }
-        cancellation_checkpoint(token, &format!("înainte de feed-ul limbii {code}"))?;
-        let library = site
-            .library
-            .read()
-            .map_err(|_| "Biblioteca Zola este indisponibilă pentru feed.".to_string())?;
-        let pages = library
-            .pages
-            .values()
-            .filter(|page| page.lang == *code)
-            .collect();
-        site.render_feeds(pages, Some(&PathBuf::from(code)), code, |context| context)
-            .map_err(|error| embedded_phase_error(&format!("randarea feed-ului {code}"), error))?;
-    }
-
-    engine_phase(token, "randarea CSS-ului temelor de cod", || {
-        site.render_themes_css()
-    })?;
-    engine_phase(token, "randarea paginii 404", || site.render_404())?;
-    if site.config.generate_robots_txt {
-        engine_phase(token, "randarea robots.txt", || site.render_robots())?;
-    }
-    engine_phase(token, "randarea taxonomiilor", || site.render_taxonomies())?;
-    engine_phase(token, "procesarea imaginilor Zola", || {
-        site.process_images()
-    })?;
-    engine_phase(token, "copierea resurselor statice", || {
-        site.copy_static_directories()
-    })?;
-    cancellation_checkpoint(token, "după ultima fază de build")
+    // Zola 0.23 owns the canonical render queue. Cancellation remains
+    // cooperative at the safe publication boundaries around that queue: the
+    // private generation is never visible until the post-build checkpoint.
+    engine_phase(token, "build-ul canonic Zola", || site.build())
 }
 
 fn engine_phase<E: std::fmt::Display>(
@@ -327,6 +260,55 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_after_render_preserves_the_published_artifact() {
+        let root = fixture_root("cancel-after-render-preserves");
+        create_minimal_site(&root, None);
+        let artifact = root.join("public");
+        fs::create_dir_all(&artifact).unwrap();
+        fs::write(artifact.join("sentinel.txt"), "published-before-build").unwrap();
+        let cancellation = CancellationToken::new();
+        let cancellation_after_render = cancellation.clone();
+
+        let error = run_zola_build_with_after_render(&root, &root, &cancellation, move || {
+            cancellation_after_render.cancel()
+        })
+        .unwrap_err();
+
+        assert!(error.contains("[publish_cancelled]"));
+        assert!(error.contains("după randarea artifactului"));
+        assert_eq!(
+            fs::read_to_string(artifact.join("sentinel.txt")).unwrap(),
+            "published-before-build"
+        );
+        assert_private_generations_removed(&root);
+        cleanup(root);
+    }
+
+    #[test]
+    fn failed_build_preserves_the_published_artifact() {
+        let root = fixture_root("failed-build-preserves");
+        create_minimal_site(&root, None);
+        let artifact = root.join("public");
+        fs::create_dir_all(&artifact).unwrap();
+        fs::write(artifact.join("sentinel.txt"), "published-before-error").unwrap();
+        fs::write(root.join("templates/index.html"), "{{ broken(").unwrap();
+
+        let error =
+            run_zola_build_cancellable(&root, &root, &CancellationToken::new()).unwrap_err();
+
+        assert!(
+            error.contains(&format!("Zola embedded {EMBEDDED_ZOLA_VERSION}")),
+            "eroare neașteptată: {error}"
+        );
+        assert_eq!(
+            fs::read_to_string(artifact.join("sentinel.txt")).unwrap(),
+            "published-before-error"
+        );
+        assert_private_generations_removed(&root);
+        cleanup(root);
+    }
+
+    #[test]
     fn embedded_build_replaces_default_output_with_sass_and_static_assets() {
         let root = fixture_root("default-output");
         create_minimal_site(&root, None);
@@ -346,7 +328,7 @@ mod tests {
 
         let log = run_zola_build_cancellable(&root, &root, &CancellationToken::new()).unwrap();
 
-        assert!(log.contains("Zola embedded 0.22.1"));
+        assert!(log.contains(&format!("Zola embedded {EMBEDDED_ZOLA_VERSION}")));
         assert!(root.join("public/index.html").is_file());
         assert!(root.join("public/site.css").is_file());
         assert!(root.join("public/asset.txt").is_file());
@@ -415,6 +397,227 @@ mod tests {
             .unwrap()
             .next()
             .is_some());
+        cleanup(root);
+    }
+
+    #[test]
+    fn embedded_build_accepts_all_zola_023_editor_options() {
+        let root = fixture_root("zola-023-editor-options");
+        fs::create_dir_all(root.join("content/secret")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/32x32.png"),
+            root.join("static/pixel.png"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            r#"base_url = "https://example.test"
+generate_feeds = true
+feed_filenames = ["atom.xml"]
+skip_content_templating = ["literal.md"]
+
+[markdown.highlighting]
+style = "inline"
+theme = "github-dark"
+data_attr_position = "pre"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n\n```rust\nfn main() {}\n```\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/literal.md"),
+            "+++\ntitle = \"Literal\"\ntemplate = \"page.html\"\n+++\n\n{{ valoare_inexistentă }}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/publicat.md"),
+            "+++\ntitle = \"Publicat în feed\"\ndate = 2026-08-27\ntemplate = \"page.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/exclus.md"),
+            "+++\ntitle = \"Exclus din feed\"\ndate = 2026-08-28\ninclude_in_feeds = false\ntemplate = \"page.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/secret/_index.md"),
+            "+++\ntitle = \"Secret\"\nhidden = true\ntemplate = \"section.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/secret/mostenit.md"),
+            "+++\ntitle = \"Moștenit\"\ntemplate = \"page.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/secret/vizibil.md"),
+            "+++\ntitle = \"Vizibil\"\nhidden = false\ntemplate = \"page.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            concat!(
+                "{% set optimized = resize_image(path='pixel.png', width=1, height=1, op='fit', filter='nearest') %}",
+                "<!doctype html><html><body>{{ section.content | safe }}<img src='{{ optimized.url }}'></body></html>",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/page.html"),
+            "<!doctype html><html><body>{{ page.title }}|hidden={{ page.hidden }}|{{ page.content | safe }}</body></html>",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/section.html"),
+            "<!doctype html><html><body>{{ section.title }}|hidden={{ section.hidden }}</body></html>",
+        )
+        .unwrap();
+
+        run_zola_check(&root, &root).unwrap();
+        run_zola_build_cancellable(&root, &root, &CancellationToken::new()).unwrap();
+
+        let public = root.join("public");
+        let index = fs::read_to_string(public.join("index.html")).unwrap();
+        let pre_start = index.find("<pre").expect("bloc de cod randat");
+        let code_start = index[pre_start..]
+            .find("<code")
+            .map(|offset| pre_start + offset)
+            .expect("element code randat");
+        assert!(index[pre_start..code_start].contains("data-lang=\"rust\""));
+        assert!(!index[code_start..].starts_with("<code data-lang=\"rust\""));
+        assert!(public.join("processed_images").is_dir());
+
+        let literal = fs::read_to_string(public.join("literal/index.html")).unwrap();
+        assert!(literal.contains("valoare_inexistentă"));
+        let feed = fs::read_to_string(public.join("atom.xml")).unwrap();
+        assert!(feed.contains("Publicat în feed"));
+        assert!(!feed.contains("Exclus din feed"));
+        assert!(fs::read_to_string(public.join("secret/index.html"))
+            .unwrap()
+            .contains("hidden=true"));
+        assert!(
+            fs::read_to_string(public.join("secret/mostenit/index.html"))
+                .unwrap()
+                .contains("hidden=true")
+        );
+        assert!(fs::read_to_string(public.join("secret/vizibil/index.html"))
+            .unwrap()
+            .contains("hidden=false"));
+        cleanup(root);
+    }
+
+    #[test]
+    fn embedded_upgrade_baseline_covers_the_zola_feature_matrix() {
+        let root = fixture_root("upgrade-feature-matrix");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/projects/zola-upgrade-baseline");
+        copy_tree(&source, &root);
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/32x32.png"),
+            root.join("static/pixel.png"),
+        )
+        .unwrap();
+
+        run_zola_check(&root, &root).unwrap();
+        run_zola_build_cancellable(&root, &root, &CancellationToken::new()).unwrap();
+
+        let public = root.join("public");
+        assert!(public.join("index.html").is_file(), "pagina root lipsește");
+        assert!(
+            public.join("en/index.html").is_file(),
+            "pagina root en lipsește"
+        );
+        assert!(
+            public.join("articole/index.html").is_file(),
+            "secțiunea lipsește"
+        );
+        assert!(
+            public.join("articole/page/2/index.html").is_file(),
+            "paginarea lipsește"
+        );
+        assert!(
+            public.join("tags/index.html").is_file(),
+            "taxonomia lipsește"
+        );
+        assert!(public.join("site.css").is_file(), "CSS-ul Sass lipsește");
+        assert!(
+            public.join("giallo.css").is_file(),
+            "CSS-ul de syntax highlighting trebuie generat în output"
+        );
+        assert!(
+            public.join("processed_images").is_dir(),
+            "imaginea procesată lipsește"
+        );
+        assert!(
+            public.join("search_index.ro.js").is_file(),
+            "search ro lipsește"
+        );
+        assert!(
+            public.join("search_index.en.js").is_file(),
+            "search en lipsește"
+        );
+        assert!(public.join("atom.xml").is_file(), "feed-ul ro lipsește");
+        assert!(public.join("en/atom.xml").is_file(), "feed-ul en lipsește");
+        assert!(
+            public.join("articole/primul/diagrama.svg").is_file(),
+            "asset-ul colocat lipsește"
+        );
+        assert_eq!(
+            fs::read_to_string(public.join("marker.txt")).unwrap(),
+            "baseline-static-asset\n"
+        );
+        cleanup(root);
+    }
+
+    #[test]
+    fn embedded_engine_builds_every_bundled_starter() {
+        let starters_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/project-starters");
+        let mut starter_ids = fs::read_dir(&starters_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        starter_ids.sort();
+        assert_eq!(
+            starter_ids,
+            ["cadru", "minimal", "nord", "pana-studio", "radacini"]
+        );
+
+        for starter_id in starter_ids {
+            let root = fixture_root(&format!("starter-{starter_id}"));
+            copy_tree(&starters_root.join(&starter_id).join("project"), &root);
+
+            run_zola_check(&root, &root)
+                .unwrap_or_else(|error| panic!("starter {starter_id}: check eșuat: {error}"));
+            run_zola_build_cancellable(&root, &root, &CancellationToken::new())
+                .unwrap_or_else(|error| panic!("starter {starter_id}: build eșuat: {error}"));
+            assert!(
+                root.join("public/index.html").is_file(),
+                "starter {starter_id}"
+            );
+            cleanup(root);
+        }
+    }
+
+    #[test]
+    fn embedded_engine_builds_the_native_tera2_index_zero_fixture() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/projects/index-zero/sursa");
+        let root = fixture_root("index-zero-tera2");
+        copy_tree(&source, &root);
+
+        run_zola_check(&root, &root)
+            .unwrap_or_else(|error| panic!("index-zero: check eșuat: {error}"));
+        run_zola_build_cancellable(&root, &root, &CancellationToken::new())
+            .unwrap_or_else(|error| panic!("index-zero: build eșuat: {error}"));
+        assert!(root.join("public/index.html").is_file());
+
         cleanup(root);
     }
 
@@ -505,5 +708,32 @@ mod tests {
 
     fn cleanup(path: PathBuf) {
         let _ = fs::remove_dir_all(path);
+    }
+
+    fn copy_tree(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let source_path = entry.path();
+            let destination_path = destination.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&source_path, &destination_path);
+            } else {
+                fs::copy(&source_path, &destination_path).unwrap();
+            }
+        }
+    }
+
+    fn assert_private_generations_removed(root: &Path) {
+        let leftovers = fs::read_dir(root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".pana-studio-build-staging-"))
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "generații private rămase: {leftovers:?}"
+        );
     }
 }

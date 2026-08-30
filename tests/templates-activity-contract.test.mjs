@@ -18,12 +18,20 @@ test("Șabloane este distinctă de catalogul semantic al componentelor Tera", ()
   assert.match(types, /export type WorkbenchActivity[\s\S]*\|\s*"templates"/);
   assert.match(workbench, /#\[serde\(alias = "site"\)\]\s*Templates/);
 
-  assert.match(components, /ComponentView[\s\S]*"partials"/);
-  assert.match(components, /ComponentView[\s\S]*"macros"/);
-  assert.match(components, /ComponentView[\s\S]*"shortcodes"/);
-  assert.match(components, /ComponentView[\s\S]*"repeats"/);
+  assert.match(components, /definition\.kind === "teraComponent"/);
+  assert.match(components, /namespaceFilter/);
+  assert.match(components, /originFilter/);
+  assert.doesNotMatch(components, /ComponentView|role="tablist"/);
+  assert.doesNotMatch(components, /"partial"|"inlineRepeat"|"inlineConditional"|"inlineTransform"/);
   assert.doesNotMatch(components, /sourceGraph\?\.templates|SourceGraphTemplate/);
   assert.match(components, /sourceGraph\?\.componentGraph/);
+  assert.match(components, /operation:\s*"rename"/);
+  assert.match(components, /selectedInvocations/);
+  assert.match(components, /surface:\s*"visual"/);
+  assert.match(components, /components-typed-arguments/);
+  assert.match(components, /formRestEnabled/);
+  assert.match(components, /formAcceptsBody/);
+  assert.doesNotMatch(components, /\b(?:macro|shortcode)s?\b/i);
   assert.doesNotMatch(components, /readNativeBlockRegistry|readBlockRuntimeSnapshot|blockGraph/);
 });
 
@@ -138,10 +146,12 @@ test("activitatea prezintă ierarhia Mosaic adaptată la Zola fără tabul Toate
   assert.match(templates, /\{ id: "page" as const, label: t\("templates-view-pages"\) \}/);
   assert.match(templates, /\{ id: "archive" as const, label: t\("templates-view-archives"\) \}/);
   assert.match(templates, /\{ id: "element" as const, label: t\("templates-view-elements"\) \}/);
+  assert.match(templates, /\{ id: "partial" as const, label: t\("templates-view-partials"\) \}/);
+  assert.match(templates, /\{ id: "listing_item" as const, label: t\("templates-view-listing-items"\) \}/);
   assert.match(templates, /\{ id: "taxonomy" as const, label: t\("templates-view-taxonomies"\) \}/);
   assert.match(templates, /\{ id: "system" as const, label: t\("templates-view-system"\) \}/);
   assert.doesNotMatch(templates, /\{ id: "all"/);
-  assert.doesNotMatch(templates, /templates-view-(?:partials|macros)/);
+  assert.doesNotMatch(templates, /templates-view-macros/);
   assert.match(templates, /function beginCreate\(\)[\s\S]*detailMode = "create"/);
   assert.match(templates, /NEW_SECTION_TARGET/);
   assert.match(templates, /templates-create-new-section/);
@@ -156,6 +166,42 @@ test("activitatea prezintă ierarhia Mosaic adaptată la Zola fără tabul Toate
   assert.match(templates, /t\("templates-assignment-source-convention"\)/);
   assert.match(templates, /deleteConfirmationOpen/);
   assert.doesNotMatch(templates, /window\.(?:prompt|confirm)/);
+});
+
+test("Parțiale proiectează resursele efective, consumatorii reali și CRUD-ul protejat", () => {
+  const catalog = source("../src-tauri/src/source_graph/template_catalog.rs");
+  const commands = source("../src-tauri/src/commands/templates.rs");
+  const contracts = source("../src/lib/templates/contracts.ts");
+  const templates = source("../src/lib/components/templates/TemplatesWorkspace.svelte");
+
+  assert.match(contracts, /TemplateSemanticCategory[\s\S]*\| "partial"/);
+  assert.match(contracts, /TemplateSemanticRole[\s\S]*\| "partial"/);
+  assert.match(catalog, /TemplateSemanticCategory::Partial/);
+  assert.match(catalog, /TemplateSemanticRole::Partial/);
+  assert.match(
+    catalog,
+    /resource\.effective && resource\.roles\.contains\(&TemplateCatalogRole::Partial\)/,
+  );
+  assert.match(catalog, /preview_from_usage\([\s\S]*resource\.affected_pages\.first\(\)/);
+  assert.match(catalog, /TemplateCatalogRole::ListingItem[\s\S]*else if is_partial[\s\S]*TemplateCatalogRole::Partial/);
+  assert.match(catalog, /TemplateCatalogRole::ComponentLibrary/);
+
+  assert.match(templates, /partial:\s*\["partial"\]/);
+  assert.match(templates, /role === "partial"[\s\S]*"partials\/new-partial"/);
+  assert.match(templates, /partialIncludingTemplates[\s\S]*usage\.kind === "includes"/);
+  assert.match(templates, /templates-partial-included-by/);
+  assert.match(templates, /selectedEntry\.affectedPages as page/);
+  assert.match(
+    templates,
+    /async function previewPartialInPage[\s\S]*surface:\s*"visual"[\s\S]*templateContextPagePath:\s*pageFile/,
+  );
+  assert.match(commands, /TemplateSemanticCreateRole::Partial/);
+  assert.match(commands, /templates\/partials\//);
+  assert.match(templates, /beginRename\(selectedResource\)/);
+  assert.match(templates, /beginDuplicate\(selectedResource\)/);
+  assert.match(templates, /overrideResource\(selectedResource\)/);
+  assert.match(templates, /disabled=\{busy \|\| !selectedResource\.canDelete\}/);
+  assert.match(templates, /selectedEntry\.role !== "listing_item" && selectedEntry\.role !== "partial"/);
 });
 
 test("formularele șabloanelor păstrează comenzile Rust drept autoritate de mutație", () => {

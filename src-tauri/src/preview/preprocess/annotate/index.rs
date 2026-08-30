@@ -9,7 +9,7 @@ use crate::{
     source_graph::{
         html::should_project_html_tag,
         mixed_cst::{parse_mixed_cst, MixedCstKind},
-        model::{MarkdownProjection, MarkdownProjectionKind, SourceGraph, SourceNodeKind},
+        model::{MarkdownProjection, SourceGraph, SourceNodeKind},
         tera::{for_collection_root, parse_tera_items, set_assignment_name, TeraItemKind},
     },
 };
@@ -26,7 +26,6 @@ pub struct SourceIdIndex {
     pub(super) external_scope_start_by_scope_location: HashSet<String>,
     pub(super) zola_image_by_source_location: HashMap<String, ZolaImagePresentation>,
     pub(super) markdown_projection_by_location: HashMap<String, MarkdownProjection>,
-    pub(super) shortcode_projection_by_template: HashMap<String, MarkdownProjection>,
 }
 
 #[derive(Clone)]
@@ -152,12 +151,7 @@ impl SourceIdIndex {
         let mut index = Self::default();
         let canonical = CanonicalSourceNodeIndex::from_graph(graph);
         for projection in &graph.markdown_projections {
-            if projection.kind == MarkdownProjectionKind::Shortcode {
-                index.shortcode_projection_by_template.insert(
-                    projection.template_file.trim_start_matches('/').to_string(),
-                    projection.clone(),
-                );
-            } else if let Some(range) = projection.template_range.as_ref() {
+            if let Some(range) = projection.template_range.as_ref() {
                 index.markdown_projection_by_location.insert(
                     format!(
                         "{}:{}:{}",
@@ -231,29 +225,13 @@ impl SourceIdIndex {
         self.markdown_projection_by_location.get(source_location)
     }
 
-    pub(super) fn shortcode_projection_for(
-        &self,
-        relative_path: &str,
-    ) -> Option<&MarkdownProjection> {
-        self.shortcode_projection_by_template
-            .get(relative_path.trim_start_matches('/'))
-    }
-
     #[cfg(test)]
     pub(super) fn index_template_source(&mut self, source: &str, relative_path: &str) {
         let graph_file = relative_path.trim_start_matches('/').to_string();
         let markdown =
             crate::source_graph::markdown::analyze_template_markdown(&graph_file, source);
-        self.markdown_projection_by_location.extend(
-            markdown
-                .projection_by_location
-                .into_iter()
-                .filter(|(_, projection)| projection.kind != MarkdownProjectionKind::Shortcode),
-        );
-        if let Some(shortcode) = markdown.shortcode_projection {
-            self.shortcode_projection_by_template
-                .insert(graph_file.clone(), shortcode);
-        }
+        self.markdown_projection_by_location
+            .extend(markdown.projection_by_location);
         let mut identities = ProvisionalSourceNodeIdAllocator::default();
         let line_index = LineIndex::new(source);
         let tera_scopes =
@@ -539,9 +517,7 @@ fn is_partial_template_relative_path(relative_path: &str) -> bool {
             .unwrap_or(normalized.as_str())
     };
 
-    logical.starts_with("partials/")
-        || logical.starts_with("macros/")
-        || logical.starts_with("shortcodes/")
+    logical.starts_with("partials/") || logical.starts_with("components/")
 }
 
 fn innermost_tera_scope(

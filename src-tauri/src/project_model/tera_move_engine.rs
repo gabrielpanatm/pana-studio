@@ -272,23 +272,26 @@ fn validate_tera_move_target(
     {
         return Err("Block-urile Tera rămân la nivel de template în DnD sigur.".to_string());
     }
-    if matches!(source.kind, SourceNodeKind::Macro | SourceNodeKind::Import)
+    if source.kind == SourceNodeKind::ComponentDefinition
         && !matches!(
             context_kind,
             Some(SourceNodeKind::Template) | Some(SourceNodeKind::Partial)
         )
     {
         return Err(
-            "Macro-urile și importurile Tera rămân la nivel de template în DnD sigur.".to_string(),
+            "Definițiile de componente Tera rămân la nivel de template în DnD sigur.".to_string(),
         );
     }
-    if matches!(context_kind, Some(SourceNodeKind::Macro))
+    if matches!(context_kind, Some(SourceNodeKind::ComponentDefinition))
         && matches!(
             source.kind,
-            SourceNodeKind::Block | SourceNodeKind::Macro | SourceNodeKind::Extends
+            SourceNodeKind::Block | SourceNodeKind::ComponentDefinition | SourceNodeKind::Extends
         )
     {
-        return Err("Macro body nu primește block, macro sau extends prin DnD.".to_string());
+        return Err(
+            "Corpul componentei nu primește block, altă definiție sau extends prin DnD."
+                .to_string(),
+        );
     }
 
     Ok(())
@@ -320,7 +323,7 @@ fn can_receive_tera_inside(anchor: &SourceNode, intent: &ProjectTeraMoveIntent) 
     matches!(
         anchor.kind,
         SourceNodeKind::Block
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Filter
@@ -499,8 +502,8 @@ fn is_movable_tera_kind(kind: &SourceNodeKind) -> bool {
         kind,
         SourceNodeKind::Block
             | SourceNodeKind::Include
-            | SourceNodeKind::Import
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set
@@ -522,8 +525,8 @@ fn is_tera_move_anchor_kind(kind: &SourceNodeKind) -> bool {
         SourceNodeKind::Html
             | SourceNodeKind::Block
             | SourceNodeKind::Include
-            | SourceNodeKind::Import
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set
@@ -545,8 +548,8 @@ fn tera_kind_label(kind: &SourceNodeKind) -> &'static str {
         SourceNodeKind::Extends => "extends",
         SourceNodeKind::Block => "block",
         SourceNodeKind::Include => "include",
-        SourceNodeKind::Import => "import",
-        SourceNodeKind::Macro => "macro",
+        SourceNodeKind::ComponentDefinition => "componentDefinition",
+        SourceNodeKind::ComponentCall => "componentCall",
         SourceNodeKind::For => "for",
         SourceNodeKind::If => "if",
         SourceNodeKind::Elif => "elif",
@@ -754,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_move_blocks_macro_inside_html_anchor() {
+    fn plan_tera_move_blocks_component_definition_inside_html_anchor() {
         let root = unique_test_dir();
         let fixture = project_fixture(
             root.clone(),
@@ -762,12 +765,12 @@ mod tests {
                 "{% block content %}\n",
                 "  <section class=\"hero\"></section>\n",
                 "{% endblock %}\n",
-                "{% macro card() %}\n",
-                "{% endmacro %}\n",
+                "{% component card() %}\n",
+                "{% endcomponent card %}\n",
             ),
         );
         let model = fixture.build_model().unwrap();
-        let source = find_node(&model, SourceNodeKind::Macro, "card");
+        let source = find_node(&model, SourceNodeKind::ComponentDefinition, "card");
         let target = model
             .source_graph
             .nodes
@@ -780,7 +783,7 @@ mod tests {
             &ProjectTeraMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_kind: Some("macro".to_string()),
+                source_kind: Some("componentDefinition".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: Some("section".to_string()),

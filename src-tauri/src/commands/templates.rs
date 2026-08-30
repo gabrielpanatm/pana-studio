@@ -42,6 +42,7 @@ const DEFAULT_ARCHIVE_PAGINATE_PATH: &str = "pagina";
 enum TemplateDraftRole {
     Page,
     Layout,
+    Partial,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -68,6 +69,7 @@ pub enum TemplateSemanticCreateRole {
     SpecificPage,
     SectionArchive,
     SectionElement,
+    Partial,
     TaxonomyList,
     TaxonomyTerm,
     NotFound,
@@ -377,6 +379,14 @@ pub fn workspace_create_semantic_template(
     } else {
         semantic_creation_assignment(workspace, &graph, input.role, target_id, &logical_name)?
     };
+    if matches!(input.role, TemplateSemanticCreateRole::Partial)
+        && input
+            .parent_template_name
+            .as_deref()
+            .is_some_and(|name| !name.trim().is_empty())
+    {
+        return Err("Partialele incluse nu acceptă o directivă extends.".to_string());
+    }
     let parent = validate_parent_template(
         &root,
         workspace,
@@ -385,6 +395,8 @@ pub fn workspace_create_semantic_template(
     )?;
     let draft_role = if matches!(input.role, TemplateSemanticCreateRole::Layout) {
         TemplateDraftRole::Layout
+    } else if matches!(input.role, TemplateSemanticCreateRole::Partial) {
+        TemplateDraftRole::Partial
     } else {
         TemplateDraftRole::Page
     };
@@ -460,6 +472,7 @@ pub fn workspace_duplicate_template(
 ) -> Result<WorkspaceEntryMutationReceipt, String> {
     let source = normalize_template_source_path(&input.source_relative_path)?;
     let destination = local_template_path(&input.destination_name)?;
+    require_partial_namespace_preserved(&source, &destination)?;
     let (_root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
     let workspace = live_workspace(&mut slot)?;
     require_destination_available(workspace, &destination)?;
@@ -538,6 +551,7 @@ pub fn workspace_rename_template(
         );
     }
     let destination = local_template_path(&input.destination_name)?;
+    require_partial_namespace_preserved(&source, &destination)?;
     if source == destination {
         return Err("Redenumirea nu schimbă numele șablonului.".to_string());
     }
@@ -568,6 +582,14 @@ pub fn workspace_set_template_parent(
     let workspace = live_workspace(&mut slot)?;
     let source_text = require_template_text(workspace, &source)?;
     let source_name = template_logical_name(&source)?;
+    if source_name.starts_with("partials/")
+        && input
+            .parent_template_name
+            .as_deref()
+            .is_some_and(|name| !name.trim().is_empty())
+    {
+        return Err("Partialele incluse nu pot extinde un layout.".to_string());
+    }
     let parent = validate_parent_template(
         &root,
         workspace,
@@ -780,8 +802,31 @@ fn semantic_creation_assignment(
     target_id: Option<&str>,
     logical_name: &str,
 ) -> Result<Option<(String, TemplateAssignmentKey)>, String> {
+    let specialized_namespace = if logical_name.starts_with("partials/") {
+        Some("partials/")
+    } else if logical_name.starts_with("components/") {
+        Some("components/")
+    } else if logical_name.starts_with("listing-items/") {
+        Some("listing-items/")
+    } else {
+        None
+    };
+    if matches!(role, TemplateSemanticCreateRole::Partial) {
+        if specialized_namespace != Some("partials/") {
+            return Err(
+                "Un partial trebuie creat în spațiul de nume templates/partials/.".to_string(),
+            );
+        }
+    } else if let Some(namespace) = specialized_namespace {
+        return Err(format!(
+            "Spațiul de nume templates/{namespace} are un flux semantic specializat."
+        ));
+    }
+
     match role {
-        TemplateSemanticCreateRole::Layout | TemplateSemanticCreateRole::Custom => {
+        TemplateSemanticCreateRole::Layout
+        | TemplateSemanticCreateRole::Partial
+        | TemplateSemanticCreateRole::Custom => {
             if target_id.is_some() {
                 return Err("Acest rol creează o resursă fără atribuire Zola.".to_string());
             }
@@ -982,6 +1027,22 @@ fn template_logical_name(relative_path: &str) -> Result<String, String> {
         .ok_or_else(|| format!("Calea {relative_path} nu este un șablon local valid."))
 }
 
+fn require_partial_namespace_preserved(source: &str, destination: &str) -> Result<(), String> {
+    let source_name = source
+        .strip_prefix("templates/")
+        .or_else(|| theme_template_name(source))
+        .map(normalize_zola_template_reference)
+        .ok_or_else(|| format!("Calea {source} nu este un șablon valid."))?;
+    let destination_name = template_logical_name(destination)?;
+    if source_name.starts_with("partials/") != destination_name.starts_with("partials/") {
+        return Err(
+            "Redenumirea sau duplicarea trebuie să păstreze spațiul semantic templates/partials/."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn validate_parent_template(
     project_root: &Path,
     workspace: &ProjectWorkspace,
@@ -1169,6 +1230,9 @@ fn template_draft(role: TemplateDraftRole, parent: Option<&str>) -> String {
             extends_prefix(parent)
         ),
         TemplateDraftRole::Layout => "<!doctype html>\n<html lang=\"ro\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>{% block title %}{{ config.title }}{% endblock title %}</title>\n</head>\n<body>\n  {% block content %}{% endblock content %}\n</body>\n</html>\n".to_string(),
+        TemplateDraftRole::Partial => {
+            "<section class=\"partial\">\n  <h2>Parțial nou</h2>\n</section>\n".to_string()
+        }
     }
 }
 
@@ -1307,6 +1371,30 @@ mod tests {
             "templates/page.html"
         );
         assert!(local_template_path("../outside.html").is_err());
+    }
+
+    #[test]
+    fn rename_and_duplicate_preserve_the_partial_namespace() {
+        assert!(require_partial_namespace_preserved(
+            "templates/partials/card.html",
+            "templates/partials/card-copy.html",
+        )
+        .is_ok());
+        assert!(require_partial_namespace_preserved(
+            "themes/pana/templates/partials/card.html",
+            "templates/partials/card-copy.html",
+        )
+        .is_ok());
+        assert!(require_partial_namespace_preserved(
+            "templates/partials/card.html",
+            "templates/card.html",
+        )
+        .is_err());
+        assert!(require_partial_namespace_preserved(
+            "templates/page.html",
+            "templates/partials/page.html",
+        )
+        .is_err());
     }
 
     #[test]
@@ -1504,6 +1592,37 @@ mod tests {
             "not-page.html",
         )
         .is_err());
+        assert_eq!(
+            semantic_creation_assignment(
+                &workspace,
+                &graph,
+                TemplateSemanticCreateRole::Partial,
+                None,
+                "partials/card.html",
+            )
+            .unwrap(),
+            None
+        );
+        assert!(semantic_creation_assignment(
+            &workspace,
+            &graph,
+            TemplateSemanticCreateRole::Partial,
+            None,
+            "card.html",
+        )
+        .is_err());
+        assert!(semantic_creation_assignment(
+            &workspace,
+            &graph,
+            TemplateSemanticCreateRole::Custom,
+            None,
+            "partials/card.html",
+        )
+        .is_err());
+        assert_eq!(
+            template_draft(TemplateDraftRole::Partial, None),
+            "<section class=\"partial\">\n  <h2>Parțial nou</h2>\n</section>\n"
+        );
         assert!(semantic_creation_assignment(
             &workspace,
             &graph,

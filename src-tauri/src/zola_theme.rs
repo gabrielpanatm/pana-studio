@@ -257,10 +257,10 @@ pub fn reusable_scss_relative_path(template_path: &str) -> Option<String> {
     let name = template.trim_end_matches(".html");
     let (scope, component_name) = if let Some(name) = name.strip_prefix("partials/") {
         ("partials", name)
+    } else if let Some(name) = name.strip_prefix("components/") {
+        ("componente", name)
     } else if let Some(name) = name.strip_prefix("listing-items/") {
         ("partials/listing-items", name)
-    } else if let Some(name) = name.strip_prefix("macros/") {
-        ("partials/macros", name)
     } else {
         return None;
     };
@@ -329,11 +329,6 @@ pub fn conventional_style_files_for_template(
             "partials/listing-items",
             listing_item_name,
         );
-    }
-
-    if let Some(macro_name) = name.strip_prefix("macros/") {
-        let macro_name = macro_name.trim_start_matches('/');
-        return conventional_partial_style_files(&style_root, "partials/macros", macro_name);
     }
 
     vec![format!("{}/pagini/{}.scss", style_root, name)]

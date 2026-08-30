@@ -521,7 +521,7 @@ fn html_move_capability_allowed(node: &SourceNode, edit_scope_authorized: bool) 
                 Some(
                     crate::source_graph::model::SourceCapabilityReason::HtmlInTeraLoop
                         | crate::source_graph::model::SourceCapabilityReason::HtmlInTeraCondition
-                        | crate::source_graph::model::SourceCapabilityReason::HtmlInTeraMacro
+                        | crate::source_graph::model::SourceCapabilityReason::HtmlInTeraComponent
                         | crate::source_graph::model::SourceCapabilityReason::HtmlInTeraLocalScope
                 )
             ))

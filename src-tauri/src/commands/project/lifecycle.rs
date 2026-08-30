@@ -24,7 +24,6 @@ use crate::{
     commands::ai_coordination::publish_ai_coordination_state,
     js::PageJsDraftStore,
     kernel::{
-        component_legacy_migration::migrate_legacy_component_catalog,
         file_buffer_store::bootstrap_file_buffer_store,
         observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
         performance::{elapsed_us, with_performance_sample},
@@ -308,6 +307,7 @@ pub fn reattach_project_session(
                     template_path: file.relative_path.clone(),
                     preferred_page_path: None,
                     preferred_route: None,
+                    preferred_component_name: None,
                 },
             )?;
             let _preview_operation = state.preview_workspace_operation.lock().map_err(|_| {
@@ -679,7 +679,6 @@ pub fn open_project(
     if recovery_resolution == ProjectOpenRecoveryResolution::Restore {
         restore_project_workspace_recovery(&app, &mut next_project_workspace)?;
     }
-    migrate_legacy_component_catalog(&root, &mut next_project_workspace, now_ms())?;
     let retire_abandoned_recovery = recovery_assessment.as_ref().is_some_and(|assessment| {
         matches!(
             assessment.status,
@@ -785,6 +784,7 @@ pub fn open_project(
                         template_path: file.relative_path.clone(),
                         preferred_page_path: None,
                         preferred_route: None,
+                        preferred_component_name: None,
                     },
                 )?;
                 let publication = preview_engine.publish_template_workbench_view(

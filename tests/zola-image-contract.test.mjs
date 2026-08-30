@@ -40,6 +40,7 @@ test("rezolvă strict o singură sursă locală suportată", () => {
     operation: "fit_width",
     format: "webp",
     quality: 82,
+    filter: null,
   }), {
     enabled: true,
     sourceUrl: "/images/hero.jpg",
@@ -49,6 +50,7 @@ test("rezolvă strict o singură sursă locală suportată", () => {
     operation: "fit_width",
     format: "webp",
     quality: 82,
+    filter: null,
   });
 });
 
@@ -75,10 +77,28 @@ test("decodează metadata preview base64url și refuză payload invalid", () => 
     operation: "fill",
     format: "avif",
     quality: 74,
+    filter: "catmull_rom",
   };
   const payload = Buffer.from(JSON.stringify(state), "utf8").toString("base64url");
   assert.deepEqual(decodeZolaImagePresentation(payload), state);
   assert.equal(decodeZolaImagePresentation("nu-este-base64-json"), null);
+});
+
+test("filtrul de sampling rămâne opțional și este propagat numai când este ales", () => {
+  const source = resolveZolaImageSource("/images/hero.jpg", [
+    image("static/images/hero.jpg"),
+  ]);
+  const intent = createZolaImageIntent({
+    enabled: true,
+    source,
+    width: 640,
+    height: null,
+    operation: "fit_width",
+    format: "webp",
+    quality: 82,
+    filter: "gaussian",
+  });
+  assert.equal(intent.filter, "gaussian");
 });
 
 test("editările HTML generice nu suprascriu atributele administrate de Zola", () => {

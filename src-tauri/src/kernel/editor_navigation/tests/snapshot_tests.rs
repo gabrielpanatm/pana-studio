@@ -162,9 +162,9 @@ fn semantic_boundary_taxonomy_covers_templates_and_every_component_family() {
         "card",
         "templates/index.html",
     );
-    let macro_definition = source_node_in_file(
+    let component_definition = source_node_in_file(
         &model,
-        SourceNodeKind::Macro,
+        SourceNodeKind::ComponentDefinition,
         "widget",
         "templates/partials/widget.html",
     );
@@ -177,7 +177,10 @@ fn semantic_boundary_taxonomy_covers_templates_and_every_component_family() {
     );
     for (source, component_kind) in [
         (include, EditorNavigationComponentKind::Partial),
-        (macro_definition, EditorNavigationComponentKind::Macro),
+        (
+            component_definition,
+            EditorNavigationComponentKind::TeraComponent,
+        ),
         (repeat, EditorNavigationComponentKind::Repeat),
         (conditional, EditorNavigationComponentKind::Conditional),
     ] {
@@ -192,12 +195,8 @@ fn semantic_boundary_taxonomy_covers_templates_and_every_component_family() {
 
     for (source_kind, component_kind) in [
         (
-            SourceNodeKind::Shortcode,
-            EditorNavigationComponentKind::Shortcode,
-        ),
-        (
-            SourceNodeKind::MacroCall,
-            EditorNavigationComponentKind::Macro,
+            SourceNodeKind::ComponentCall,
+            EditorNavigationComponentKind::TeraComponent,
         ),
         (
             SourceNodeKind::Filter,

@@ -1,13 +1,14 @@
 import type { LocalizedDiagnostic } from "$lib/contracts/localized-diagnostic";
 import type { SourceOrigin } from "$lib/source-graph/contracts";
 
-type TemplateCatalogRole = "page" | "layout" | "partial" | "macro_library" | "shortcode" | "listing_item";
+type TemplateCatalogRole = "page" | "layout" | "partial" | "listing_item" | "component_library";
 
 export type TemplateSemanticCategory =
   | "layout"
   | "page"
   | "archive"
   | "element"
+  | "partial"
   | "listing_item"
   | "taxonomy"
   | "system";
@@ -19,6 +20,7 @@ export type TemplateSemanticRole =
   | "specific_page"
   | "section_archive"
   | "section_element"
+  | "partial"
   | "listing_item"
   | "taxonomy_list"
   | "taxonomy_term"
@@ -38,7 +40,7 @@ type TemplateCatalogContext = "page" | "section" | "system";
 
 export type TemplateAssignmentSource = "explicit" | "inherited" | "default" | "convention";
 
-type TemplateCatalogReferenceKind = "extends" | "includes" | "imports";
+type TemplateCatalogReferenceKind = "extends" | "includes";
 
 type TemplateCatalogTemplateUsage = {
   file: string;
@@ -64,9 +66,8 @@ export type TemplateResource = {
   localOverridePath: string;
   extends: string | null;
   includes: string[];
-  imports: string[];
   blocks: string[];
-  macros: string[];
+  components: string[];
   usedByTemplates: TemplateCatalogTemplateUsage[];
   affectedPages: TemplateCatalogPageUsage[];
   canDelete: boolean;
@@ -122,7 +123,7 @@ export type TemplateCatalogSnapshot = {
   semanticEntries: TemplateSemanticEntry[];
 };
 
-export const TEMPLATE_CATALOG_SCHEMA_VERSION = 5 as const;
+export const TEMPLATE_CATALOG_SCHEMA_VERSION = 6 as const;
 
 export type CreateListingItemInput = {
   label: string;

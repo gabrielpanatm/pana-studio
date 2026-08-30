@@ -3,7 +3,7 @@
 **Data:** 21.08.2026
 
 **Profil canonic:** `mare`
-**Zola:** 0.22.1
+**Zola:** 0.23.4
 
 ## Volum generat
 

@@ -45,6 +45,7 @@ pub(crate) struct TemplateWorkbenchProjection {
     pub template_path: String,
     pub selected_page_path: Option<String>,
     pub selected_route: Option<String>,
+    pub selected_component_name: Option<String>,
     pub content: RenderedPreviewContent,
     pub graph: crate::preview::canvas::CanvasGraph,
 }
@@ -1225,6 +1226,7 @@ mod tests {
                 template_path: "templates/partial.html".to_string(),
                 selected_page_path: None,
                 selected_route: None,
+                selected_component_name: None,
                 content: RenderedPreviewContent::Html(prepared),
                 graph: workbench_graph,
             },

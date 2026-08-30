@@ -64,3 +64,19 @@ paginate_by = 6
   assert.throws(() => pageFrontmatterMutationValue("paginateBy", ""), /cel puțin un articol/);
   assert.throws(() => pageFrontmatterMutationValue("paginateBy", "0"), /cel puțin un articol/);
 });
+
+test("hidden keeps the inherited section state distinct from explicit visibility", () => {
+  assert.equal(parsePageFrontmatter("+++\ntitle = 'Moștenit'\n+++").values.hidden, "inherit");
+  assert.equal(parsePageFrontmatter("+++\ntitle = 'Ascuns'\nhidden = true\n+++").values.hidden, "hidden");
+  assert.equal(parsePageFrontmatter("+++\ntitle = 'Vizibil'\nhidden = false\n+++").values.hidden, "visible");
+  assert.deepEqual(pageFrontmatterMutationValue("hidden", "inherit"), { kind: "empty" });
+  assert.deepEqual(pageFrontmatterMutationValue("hidden", "hidden"), { kind: "boolean", value: true });
+  assert.deepEqual(pageFrontmatterMutationValue("hidden", "visible"), { kind: "boolean", value: false });
+});
+
+test("include_in_feeds defaults to true without writing the default key", () => {
+  assert.equal(parsePageFrontmatter("+++\ntitle = 'Implicit'\n+++").values.includeInFeeds, true);
+  assert.equal(parsePageFrontmatter("+++\ntitle = 'Exclus'\ninclude_in_feeds = false\n+++").values.includeInFeeds, false);
+  assert.deepEqual(pageFrontmatterMutationValue("includeInFeeds", false), { kind: "boolean", value: false });
+  assert.deepEqual(pageFrontmatterMutationValue("includeInFeeds", true), { kind: "empty" });
+});

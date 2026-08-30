@@ -142,12 +142,6 @@ export function generatePerformanceFixture(options = {}) {
     "{% block content %}{% endblock content %}</body></html>",
     "",
   ].join("\n"));
-  write(root, "templates/macros/performance.html", [
-    "{% macro badge(text) %}",
-    '<strong class="performance-badge">{{ text }}</strong>',
-    "{% endmacro badge %}",
-    "",
-  ].join("\n"));
   write(root, "templates/listing-items/service-card.html", [
     '<article class="service-card">',
     ...dynamicFieldWidget(
@@ -164,11 +158,10 @@ export function generatePerformanceFixture(options = {}) {
   ));
   write(root, "templates/index.html", [
     "{% extends 'base.html' %}",
-    "{% import 'macros/performance.html' as performance %}",
     "{% block content %}",
     '<main id="performance-root">',
     "  {% include 'components/card-000.html' %}",
-    "  {{ performance::badge(text=page.title) }}",
+    '  <strong class="performance-badge">{{ page.title }}</strong>',
     "  {% for item in [1, 2, 3] %}<span>{{ item }}</span>{% endfor %}",
     '  <span data-pana-block="counter" data-pana-instance="performance-counter">0</span>',
     "  {{ page.content | safe }}",
@@ -224,7 +217,7 @@ export function generatePerformanceFixture(options = {}) {
     pageCount,
     componentCount,
     nodeCount,
-    expectedSourceFileCount: 11 + pageCount * 2 + componentCount,
+    expectedSourceFileCount: 10 + pageCount * 2 + componentCount,
   };
   write(root, markerName, `${JSON.stringify(manifest, null, 2)}\n`);
   return { root, ...manifest };

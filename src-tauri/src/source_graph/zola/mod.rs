@@ -26,10 +26,8 @@ pub(crate) use paths::{
     static_asset_reference_from_style, static_asset_reference_keys,
     zola_data_file_reference_for_rewrite, zola_static_asset_reference_for_rewrite,
 };
-pub(crate) use runtime::{
-    collect_zola_runtime_uses, ZolaTeraRuntimeAvailability, ZolaTeraRuntimeKind,
-    PINNED_ZOLA_REVISION,
-};
+pub(crate) use runtime::collect_zola_runtime_deprecations;
+pub(crate) use runtime::{collect_zola_runtime_uses, ZolaTeraRuntimeDescriptor};
 pub(crate) use template_references::extract_zola_template_references;
 pub(crate) use templates::{
     local_zola_template_project_file_reference, normalize_zola_template_reference,

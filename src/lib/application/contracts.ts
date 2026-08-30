@@ -108,8 +108,9 @@ export type ApplicationSettingsPatch = {
 };
 
 export type AppHomeSnapshot = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   identifier: string;
+  embeddedZolaVersion: string;
   configDir: string;
   dataDir: string;
   cacheDir: string;

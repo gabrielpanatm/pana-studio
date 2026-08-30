@@ -6,9 +6,8 @@ export type TeraConstructKind =
   | "extends"
   | "block"
   | "include"
-  | "import"
-  | "macro"
-  | "macroCall"
+  | "componentDefinition"
+  | "componentCall"
   | "for"
   | "if"
   | "set"
@@ -66,9 +65,8 @@ export const teraConstructKinds: TeraConstructKind[] = [
   "extends",
   "block",
   "include",
-  "import",
-  "macro",
-  "macroCall",
+  "componentDefinition",
+  "componentCall",
   "for",
   "if",
   "set",

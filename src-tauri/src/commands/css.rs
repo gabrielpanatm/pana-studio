@@ -1160,19 +1160,17 @@ fn reusable_css_consumers(
             template_path: reusable_template_path.to_string(),
             preferred_page_path: None,
             preferred_route: None,
+            preferred_component_name: None,
         },
     )?;
     let mut consumers = plan
         .consumers
         .into_iter()
         .filter(|consumer| {
-            consumer.dependency_path.iter().any(|step| {
-                matches!(
-                    step.kind,
-                    TemplateWorkbenchDependencyKind::Includes
-                        | TemplateWorkbenchDependencyKind::Imports
-                )
-            })
+            consumer
+                .dependency_path
+                .iter()
+                .any(|step| step.kind == TemplateWorkbenchDependencyKind::Includes)
         })
         .map(|consumer| {
             let template_path = consumer.root_template_file;

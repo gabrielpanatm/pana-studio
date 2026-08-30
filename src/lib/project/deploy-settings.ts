@@ -10,6 +10,7 @@ export type ProjectSettingsDraft = {
 export type ZolaSettingsTextFields = {
   feedFilenamesText: string;
   feedLimitText: string;
+  skipContentTemplatingText: string;
   searchTruncateText: string;
 };
 
@@ -30,6 +31,8 @@ export function createDefaultZolaSettings(): ZolaProjectSettings {
     generateFeeds: false,
     feedFilenames: ["atom.xml"],
     feedLimit: null,
+    skipContentTemplating: [],
+    highlightDataAttrPosition: null,
     renderEmoji: false,
     smartPunctuation: false,
     insertAnchorLinks: "none",
@@ -54,6 +57,7 @@ export function textFieldsFromZolaSettings(settings: ZolaProjectSettings): ZolaS
   return {
     feedFilenamesText: settings.feedFilenames.join(", "),
     feedLimitText: settings.feedLimit?.toString() ?? "",
+    skipContentTemplatingText: settings.skipContentTemplating.join("\n"),
     searchTruncateText: settings.searchTruncateContentLength?.toString() ?? "",
   };
 }
@@ -66,6 +70,7 @@ export function zolaSettingsWithTextFields(
     ...settings,
     feedFilenames: parseList(textFields.feedFilenamesText),
     feedLimit: parseOptionalNumber(textFields.feedLimitText),
+    skipContentTemplating: parseLines(textFields.skipContentTemplatingText),
     searchTruncateContentLength: parseOptionalNumber(textFields.searchTruncateText),
   };
 }
@@ -91,6 +96,13 @@ export function projectSettingsFromDraft(
 function parseList(value: string) {
   return value
     .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function parseLines(value: string) {
+  return value
+    .split(/\r?\n/)
     .map((entry) => entry.trim())
     .filter(Boolean);
 }

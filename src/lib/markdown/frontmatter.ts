@@ -13,6 +13,8 @@ export type PageFrontmatterField =
   | "weight"
   | "paginateBy"
   | "draft"
+  | "hidden"
+  | "includeInFeeds"
   | "seoTitle"
   | "seoDescription"
   | "canonicalUrl"
@@ -22,8 +24,10 @@ export type PageFrontmatterField =
   | "ogImage"
   | "ogType";
 
-export type PageFrontmatterValues = Omit<Record<PageFrontmatterField, string>, "draft"> & {
+export type PageFrontmatterValues = Omit<Record<PageFrontmatterField, string>, "draft" | "hidden" | "includeInFeeds"> & {
   draft: boolean;
+  hidden: "inherit" | "hidden" | "visible";
+  includeInFeeds: boolean;
 };
 
 export type PageFrontmatterMutationValue =
@@ -46,6 +50,8 @@ const defaultPageFrontmatterValues: PageFrontmatterValues = {
   weight: "",
   paginateBy: "",
   draft: false,
+  hidden: "inherit",
+  includeInFeeds: true,
   seoTitle: "",
   seoDescription: "",
   canonicalUrl: "",
@@ -65,6 +71,8 @@ const fieldToTomlKey: Record<PageFrontmatterField, string> = {
   weight: "weight",
   paginateBy: "paginate_by",
   draft: "draft",
+  hidden: "hidden",
+  includeInFeeds: "include_in_feeds",
   seoTitle: "extra.seo_title",
   seoDescription: "extra.seo_description",
   canonicalUrl: "extra.canonical_url",
@@ -119,6 +127,18 @@ export function pageFrontmatterMutationValue(
       throw new Error("Starea draft trebuie să fie o valoare booleană.");
     }
     return { kind: "boolean", value };
+  }
+  if (field === "hidden") {
+    if (value === "inherit") return { kind: "empty" };
+    if (value === "hidden") return { kind: "boolean", value: true };
+    if (value === "visible") return { kind: "boolean", value: false };
+    throw new Error("Vizibilitatea trebuie să fie moștenită, ascunsă sau vizibilă.");
+  }
+  if (field === "includeInFeeds") {
+    if (typeof value !== "boolean") {
+      throw new Error("Includerea în feed trebuie să fie o valoare booleană.");
+    }
+    return value ? { kind: "empty" } : { kind: "boolean", value: false };
   }
   if (typeof value !== "string") {
     throw new Error("Valoarea acestui câmp trebuie să fie text.");
@@ -184,6 +204,14 @@ export function parsePageFrontmatter(source: string): PageFrontmatterParseResult
   const values = { ...defaultPageFrontmatterValues };
   for (const [field, key] of Object.entries(fieldToTomlKey) as Array<[PageFrontmatterField, string]>) {
     const value = readTomlValue(parts.frontmatter, key);
+    if (field === "hidden") {
+      values.hidden = value === true ? "hidden" : value === false ? "visible" : "inherit";
+      continue;
+    }
+    if (field === "includeInFeeds") {
+      values.includeInFeeds = typeof value === "boolean" ? value : true;
+      continue;
+    }
     if (typeof values[field] === "boolean") {
       values[field] = Boolean(value) as never;
     } else if (typeof value === "string") {

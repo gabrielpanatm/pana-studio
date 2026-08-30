@@ -16,12 +16,12 @@ use crate::{
             summary::TemplateSummary,
         },
         structured_data::{parse_lossless_toml, parse_zola_data_adapter, rebase_data_node_ranges},
+        tera_cst::{parse_tera_cst, TeraCstKind},
         zola::{
-            parse_zola_content_frontmatter, resolve_zola_page_template,
-            resolve_zola_section_page_template, zola_content_page_kind, zola_content_url,
-            zola_frontmatter_range,
+            collect_zola_runtime_deprecations, parse_zola_content_frontmatter,
+            resolve_zola_page_template, resolve_zola_section_page_template, zola_content_page_kind,
+            zola_content_url, zola_frontmatter_range,
         },
-        zola_shortcode::{parse_zola_shortcodes, ZolaShortcodeInvocation},
     },
 };
 use zola_config::Config;
@@ -76,21 +76,40 @@ pub(super) fn scan_content_page(
         &mut frontmatter_nodes,
         builder,
     );
-    let shortcode_document = parse_zola_shortcodes(&source);
-    debug_assert!(shortcode_document.is_lossless());
-    debug_assert_eq!(shortcode_document.reconstruct(), source);
-    let shortcode_parse_error = shortcode_document.parse_error.clone();
-    if let Some(error) = shortcode_parse_error.as_ref() {
+    let tera_document = parse_tera_cst(&source, &file);
+    debug_assert!(tera_document.is_lossless());
+    if !tera_document.is_valid_tera() {
         builder.add_diagnostic(
             crate::source_graph::model::SourceDiagnosticSeverity::Error,
-            LocalizedDiagnostic::new("source-graph-shortcode-syntax-invalid")
-                .with_argument("details", error.clone()),
+            LocalizedDiagnostic::new("source-graph-content-tera-syntax-invalid").with_argument(
+                "details",
+                tera_document
+                    .validation_error()
+                    .unwrap_or("unknown Tera error"),
+            ),
             Some(file.clone()),
             None,
         );
     }
-    let mut shortcodes = shortcode_document.invocations;
-    project_shortcode_nodes(&source, &file, &node_id, &mut shortcodes, builder);
+    let mut component_calls = tera_document
+        .semantics()
+        .map(|semantics| semantics.component_calls.clone())
+        .unwrap_or_default();
+    if let Some(semantics) = tera_document.semantics() {
+        for deprecation in collect_zola_runtime_deprecations(semantics) {
+            builder.add_diagnostic(
+                crate::source_graph::model::SourceDiagnosticSeverity::Warning,
+                LocalizedDiagnostic::new("source-graph-zola-runtime-argument-deprecated")
+                    .with_argument("function", deprecation.function)
+                    .with_argument("argument", deprecation.argument)
+                    .with_argument("replacement", deprecation.replacement),
+                Some(file.clone()),
+                None,
+            );
+        }
+    }
+    project_component_call_nodes(&file, &node_id, &mut component_calls, builder);
+    diagnose_removed_content_calls(&source, &file, &tera_document, template_by_name, builder);
     let template_node_id = resolved_template.as_ref().and_then(|template| {
         template_node_by_name
             .get(&normalize_template_name(template))
@@ -174,35 +193,89 @@ pub(super) fn scan_content_page(
         frontmatter_parse_error,
         frontmatter_nodes,
         taxonomies: frontmatter.taxonomies,
-        shortcode_parse_error,
-        shortcodes,
+        component_calls,
     }
 }
 
-fn project_shortcode_nodes(
-    source: &str,
+fn project_component_call_nodes(
     file: &str,
     parent_node_id: &str,
-    invocations: &mut [ZolaShortcodeInvocation],
+    calls: &mut [crate::source_graph::tera_semantics::TeraComponentCall],
     builder: &mut SourceGraphBuilder,
 ) {
-    for invocation in invocations {
+    let mut node_ids = Vec::with_capacity(calls.len());
+    for call in calls.iter() {
+        let parent = call
+            .parent_call
+            .and_then(|index| node_ids.get(index))
+            .cloned()
+            .unwrap_or_else(|| parent_node_id.to_string());
         let node_id = builder.add_node(
-            SourceNodeKind::Shortcode,
+            SourceNodeKind::ComponentCall,
             file.to_string(),
             SourceOrigin::Local,
             None,
-            invocation.name.clone(),
-            Some(crate::source_graph::scan::ranges::source_range(
-                source,
-                invocation.range.start,
-                invocation.range.end,
-            )),
-            Some(parent_node_id.to_string()),
-            SourceCapabilities::code_only(SourceCapabilityReason::MarkdownShortcode),
+            call.name.clone(),
+            Some(tera_range_to_source_range(&call.range)),
+            Some(parent),
+            SourceCapabilities::code_only(SourceCapabilityReason::TeraComponentCall),
         );
-        invocation.source_node_id = Some(node_id.clone());
-        project_shortcode_nodes(source, file, &node_id, &mut invocation.inner, builder);
+        node_ids.push(node_id);
+    }
+}
+
+fn diagnose_removed_content_calls(
+    source: &str,
+    file: &str,
+    document: &crate::source_graph::tera_cst::TeraCstDocument,
+    template_by_name: &HashMap<String, TemplateSummary>,
+    builder: &mut SourceGraphBuilder,
+) {
+    let removed_names = template_by_name
+        .keys()
+        .filter_map(|name| {
+            name.strip_prefix("shortcodes/").and_then(|name| {
+                name.strip_suffix(".html")
+                    .or_else(|| name.strip_suffix(".md"))
+            })
+        })
+        .collect::<std::collections::HashSet<_>>();
+    if removed_names.is_empty() {
+        return;
+    }
+    for node in &document.nodes {
+        if !matches!(node.kind, TeraCstKind::Variable) {
+            continue;
+        }
+        let content = node.content(source).trim();
+        let Some(name) = content.split('(').next().map(str::trim) else {
+            continue;
+        };
+        if !content.contains('(') || !removed_names.contains(name) {
+            continue;
+        }
+        builder.add_diagnostic(
+            crate::source_graph::model::SourceDiagnosticSeverity::Error,
+            LocalizedDiagnostic::new("source-graph-legacy-shortcode-incompatible")
+                .with_argument("name", name.to_string()),
+            Some(file.to_string()),
+            Some(crate::source_graph::scan::ranges::source_range(
+                source, node.start, node.end,
+            )),
+        );
+    }
+}
+
+fn tera_range_to_source_range(
+    range: &crate::source_graph::tera_semantics::TeraSourceRange,
+) -> crate::source_graph::model::SourceRange {
+    crate::source_graph::model::SourceRange {
+        start: range.start,
+        end: range.end,
+        line: range.line,
+        column: range.column,
+        end_line: range.end_line,
+        end_column: range.end_column,
     }
 }
 

@@ -176,10 +176,7 @@ fn validate_tera_delete_target(node: &SourceNode) -> Result<(), String> {
 fn is_template_level_tera_kind(kind: &SourceNodeKind) -> bool {
     matches!(
         kind,
-        SourceNodeKind::Extends
-            | SourceNodeKind::Block
-            | SourceNodeKind::Import
-            | SourceNodeKind::Macro
+        SourceNodeKind::Extends | SourceNodeKind::Block | SourceNodeKind::ComponentDefinition
     )
 }
 
@@ -189,8 +186,8 @@ fn is_tera_delete_anchor_kind(kind: &SourceNodeKind) -> bool {
         SourceNodeKind::Extends
             | SourceNodeKind::Block
             | SourceNodeKind::Include
-            | SourceNodeKind::Import
-            | SourceNodeKind::Macro
+            | SourceNodeKind::ComponentDefinition
+            | SourceNodeKind::ComponentCall
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set
@@ -218,8 +215,8 @@ fn tera_kind_label(kind: &SourceNodeKind) -> &'static str {
         SourceNodeKind::Extends => "extends",
         SourceNodeKind::Block => "block",
         SourceNodeKind::Include => "include",
-        SourceNodeKind::Import => "import",
-        SourceNodeKind::Macro => "macro",
+        SourceNodeKind::ComponentDefinition => "componentDefinition",
+        SourceNodeKind::ComponentCall => "componentCall",
         SourceNodeKind::For => "for",
         SourceNodeKind::If => "if",
         SourceNodeKind::Elif => "elif",
@@ -420,16 +417,18 @@ mod tests {
             root.clone(),
             concat!(
                 "{% extends \"base.html\" %}\n",
-                "{% import \"macros.html\" as macros %}\n",
-                "{% macro card() %}{% endmacro %}\n",
+                "{% component card() %}{% endcomponent card %}\n",
                 "{% block content %}<main></main>{% endblock %}\n",
             ),
         );
         let model = fixture.build_model().unwrap();
         let cases = [
             (SourceNodeKind::Extends, "extends base.html", "extends"),
-            (SourceNodeKind::Import, "import macros.html", "import"),
-            (SourceNodeKind::Macro, "card", "macro"),
+            (
+                SourceNodeKind::ComponentDefinition,
+                "card",
+                "componentDefinition",
+            ),
             (SourceNodeKind::Block, "content", "block"),
         ];
 

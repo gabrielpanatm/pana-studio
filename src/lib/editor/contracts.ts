@@ -37,8 +37,7 @@ export type EditorNavigationBoundaryKind =
 
 export type EditorNavigationComponentKind =
   | "partial"
-  | "macro"
-  | "shortcode"
+  | "teraComponent"
   | "repeat"
   | "conditional"
   | "transform";

@@ -1,0 +1,27 @@
+base_url = "https://baseline.example.test"
+title = "Baseline upgrade Zola"
+default_language = "ro"
+compile_sass = true
+build_search_index = true
+generate_feeds = true
+taxonomies = [
+  { name = "tags", feed = true },
+]
+
+[languages.en]
+title = "Zola upgrade baseline"
+build_search_index = true
+generate_feeds = true
+taxonomies = [
+  { name = "tags", feed = true },
+]
+
+[markdown]
+render_emoji = false
+smart_punctuation = false
+
+[markdown.highlighting]
+style = "class"
+theme = "github-dark"
+
+[extra]

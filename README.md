@@ -5,7 +5,7 @@ cu [Zola](https://www.getzola.org/). Aplicația combină un preview controlat cu
 editarea surselor HTML/Tera, SCSS, Markdown și JavaScript într-un workspace
 local. Este construită cu Tauri 2, Rust, SvelteKit și TypeScript.
 
-> **Stadiu:** versiune publică de test `0.1.4`. Interfața este disponibilă în română și engleză,
+> **Stadiu:** versiune publică de test `0.2.0`. Interfața este disponibilă în română și engleză,
 > iar distribuția pregătită în prezent este pentru Linux x86-64. Fă backup sau
 > inițializează versionarea Git înainte de a lucra pe un proiect important.
 
@@ -35,8 +35,8 @@ split-urile, viewport-ul și panoul inferior sunt proiectate dintr-o stare
 canonică administrată de nucleul Rust; frontendul Svelte nu păstrează un al
 doilea model al proiectului.
 
-Pană Studio integrează direct motorul Rust Zola `0.22.1`, fixat la revizia
-upstream `29540e9897dbe8aca388b13f7bdf615985f6ca2c`. Preview-ul, validarea și
+Pană Studio integrează direct motorul Rust Zola `0.23.4`, fixat la revizia
+upstream `28daab8d47cacb1e6c863b97739148f424433f5b`. Preview-ul, validarea și
 buildul folosesc crate-urile oficiale ale acestei revizii; aplicația nu livrează,
 nu caută și nu pornește un executabil Zola separat. Nu este necesară instalarea
 Zola pentru funcțiile oferite de aplicație. Proveniența motorului este
@@ -49,9 +49,9 @@ După publicarea unei versiuni, descarcă fișierul `.AppImage` și fișierul s�
 Verifică și pornește aplicația astfel:
 
 ```bash
-sha256sum --check "Pana.Studio_0.1.4_amd64.AppImage.sha256"
-chmod +x "Pana.Studio_0.1.4_amd64.AppImage"
-./"Pana.Studio_0.1.4_amd64.AppImage"
+sha256sum --check "Pana.Studio_0.2.0_amd64.AppImage.sha256"
+chmod +x "Pana.Studio_0.2.0_amd64.AppImage"
+./"Pana.Studio_0.2.0_amd64.AppImage"
 ```
 
 AppImage-ul nu necesită instalare. Compatibilitatea depinde de distribuția și
@@ -118,7 +118,7 @@ src-tauri/target/release/bundle/appimage/
 `src-tauri/target/`, `node_modules/`, `build/` și artefactele AppImage sunt
 generate local și nu trebuie adăugate în Git.
 
-Un tag Git cu forma `v0.1.4` pornește workflow-ul de release pe Ubuntu 22.04.
+Un tag Git cu forma `v0.2.0` pornește workflow-ul de release pe Ubuntu 22.04.
 Acesta repetă verificările, construiește AppImage-ul, generează checksum-ul și
 publică release-ul GitHub ca prerelease după finalizarea cu succes.
 

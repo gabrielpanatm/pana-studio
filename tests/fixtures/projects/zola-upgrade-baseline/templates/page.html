@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="{{ lang }}">
+  <head><meta charset="utf-8"><title>{{ page.title }}</title></head>
+  <body>
+    <article data-kind="page">{{ page.content | safe }}</article>
+    {% for asset in page.assets %}<span data-colocated-asset="{{ asset }}"></span>{% endfor %}
+  </body>
+</html>

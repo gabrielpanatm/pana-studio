@@ -9,7 +9,7 @@ use crate::{
     source_graph::taxonomy_catalog::build_taxonomy_catalog,
 };
 
-pub const TEMPLATE_WORKBENCH_PLAN_SCHEMA_VERSION: u32 = 4;
+pub const TEMPLATE_WORKBENCH_PLAN_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +19,8 @@ pub struct TemplateWorkbenchPlanInput {
     pub preferred_page_path: Option<String>,
     #[serde(default)]
     pub preferred_route: Option<String>,
+    #[serde(default)]
+    pub preferred_component_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -27,6 +29,7 @@ pub struct TemplateWorkbenchPlan {
     pub schema_version: u32,
     pub project_model_revision: String,
     pub active_template: TemplateWorkbenchTemplate,
+    pub active_component_name: Option<String>,
     pub direct_parent: Option<TemplateWorkbenchTemplate>,
     pub navigator: Vec<TemplateWorkbenchNavigatorEntry>,
     pub consumers: Vec<TemplateWorkbenchConsumer>,
@@ -62,7 +65,7 @@ pub struct TemplateWorkbenchTemplate {
     pub origin: SourceOrigin,
     pub theme_name: Option<String>,
     pub is_partial: bool,
-    pub defines_macros: bool,
+    pub defines_components: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -108,7 +111,6 @@ pub struct TemplateWorkbenchDependencyStep {
 pub enum TemplateWorkbenchDependencyKind {
     Extends,
     Includes,
-    Imports,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -118,7 +120,7 @@ pub enum TemplateWorkbenchRenderMode {
     IncludedTemplate,
     ListingItemScenario,
     CanonicalRoute,
-    MacroScenario,
+    ComponentScenario,
     OrphanTemplate,
 }
 
@@ -137,7 +139,7 @@ pub enum TemplateWorkbenchRenderContextKind {
     RealZolaPage,
     RealZolaConsumer,
     RealZolaRoute,
-    ControlledMacroScenario,
+    ControlledComponentScenario,
     ControlledListingItemScenario,
     ControlledTemplateFixture,
 }
@@ -173,6 +175,25 @@ pub fn resolve_template_workbench_plan(
                 input.template_path, model.revision
             )
         })?;
+    let active_component_name = input
+        .preferred_component_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            active
+                .component_definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .map(|definition| definition.name.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "Template-ul «{}» nu definește componenta Tera 2 «{name}».",
+                        active.name
+                    )
+                })
+        })
+        .transpose()?;
     let templates_by_node = graph
         .templates
         .iter()
@@ -274,11 +295,11 @@ pub fn resolve_template_workbench_plan(
             ),
         });
     }
-    if render_mode == TemplateWorkbenchRenderMode::MacroScenario {
+    if render_mode == TemplateWorkbenchRenderMode::ComponentScenario {
         diagnostics.push(TemplateWorkbenchDiagnostic {
-            code: "controlled_macro_scenario".to_string(),
+            code: "controlled_component_scenario".to_string(),
             message_diagnostic: LocalizedDiagnostic::new(
-                "template-workbench-diagnostic-controlled-macro",
+                "template-workbench-diagnostic-controlled-component",
             ),
         });
     }
@@ -287,6 +308,7 @@ pub fn resolve_template_workbench_plan(
         schema_version: TEMPLATE_WORKBENCH_PLAN_SCHEMA_VERSION,
         project_model_revision: model.revision.clone(),
         active_template: workbench_template(active),
+        active_component_name,
         direct_parent: direct_parent.map(workbench_template),
         navigator,
         consumers,
@@ -366,11 +388,11 @@ fn render_context(
                     "Workbench-ul creează numai în Preview un consumator get_page + include pentru Listing Item.".to_string()
                 }),
         },
-        TemplateWorkbenchRenderMode::MacroScenario => TemplateWorkbenchRenderContext {
-            kind: TemplateWorkbenchRenderContextKind::ControlledMacroScenario,
+        TemplateWorkbenchRenderMode::ComponentScenario => TemplateWorkbenchRenderContext {
+            kind: TemplateWorkbenchRenderContextKind::ControlledComponentScenario,
             canonical_truth: false,
-            label: "Scenariu macro controlat".to_string(),
-            explanation: "Workbench-ul importă macro-ul real și îl apelează cu argumente demonstrative; rezultatul este o previzualizare de scenariu, nu o pagină publicată.".to_string(),
+            label: "Scenariu de componentă controlat".to_string(),
+            explanation: "Workbench-ul apelează componenta Tera reală cu argumente demonstrative; rezultatul este o previzualizare de scenariu, nu o pagină publicată.".to_string(),
         },
         TemplateWorkbenchRenderMode::OrphanTemplate => TemplateWorkbenchRenderContext {
             kind: TemplateWorkbenchRenderContextKind::ControlledTemplateFixture,
@@ -489,7 +511,6 @@ fn dependency_edges(model: &ProjectModel) -> HashMap<String, Vec<DependencyEdge>
         let kind = match relation.kind {
             SourceRelationKind::Extends => TemplateWorkbenchDependencyKind::Extends,
             SourceRelationKind::Includes => TemplateWorkbenchDependencyKind::Includes,
-            SourceRelationKind::Imports => TemplateWorkbenchDependencyKind::Imports,
             _ => continue,
         };
         dependencies
@@ -515,7 +536,6 @@ fn dependency_kind_rank(kind: TemplateWorkbenchDependencyKind) -> u8 {
     match kind {
         TemplateWorkbenchDependencyKind::Extends => 0,
         TemplateWorkbenchDependencyKind::Includes => 1,
-        TemplateWorkbenchDependencyKind::Imports => 2,
     }
 }
 
@@ -528,8 +548,8 @@ fn render_mode(
     if selected_route.is_some() {
         return TemplateWorkbenchRenderMode::CanonicalRoute;
     }
-    if active.is_partial && !active.macros.is_empty() {
-        return TemplateWorkbenchRenderMode::MacroScenario;
+    if !active.component_definitions.is_empty() {
+        return TemplateWorkbenchRenderMode::ComponentScenario;
     }
     if active_listing_item && selected_context.is_some() {
         return TemplateWorkbenchRenderMode::ListingItemScenario;
@@ -631,7 +651,7 @@ fn workbench_template(template: &SourceGraphTemplate) -> TemplateWorkbenchTempla
         origin: template.origin.clone(),
         theme_name: template.theme_name.clone(),
         is_partial: template.is_partial,
-        defines_macros: !template.macros.is_empty(),
+        defines_components: !template.component_definitions.is_empty(),
     }
 }
 
@@ -711,6 +731,7 @@ mod tests {
                 template_path: "index.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -737,6 +758,7 @@ mod tests {
                 template_path: "layout.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -755,6 +777,7 @@ mod tests {
                 template_path: "templates/partials/header.html".to_string(),
                 preferred_page_path: Some("content/_index.md".to_string()),
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -797,6 +820,7 @@ mod tests {
                 template_path: "partials/cta.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -807,14 +831,17 @@ mod tests {
     }
 
     #[test]
-    fn reports_orphan_and_macro_render_modes_explicitly() {
-        let mut fixture = fixture("orphan-macro");
+    fn reports_orphan_and_component_render_modes_explicitly() {
+        let mut fixture = fixture("orphan-component");
         let root = fixture.root().to_path_buf();
         write_fixture(&mut fixture, "<main></main>");
         fixture.source("templates/partials/card.html", "<article>Orphan</article>");
         fixture.source(
-            "templates/partials/macros.html",
-            "{% macro card(title) %}<article>{{ title }}</article>{% endmacro %}",
+            "templates/components/cards.html",
+            concat!(
+                "{% component cards.card(title: string) %}<article>{{ title }}</article>{% endcomponent cards.card %}\n",
+                "{% component cards.badge(text: string) %}<strong>{{ text }}</strong>{% endcomponent cards.badge %}",
+            ),
         );
 
         let model = fixture.build_model().unwrap();
@@ -824,6 +851,7 @@ mod tests {
                 template_path: "partials/card.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -832,19 +860,36 @@ mod tests {
             TemplateWorkbenchRenderMode::OrphanTemplate
         );
 
-        let macros = resolve_template_workbench_plan(
+        let components = resolve_template_workbench_plan(
             &model,
             &TemplateWorkbenchPlanInput {
-                template_path: "partials/macros.html".to_string(),
+                template_path: "components/cards.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: None,
+                preferred_component_name: Some("cards.badge".to_string()),
             },
         )
         .unwrap();
         assert_eq!(
-            macros.render_mode,
-            TemplateWorkbenchRenderMode::MacroScenario
+            components.render_mode,
+            TemplateWorkbenchRenderMode::ComponentScenario
         );
+        assert_eq!(
+            components.active_component_name.as_deref(),
+            Some("cards.badge")
+        );
+
+        let unknown = resolve_template_workbench_plan(
+            &model,
+            &TemplateWorkbenchPlanInput {
+                template_path: "components/cards.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: None,
+                preferred_component_name: Some("cards.missing".to_string()),
+            },
+        )
+        .unwrap_err();
+        assert!(unknown.contains("cards.missing"), "{unknown}");
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -887,6 +932,7 @@ mod tests {
                 template_path: "listing-items/service-card.html".to_string(),
                 preferred_page_path: Some("content/services/audit.md".to_string()),
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -933,6 +979,7 @@ mod tests {
                 template_path: "listing-items/service-card.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: None,
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -983,6 +1030,7 @@ mod tests {
                 template_path: "tags/list.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: Some("/tags/".to_string()),
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -1003,6 +1051,7 @@ mod tests {
                 template_path: "tags/single.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: Some("/tags/rust/".to_string()),
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -1018,6 +1067,7 @@ mod tests {
                 template_path: "tags/list.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: Some("/tags/rust/".to_string()),
+                preferred_component_name: None,
             },
         )
         .unwrap_err();
@@ -1040,6 +1090,7 @@ mod tests {
                 template_path: "404.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: Some("/404.html".to_string()),
+                preferred_component_name: None,
             },
         )
         .unwrap();
@@ -1058,6 +1109,7 @@ mod tests {
                 template_path: "index.html".to_string(),
                 preferred_page_path: None,
                 preferred_route: Some("/404.html".to_string()),
+                preferred_component_name: None,
             },
         )
         .unwrap_err();

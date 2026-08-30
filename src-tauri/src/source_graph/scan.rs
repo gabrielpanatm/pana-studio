@@ -609,7 +609,6 @@ fn graph_template_from_summary(template: TemplateSummary) -> SourceGraphTemplate
         extends: template.extends,
         includes: template.includes,
         include_groups: template.include_groups,
-        imports: template.imports,
         get_pages: template.get_pages,
         get_sections: template.get_sections,
         internal_links: template.internal_links,
@@ -626,7 +625,8 @@ fn graph_template_from_summary(template: TemplateSummary) -> SourceGraphTemplate
             .into_iter()
             .map(|(block, _node_id)| block)
             .collect(),
-        macros: template.macros,
+        component_definitions: template.component_definitions,
+        component_calls: template.component_calls,
         semantics: template.semantics,
         markdown_projections: template.markdown_projections,
         node_id: template.node_id,
@@ -768,8 +768,9 @@ mod tests {
 
     use crate::project_model::test_support::ProjectModelTestFixture;
     use crate::source_graph::model::{
-        ComponentDefinitionKind, ComponentDependencyKind, SourceNodeKind, SourceOrigin,
-        SourceRelationKind, SourceStyleScope,
+        ComponentDefinitionKind, ComponentDependencyKind, ComponentInvocationKind,
+        ComponentResolutionStatus, SourceNodeKind, SourceOrigin, SourceRelationKind,
+        SourceStyleScope,
     };
 
     use super::*;
@@ -807,6 +808,69 @@ mod tests {
                 && node.kind == SourceNodeKind::Html
                 && node.label == "<section .hero>"
         }));
+    }
+
+    #[test]
+    fn tera_components_are_indexed_with_exact_ranges_in_templates_and_markdown() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/components")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let markdown = concat!(
+            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
+            "{{<ui.card title=\"Din Markdown\" />}}\n",
+        );
+        let template = "<main>{{<ui.card title=\"Din template\" />}}</main>\n";
+        let definition = concat!(
+            "{% component ui.card(title: string, tone: string=\"normal\", ...attrs) %}",
+            "<article>{{ title }}</article>",
+            "{% endcomponent ui.card %}\n",
+        );
+        fs::write(root.join("content/_index.md"), markdown).unwrap();
+        fs::write(root.join("templates/index.html"), template).unwrap();
+        fs::write(root.join("templates/components/ui.html"), definition).unwrap();
+
+        let graph = build_graph_from_integration_disk(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        let component = graph
+            .component_graph
+            .definitions
+            .iter()
+            .find(|definition| {
+                definition.kind == ComponentDefinitionKind::TeraComponent
+                    && definition.name == "ui.card"
+            })
+            .expect("component definition");
+        let definition_range = component.range.as_ref().expect("definition range");
+        assert_eq!(
+            &definition[definition_range.start..definition_range.end],
+            definition.trim_end()
+        );
+        assert_eq!(component.parameters.len(), 3);
+        assert_eq!(component.rest_parameter.as_deref(), Some("attrs"));
+
+        let mut calls = graph
+            .component_graph
+            .invocations
+            .iter()
+            .filter(|invocation| invocation.kind == ComponentInvocationKind::TeraComponent)
+            .collect::<Vec<_>>();
+        calls.sort_by(|left, right| left.file.cmp(&right.file));
+        assert_eq!(calls.len(), 2);
+        for call in calls {
+            assert_eq!(call.status, ComponentResolutionStatus::Resolved);
+            assert_eq!(call.resolved_definition_ids, vec![component.id.clone()]);
+            let source = if call.file == "content/_index.md" {
+                markdown
+            } else {
+                template
+            };
+            let range = call.call_range.as_ref().expect("call range");
+            assert!(source[range.start..range.end].starts_with("{{<ui.card"));
+            assert_eq!(call.arguments.len(), 1);
+            assert!(call.arguments[0].range.is_some());
+        }
     }
 
     #[test]

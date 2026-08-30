@@ -96,8 +96,9 @@ test("fixture-ul mare este determinist și nu suprascrie directoare străine", (
   });
   assert.deepEqual(second, first);
   assert.equal(readFileSync(join(root, "templates/index.html"), "utf8"), indexBefore);
-  assert.equal(first.expectedSourceFileCount, 19);
-  assert.match(indexBefore, /performance::badge/);
+  assert.equal(first.expectedSourceFileCount, 18);
+  assert.match(indexBefore, /performance-badge/);
+  assert.doesNotMatch(indexBefore, /{%\s*import\b|\w+::\w+/);
   assert.match(indexBefore, /data-pana-block="counter"/);
   assert.match(indexBefore, /pana:widget schema=2/);
   assert.equal(

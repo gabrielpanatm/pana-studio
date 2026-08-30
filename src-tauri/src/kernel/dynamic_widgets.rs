@@ -2285,6 +2285,21 @@ mod tests {
 
     use super::*;
 
+    fn test_tera() -> tera::Tera {
+        let mut tera = tera::Tera::default();
+        tera.register_filter(
+            "date",
+            |value: &tera::Value, _: tera::Kwargs, _: &tera::State| value.clone(),
+        );
+        tera
+    }
+
+    fn render_test_template(source: &str, context: &tera::Context) -> Result<String, tera::Error> {
+        let mut tera = test_tera();
+        tera.add_raw_template("__dynamic_widget_test.html", source)?;
+        tera.render("__dynamic_widget_test.html", context)
+    }
+
     fn empty_source_graph() -> SourceGraph {
         SourceGraph {
             node_index: Default::default(),
@@ -2536,7 +2551,7 @@ mod tests {
 
         let fallback =
             render_dynamic_widget("dynamic-field-fallback01", &field_properties(), &graph).unwrap();
-        let fallback_output = tera::Tera::one_off(&fallback, &context, false).unwrap();
+        let fallback_output = render_test_template(&fallback, &context).unwrap();
         assert!(fallback_output.contains("Fără titlu"));
 
         let mut render_empty = field_properties();
@@ -2552,7 +2567,7 @@ mod tests {
         let render_empty =
             render_dynamic_widget("dynamic-field-empty001", &render_empty, &graph).unwrap();
         assert!(render_empty.contains("| date("));
-        let render_empty_output = tera::Tera::one_off(&render_empty, &context, false).unwrap();
+        let render_empty_output = render_test_template(&render_empty, &context).unwrap();
         assert!(render_empty_output
             .contains("<span data-pana-widget-instance=\"dynamic-field-empty001\"></span>"));
 
@@ -2564,7 +2579,7 @@ mod tests {
         field.fallback.clear();
         graph.content_models.models[0].fields[0].kind = ContentFieldKind::Text;
         let hidden = render_dynamic_widget("dynamic-field-hidden01", &hidden, &graph).unwrap();
-        let hidden_output = tera::Tera::one_off(&hidden, &context, false).unwrap();
+        let hidden_output = render_test_template(&hidden, &context).unwrap();
         assert!(!hidden_output.contains("data-pana-widget-instance"));
 
         let mut image = field_properties();
@@ -2578,7 +2593,7 @@ mod tests {
         field.tag = "img".into();
         graph.content_models.models[0].fields[0].kind = ContentFieldKind::Image;
         let image = render_dynamic_widget("dynamic-field-image001", &image, &graph).unwrap();
-        let image_output = tera::Tera::one_off(&image, &context, false).unwrap();
+        let image_output = render_test_template(&image, &context).unwrap();
         assert!(image_output.contains(
             "<img data-pana-widget-instance=\"dynamic-field-image001\" alt=\"Deschide\">"
         ));
@@ -2618,7 +2633,7 @@ mod tests {
         field.binding.context = DynamicFieldScope::Page;
         let rendered = render_dynamic_widget("dynamic-field-safe01", &properties, &graph).unwrap();
         assert!(rendered.contains("page.extra[\"hero-title\"]"));
-        let mut tera = tera::Tera::default();
+        let mut tera = test_tera();
         tera.add_raw_template("safe.html", &rendered).unwrap();
     }
 
@@ -3024,7 +3039,7 @@ mod tests {
         let listing_item_source = format!(
             "<article>{title}{custom_text}{date}{price}{website}{cover}{site_title}</article>"
         );
-        let mut tera = tera::Tera::default();
+        let mut tera = test_tera();
         tera.add_raw_template("listing-items/service-card.html", &listing_item_source)
             .unwrap();
         let mut context = tera::Context::new();

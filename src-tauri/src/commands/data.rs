@@ -168,6 +168,7 @@ mod tests {
                 definition_id: None,
                 kind: Some(ComponentDraftKind::Partial),
                 name: Some("test/card".to_string()),
+                symbol_name: None,
                 destination_name: None,
                 contents: Some("<article>Card</article>\n".to_string()),
                 source_file: None,

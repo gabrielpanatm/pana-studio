@@ -77,6 +77,7 @@ export type ProjectDocumentHost = {
       options?: {
         deferPreviewRefresh?: boolean;
         preferredRoute?: string | null;
+        preferredComponentName?: string | null;
         strict?: boolean;
       },
     ) => Promise<ProjectFile | null>;
@@ -155,6 +156,7 @@ export async function loadScannedProjectFile(
     activateTemplateWorkbench?: boolean;
     preferredTemplatePagePath?: string | null;
     preferredTemplateRoute?: string | null;
+    preferredComponentName?: string | null;
     syncWorkbench?: boolean;
   } = {},
 ) {
@@ -244,6 +246,11 @@ export async function loadScannedProjectFile(
           ? options.preferredTemplateRoute
           : reusesActiveTemplateContext
             ? host.templateWorkbenchPreferredRoute
+            : null,
+        preferredComponentName: options.preferredComponentName !== undefined
+          ? options.preferredComponentName
+          : reusesActiveTemplateContext
+            ? host.templateWorkbenchPlan?.activeComponentName ?? null
             : null,
         strict: options.strict,
       },

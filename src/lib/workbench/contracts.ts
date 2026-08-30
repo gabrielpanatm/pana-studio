@@ -51,6 +51,7 @@ export type WorkspaceSourceOpenOptions = {
   surface?: WorkbenchSurface;
   templateContextPagePath?: string | null;
   templateContextUrl?: string | null;
+  componentName?: string | null;
 };
 
 export type WorkbenchSplit = "none" | "vertical" | "horizontal";

@@ -53,15 +53,6 @@ pub(super) fn add_template_relations(
                 builder,
             );
         }
-        for import in &template.imports {
-            add_template_target_relation(
-                template,
-                import,
-                SourceRelationKind::Imports,
-                template_node_by_name,
-                builder,
-            );
-        }
     }
 }
 

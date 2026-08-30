@@ -199,7 +199,8 @@ test("design-system.css este singura sursă de tokeni și expune primitivele com
   assert.doesNotMatch(colorPicker, /\.icon-button\s*\{/);
   assert.doesNotMatch(terminal, /\.terminal-(?:add|icon)-button/);
   assert.match(dataWorkspace, /class="ui-icon-button ui-close-button"/);
-  for (const usage of ["ui-tabs", "ui-tab", "ui-field", "ui-message"]) assert.match(components, new RegExp(usage));
+  for (const usage of ["SelectControl", "ui-field", "ui-message"]) assert.match(components, new RegExp(usage));
+  assert.doesNotMatch(components, /ui-tabs|ui-tab/);
 
   const uniqueDarkSurfaces = [...design.matchAll(/--surface-(?:base|panel|raised):\s*([^;]+);/g)].map((match) => match[1]);
   assert.equal(new Set(uniqueDarkSurfaces.slice(0, 3)).size, 3);

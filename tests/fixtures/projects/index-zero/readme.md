@@ -13,7 +13,7 @@ numai pe copii temporare și nu deschide această sursă direct în Pană Studio
 
 ## Stack
 
-- Zola embedded compatibil 0.22.1;
+- Zola embedded compatibil 0.23.4;
 - Tera + Markdown;
 - SCSS propriu, fără nesting;
 - JavaScript vanilla local;

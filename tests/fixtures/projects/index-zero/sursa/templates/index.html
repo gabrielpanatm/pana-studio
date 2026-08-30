@@ -35,7 +35,7 @@
     <a class="link-sageata" href="{{ evenimente.permalink }}">Toate cele {{ evenimente.pages | length }} de evenimente <span aria-hidden="true">→</span></a>
   </header>
   <div class="grila-carduri">
-    {% for eveniment in evenimente.pages | slice(end=6) %}
+    {% for eveniment in evenimente.pages[:6] %}
     <article class="card-eveniment">
       <a class="card-imagine" href="{{ eveniment.permalink }}">
         <img src="{{ get_url(path=eveniment.extra.imagine) }}" alt="" width="1200" height="800" loading="lazy">
@@ -64,7 +64,7 @@
     <p class="eticheta-tehnica">VOCILE EDIȚIEI 00</p>
     <h2>Practici fără centru</h2>
     <ol>
-      {% for artist in artisti.pages | slice(end=8) %}
+      {% for artist in artisti.pages[:8] %}
       <li><a href="{{ artist.permalink }}"><span>{{ loop.index }}</span><strong>{{ artist.title }}</strong><i>{{ artist.extra.oras }}</i></a></li>
       {% endfor %}
     </ol>
@@ -78,7 +78,7 @@
     <a class="link-sageata" href="{{ jurnal.permalink }}">Arhiva editorială <span aria-hidden="true">→</span></a>
   </header>
   <div class="grila-jurnal">
-    {% for articol in jurnal.pages | slice(end=3) %}
+    {% for articol in jurnal.pages[:3] %}
     <article>
       <a href="{{ articol.permalink }}"><img src="{{ get_url(path=articol.extra.imagine) }}" alt="" width="1200" height="800" loading="lazy"></a>
       <p>{{ articol.date | date(format="%d.%m.%Y") }} / {{ articol.extra.durata_lectura }}</p>

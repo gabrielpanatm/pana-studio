@@ -220,15 +220,15 @@ fn focused_view_changes_ownership_for_layout_base_and_partial() {
         .filter(|node| node.source_kind == Some(SourceNodeKind::Html))
         .all(|node| node.capabilities.requires_edit_scope_id.is_none()));
 
-    let macro_partial = focused_snapshot(&root, &model, "templates/partials/widget.html");
-    let macro_view = macro_partial.focused_view.as_ref().unwrap();
-    let macro_node = macro_view
+    let component_partial = focused_snapshot(&root, &model, "templates/partials/widget.html");
+    let component_view = component_partial.focused_view.as_ref().unwrap();
+    let component_node = component_view
         .nodes
         .iter()
-        .find(|node| node.source_kind == Some(SourceNodeKind::Macro))
-        .expect("macro boundary");
-    assert!(macro_node.capabilities.can_enter_boundary);
-    let nested_if = macro_view
+        .find(|node| node.source_kind == Some(SourceNodeKind::ComponentDefinition))
+        .expect("component boundary");
+    assert!(component_node.capabilities.can_enter_boundary);
+    let nested_if = component_view
         .nodes
         .iter()
         .find(|node| node.source_kind == Some(SourceNodeKind::If))
@@ -237,7 +237,10 @@ fn focused_view_changes_ownership_for_layout_base_and_partial() {
         nested_if.capabilities.requires_edit_scope_id,
         nested_if.editor_node_id
     );
-    assert_eq!(nested_if.parent_id.as_deref(), Some(macro_node.id.as_str()));
+    assert_eq!(
+        nested_if.parent_id.as_deref(),
+        Some(component_node.id.as_str())
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

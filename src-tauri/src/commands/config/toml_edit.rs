@@ -45,6 +45,11 @@ pub(super) fn toml_paginated_sitemap(source: &str) -> bool {
     false
 }
 
+pub(super) fn toml_section_exists(source: &str, section: &str) -> bool {
+    let header = format!("[{}]", section);
+    source.lines().any(|line| line.trim() == header)
+}
+
 pub(super) fn toml_raw_value(source: &str, section: Option<&str>, key: &str) -> Option<String> {
     let (start, end) = section_bounds(source, section);
     source

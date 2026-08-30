@@ -25,7 +25,6 @@ use crate::{
         ComponentInvocationKind, MarkdownProjection, MarkdownProjectionKind, RenderedBlockInstance,
         RenderedComponentInstance, SourceGraphPage, SourceRange, SourceRelationKind,
     },
-    source_graph::zola_shortcode::ZolaShortcodeInvocation,
 };
 
 pub const CANVAS_PROJECTION_SCHEMA_VERSION: u32 = 1;
@@ -281,7 +280,6 @@ struct CanvasSemanticIndex<'a> {
     page_by_file: HashMap<String, &'a SourceGraphPage>,
     page_by_route: HashMap<String, &'a SourceGraphPage>,
     source_by_file: HashMap<String, &'a str>,
-    source_range_by_node_id: HashMap<&'a str, &'a SourceRange>,
 }
 
 pub(crate) struct CanvasDocumentAnnotator<'a> {
@@ -354,12 +352,6 @@ impl<'a> CanvasSemanticIndex<'a> {
                     file.contents.as_str(),
                 )
             })
-            .collect::<HashMap<_, _>>();
-        let source_range_by_node_id = model
-            .source_graph
-            .nodes
-            .iter()
-            .filter_map(|node| node.range.as_ref().map(|range| (node.id.as_str(), range)))
             .collect::<HashMap<_, _>>();
         let nodes_by_id = model
             .source_graph
@@ -468,7 +460,6 @@ impl<'a> CanvasSemanticIndex<'a> {
             page_by_file,
             page_by_route,
             source_by_file,
-            source_range_by_node_id,
         }
     }
 
@@ -537,7 +528,7 @@ impl<'a> CanvasSemanticIndex<'a> {
         projection_id: &str,
         encoded_source_file: &str,
         route: &str,
-        occurrence: usize,
+        _occurrence: usize,
     ) -> Option<(String, CanvasMarkdownBoundary)> {
         let projection = self.markdown_projection_by_id.get(projection_id).copied()?;
         let runtime_file = decode_markdown_source_file(encoded_source_file);
@@ -566,38 +557,19 @@ impl<'a> CanvasSemanticIndex<'a> {
                 .flatten()
             });
 
-        let shortcode = (projection.kind == MarkdownProjectionKind::Shortcode)
-            .then(|| {
-                let page = self.page_by_route.get(&normalized_route(route)).copied()?;
-                let shortcode_name = shortcode_name_from_template(&projection.template_file)?;
-                find_shortcode_invocation(&page.shortcodes, &shortcode_name, occurrence)
-                    .map(|invocation| (page, invocation))
-            })
-            .flatten();
-
-        let (source_node_id, source_file, source_range) =
-            if let Some((page, invocation)) = shortcode {
-                let source_node_id = invocation.source_node_id.clone()?;
-                (
-                    source_node_id.clone(),
-                    Some(page.file.clone()),
-                    self.source_range_by_node_id
-                        .get(source_node_id.as_str())
-                        .map(|range| (*range).clone()),
-                )
-            } else if let Some(page) = page {
-                let source = self
-                    .source_by_file
-                    .get(&normalized_project_path(&page.file))
-                    .copied();
-                (
-                    page.content_node_id.clone(),
-                    Some(page.file.clone()),
-                    source.and_then(|source| markdown_source_range(source, projection.kind)),
-                )
-            } else {
-                (projection.template_source_node_id.clone(), None, None)
-            };
+        let (source_node_id, source_file, source_range) = if let Some(page) = page {
+            let source = self
+                .source_by_file
+                .get(&normalized_project_path(&page.file))
+                .copied();
+            (
+                page.content_node_id.clone(),
+                Some(page.file.clone()),
+                source.and_then(|source| markdown_source_range(source, projection.kind)),
+            )
+        } else {
+            (projection.template_source_node_id.clone(), None, None)
+        };
         let resolved = source_file.is_some() && source_range.is_some();
         Some((
             source_node_id,
@@ -1483,49 +1455,12 @@ fn decode_markdown_source_file(value: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-fn shortcode_name_from_template(template_file: &str) -> Option<String> {
-    let logical = normalized_project_path(template_file);
-    let logical = logical
-        .split_once("/templates/")
-        .map(|(_, path)| path)
-        .or_else(|| logical.strip_prefix("templates/"))
-        .unwrap_or(logical.as_str());
-    logical
-        .strip_prefix("shortcodes/")?
-        .strip_suffix(".html")
-        .or_else(|| logical.strip_prefix("shortcodes/")?.strip_suffix(".md"))
-        .map(str::to_string)
-}
-
-fn find_shortcode_invocation<'a>(
-    invocations: &'a [ZolaShortcodeInvocation],
-    name: &str,
-    occurrence: usize,
-) -> Option<&'a ZolaShortcodeInvocation> {
-    fn collect<'a>(
-        invocations: &'a [ZolaShortcodeInvocation],
-        name: &str,
-        output: &mut Vec<&'a ZolaShortcodeInvocation>,
-    ) {
-        for invocation in invocations {
-            if invocation.name == name {
-                output.push(invocation);
-            }
-            collect(&invocation.inner, name, output);
-        }
-    }
-    let mut matches = Vec::new();
-    collect(invocations, name, &mut matches);
-    matches.sort_by_key(|invocation| invocation.range.start);
-    matches.get(occurrence).copied()
-}
-
 fn markdown_source_range(source: &str, kind: MarkdownProjectionKind) -> Option<SourceRange> {
     let start = markdown_content_start(source);
     let end = match kind {
         MarkdownProjectionKind::Body | MarkdownProjectionKind::Toc => source.len(),
         MarkdownProjectionKind::Summary => markdown_summary_end(source, start),
-        MarkdownProjectionKind::Filter | MarkdownProjectionKind::Shortcode => return None,
+        MarkdownProjectionKind::Filter => return None,
     };
     Some(canvas_source_range(source, start, end))
 }

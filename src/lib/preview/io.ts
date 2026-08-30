@@ -47,6 +47,7 @@ export type TemplateWorkbenchPreviewRequest = ProjectPreviewRequestIdentity & {
   templatePath: string;
   preferredPagePath: string | null;
   preferredRoute: string | null;
+  preferredComponentName: string | null;
 };
 
 export type TemplateWorkbenchReuseRequest = TemplateWorkbenchPreviewRequest & {

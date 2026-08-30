@@ -115,6 +115,7 @@
     { id: "page" as const, label: t("templates-view-pages") },
     { id: "archive" as const, label: t("templates-view-archives") },
     { id: "element" as const, label: t("templates-view-elements") },
+    { id: "partial" as const, label: t("templates-view-partials") },
     { id: "listing_item" as const, label: t("templates-view-listing-items") },
     { id: "taxonomy" as const, label: t("templates-view-taxonomies") },
     { id: "system" as const, label: t("templates-view-system") },
@@ -125,6 +126,7 @@
     page: ["homepage", "default_page", "specific_page", "custom"],
     archive: ["section_archive"],
     element: ["section_element"],
+    partial: ["partial"],
     listing_item: ["listing_item"],
     taxonomy: ["taxonomy_list", "taxonomy_term"],
     system: ["not_found"],
@@ -182,6 +184,9 @@
     visibleEntries.find((entry) => entry.id === selectedId) ?? visibleEntries[0] ?? null,
   );
   const selectedResource = $derived(resourceById(selectedEntry?.assignment.resourceId ?? null));
+  const partialIncludingTemplates = $derived(
+    selectedResource?.usedByTemplates.filter((usage) => usage.kind === "includes") ?? [],
+  );
   const layoutOptions = $derived(
     effectiveResources.filter((resource) => resource.roles.includes("layout")),
   );
@@ -189,7 +194,7 @@
     effectiveResources.filter((resource) => (
       resource.roles.includes("page")
       && !resource.roles.some((role) => (
-        role === "partial" || role === "macro_library" || role === "shortcode"
+        role === "partial" || role === "component_library"
       ))
     )),
   );
@@ -367,6 +372,7 @@
       specific_page: t("templates-role-specific-page"),
       section_archive: t("templates-role-section-archive"),
       section_element: t("templates-role-section-element"),
+      partial: t("templates-role-partial"),
       listing_item: t("templates-role-listing-item"),
       taxonomy_list: t("templates-role-taxonomy-list"),
       taxonomy_term: t("templates-role-taxonomy-term"),
@@ -406,6 +412,7 @@
     if (role === "homepage") return "index";
     if (role === "default_page") return "page";
     if (role === "not_found") return "404";
+    if (role === "partial") return "partials/new-partial";
     if (role === "custom") return "new-template";
     const target = targetsForRole(role).find((candidate) => candidate.id === targetId);
     const labelStem = target?.label
@@ -476,7 +483,7 @@
       ? NEW_SECTION_TARGET
       : targets[0]?.id ?? "";
     createName = createRole === "section_archive" ? "" : suggestedName(createRole, createTargetId);
-    createParent = layoutOptions[0]?.name ?? "";
+    createParent = createRole === "partial" ? "" : layoutOptions[0]?.name ?? "";
     if (createRole === "listing_item") {
       listingLabel = "";
       createName = "";
@@ -505,7 +512,7 @@
       ? entry.target.id
       : "";
     createName = suggestedName(role, createTargetId);
-    createParent = layoutOptions[0]?.name ?? "";
+    createParent = role === "partial" ? "" : layoutOptions[0]?.name ?? "";
     includePageContent = false;
     duplicateSourcePath = null;
     formError = "";
@@ -520,6 +527,7 @@
     resetNewSectionDraft();
     createTargetId = role === "section_archive" ? NEW_SECTION_TARGET : targets[0]?.id ?? "";
     createName = role === "section_archive" ? "" : suggestedName(role, createTargetId);
+    createParent = role === "partial" ? "" : layoutOptions[0]?.name ?? "";
   }
 
   function changeCreateTarget(targetId: string) {
@@ -532,7 +540,9 @@
 
   function beginDuplicate(resource: TemplateResource) {
     duplicateSourcePath = resource.file;
-    createRole = resource.roles.includes("layout") ? "layout" : "custom";
+    createRole = resource.roles.includes("partial")
+      ? "partial"
+      : resource.roles.includes("layout") ? "layout" : "custom";
     createName = resource.name.replace(/\.html$/i, "") + "-copy";
     createParent = "";
     detailMode = "create";
@@ -626,7 +636,7 @@
           slug: createSectionSlug,
           sortBy: createSectionSort,
         } : null,
-        parentTemplateName: createParent || null,
+        parentTemplateName: createRole === "partial" ? null : createParent || null,
         includePageContent,
       }, identity()),
       creatingNewArchiveSection
@@ -706,6 +716,19 @@
     } else {
       await openWorkspaceSource(resource.file);
     }
+    await openEditor();
+  }
+
+  async function openRelatedSource(path: string) {
+    await openWorkspaceSource(path);
+    await openEditor();
+  }
+
+  async function previewPartialInPage(resource: TemplateResource, pageFile: string) {
+    await openWorkspaceSource(resource.file, {
+      surface: "visual",
+      templateContextPagePath: pageFile,
+    });
     await openEditor();
   }
 
@@ -811,6 +834,7 @@
             <span class="resource-icon">
               {#if entry.role === "layout"}<IconLayout size={17} stroke={1.8} />
               {:else if entry.role === "homepage"}<IconHome size={17} stroke={1.8} />
+              {:else if entry.role === "partial"}<IconFileCode size={17} stroke={1.8} />
               {:else if entry.category === "archive"}<IconListDetails size={17} stroke={1.8} />
               {:else if entry.category === "element" || entry.category === "listing_item"}<IconArticle size={17} stroke={1.8} />
               {:else if entry.category === "taxonomy"}<IconTags size={17} stroke={1.8} />
@@ -974,7 +998,7 @@
               <small class="ui-form-help">{t("templates-resulting-path")} <code>templates/{createName || "…"}.html</code></small>
             </label>
 
-            {#if !duplicateSourcePath && createRole !== "not_found"}
+            {#if !duplicateSourcePath && createRole !== "not_found" && createRole !== "partial"}
               <div class="ui-form-field">
                 <span class="ui-form-label">{t("templates-field-parent-layout")}</span>
                 <SelectControl size="default" value={createParent} options={[{ value: "", label: t("templates-no-parent-layout") }, ...layoutOptions.map((layout) => ({ value: layout.name, label: `${layout.name} · ${originLabel(layout)}` }))]} disabled={busy || createRole === "layout"} ariaLabel={t("templates-field-parent-layout")} onchange={(value) => { createParent = value; }} />
@@ -1058,6 +1082,50 @@
           </div>
         </section>
 
+        {#if selectedEntry.role === "partial" && selectedResource}
+          <section class="partial-relations" aria-label={t("templates-partial-relations")}>
+            <div class="relation-group">
+              <h3>{t("templates-partial-included-by")}</h3>
+              {#if partialIncludingTemplates.length > 0}
+                <ul>
+                  {#each partialIncludingTemplates as usage (`${usage.file}:${usage.name}`)}
+                    <li>
+                      <button type="button" disabled={busy} onclick={() => { void openRelatedSource(usage.file); }}>
+                        <span><strong>{usage.name}</strong><code>{usage.file}</code></span>
+                        <IconExternalLink size={14} />
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {:else}
+                <p>{t("templates-partial-no-includers")}</p>
+              {/if}
+            </div>
+            <div class="relation-group">
+              <h3>{t("templates-partial-affected-pages")}</h3>
+              {#if selectedEntry.affectedPages.length > 0}
+                <ul>
+                  {#each selectedEntry.affectedPages as page (page.file)}
+                    <li>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        title={t("templates-preview-partial-page")}
+                        onclick={() => { void previewPartialInPage(selectedResource, page.file); }}
+                      >
+                        <span><strong>{page.title}</strong><code>{page.url} · {page.file}</code></span>
+                        <IconExternalLink size={14} />
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {:else}
+                <p>{t("templates-partial-no-affected-pages")}</p>
+              {/if}
+            </div>
+          </section>
+        {/if}
+
         {#if canAssignSelected}
           <section class="control-section">
             <div class="control-copy">
@@ -1090,11 +1158,11 @@
             <dl class="contract-grid compact">
               <div><dt>{t("templates-field-parent-layout")}</dt><dd>{selectedResource.extends ?? t("templates-none")}</dd></div>
               <div><dt>{t("templates-blocks")}</dt><dd>{l10n.formatNumber(selectedResource.blocks.length)}</dd></div>
-              <div><dt>{t("templates-includes-imports")}</dt><dd>{l10n.formatNumber(selectedResource.includes.length + selectedResource.imports.length)}</dd></div>
+              <div><dt>{t("templates-includes")}</dt><dd>{l10n.formatNumber(selectedResource.includes.length)}</dd></div>
               <div><dt>{t("templates-uses")}</dt><dd>{l10n.formatNumber(selectedResource.usedByTemplates.length)}</dd></div>
             </dl>
 
-            {#if selectedResource.editable && selectedEntry.role !== "listing_item"}
+            {#if selectedResource.editable && selectedEntry.role !== "listing_item" && selectedEntry.role !== "partial"}
               <div class="parent-control">
                 <div class="ui-form-field">
                   <span class="ui-form-label">{t("templates-field-parent-layout")}</span>
@@ -1188,6 +1256,17 @@
   .semantic-contract strong { color: var(--text-strong); font-size: 12px; }
   .semantic-contract code, .semantic-contract small { overflow: hidden; color: var(--wb-text-muted); font-size: 11px; line-height: 1.4; text-overflow: ellipsis; }
   .control-section, .resource-section { display: grid; gap: 8px; margin-top: 13px; padding: 10px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
+  .partial-relations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 13px; }
+  .relation-group { min-width: 0; padding: 10px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
+  .relation-group ul { display: grid; gap: 4px; margin: 7px 0 0; padding: 0; list-style: none; }
+  .relation-group li { min-width: 0; }
+  .relation-group button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; width: 100%; padding: 7px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; color: var(--wb-text-primary); background: var(--wb-surface-chrome); text-align: left; }
+  .relation-group button:hover:not(:disabled) { border-color: var(--wb-accent-strong); }
+  .relation-group button span { display: grid; min-width: 0; gap: 2px; }
+  .relation-group strong, .relation-group code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .relation-group strong { font-size: 11px; }
+  .relation-group code, .relation-group p { color: var(--wb-text-muted); font-size: 11px; }
+  .relation-group p { margin: 7px 0 0; line-height: 1.4; }
   .control-section { grid-template-columns: minmax(0, 1fr) auto auto; }
   .control-copy { grid-column: 1 / -1; }
   h3 { margin: 0 0 3px; color: var(--text-strong); font-size: 11px; text-transform: uppercase; }

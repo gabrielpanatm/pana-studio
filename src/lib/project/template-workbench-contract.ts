@@ -1,7 +1,7 @@
 import type { LocalizedDiagnostic } from "$lib/contracts/localized-diagnostic";
 import type { SourceOrigin } from "$lib/source-graph/contracts";
 
-type TemplateWorkbenchDependencyKind = "extends" | "includes" | "imports";
+type TemplateWorkbenchDependencyKind = "extends" | "includes";
 
 type TemplateWorkbenchTemplate = {
   sourceId: string;
@@ -10,7 +10,7 @@ type TemplateWorkbenchTemplate = {
   origin: SourceOrigin;
   themeName: string | null;
   isPartial: boolean;
-  definesMacros: boolean;
+  definesComponents: boolean;
 };
 
 type TemplateWorkbenchDependencyStep = {
@@ -43,14 +43,14 @@ type TemplateWorkbenchRenderMode =
   | "includedTemplate"
   | "listingItemScenario"
   | "canonicalRoute"
-  | "macroScenario"
+  | "componentScenario"
   | "orphanTemplate";
 
 type TemplateWorkbenchRenderContextKind =
   | "realZolaPage"
   | "realZolaConsumer"
   | "realZolaRoute"
-  | "controlledMacroScenario"
+  | "controlledComponentScenario"
   | "controlledListingItemScenario"
   | "controlledTemplateFixture";
 
@@ -68,9 +68,10 @@ type TemplateWorkbenchRenderContext = {
 };
 
 export type TemplateWorkbenchPlan = {
-  schemaVersion: 4;
+  schemaVersion: 5;
   projectModelRevision: string;
   activeTemplate: TemplateWorkbenchTemplate;
+  activeComponentName: string | null;
   directParent: TemplateWorkbenchTemplate | null;
   navigator: TemplateWorkbenchNavigatorEntry[];
   consumers: TemplateWorkbenchConsumer[];

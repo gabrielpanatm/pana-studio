@@ -1117,7 +1117,10 @@ mod tests {
         root
     }
 
-    fn test_workspace(root: &Path, sources: HashMap<String, String>) -> ProjectWorkspace {
+    fn test_workspace(root: &Path, mut sources: HashMap<String, String>) -> ProjectWorkspace {
+        sources
+            .entry("templates/index.html".to_string())
+            .or_insert_with(|| "<!doctype html><main>{{ config.title }}</main>\n".to_string());
         for (path, source) in &sources {
             let absolute = root.join(path);
             if let Some(parent) = absolute.parent() {
@@ -1161,15 +1164,17 @@ mod tests {
         let mut sorted_sources = sources.into_iter().collect::<Vec<_>>();
         sorted_sources.sort_by(|left, right| left.0.cmp(&right.0));
         for (relative_path, source) in sorted_sources {
-            let role = if relative_path == "zola.toml" {
-                TextBufferRole::Config
+            let (language, role) = if relative_path == "zola.toml" {
+                (TextBufferLanguage::Toml, TextBufferRole::Config)
+            } else if relative_path.starts_with("templates/") {
+                (TextBufferLanguage::Html, TextBufferRole::Template)
             } else {
-                TextBufferRole::Data
+                (TextBufferLanguage::Toml, TextBufferRole::Data)
             };
             documents.insert_loaded_file(FileBufferEntry {
                 relative_path: relative_path.clone(),
                 absolute_path: root.join(&relative_path).to_string_lossy().to_string(),
-                language: TextBufferLanguage::Toml,
+                language,
                 role,
                 baseline: FileBufferBaseline {
                     hash: hash_text(&source),

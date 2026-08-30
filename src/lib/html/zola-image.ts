@@ -3,6 +3,7 @@ import { zolaRelativePath } from "$lib/project/files";
 import { t } from "$lib/i18n/runtime.svelte";
 import type {
   ZolaImageFormat,
+  ZolaImageFilter,
   ZolaImageOperation,
   ZolaImagePresentation,
 } from "$lib/canvas/contracts";
@@ -50,6 +51,7 @@ export function decodeZolaImagePresentation(payload: string | null): ZolaImagePr
       || !isZolaImageOperation(candidate.operation)
       || !isZolaImageFormat(candidate.format)
       || !Number.isInteger(candidate.quality)
+      || (candidate.filter !== null && !isZolaImageFilter(candidate.filter))
     ) return null;
     return candidate as ZolaImagePresentation;
   } catch {
@@ -108,6 +110,7 @@ export function createZolaImageIntent(input: {
   operation?: ZolaImageOperation;
   format?: ZolaImageFormat;
   quality?: number;
+  filter?: ZolaImageFilter | null;
 }): ProjectZolaImageIntent {
   if (!input.enabled) return { enabled: false };
   if (!input.source?.eligible) {
@@ -122,6 +125,7 @@ export function createZolaImageIntent(input: {
     operation: input.operation,
     format: input.format,
     quality: input.quality,
+    filter: input.filter ?? null,
   };
 }
 
@@ -136,4 +140,12 @@ function isZolaImageOperation(value: unknown): value is ZolaImageOperation {
 
 function isZolaImageFormat(value: unknown): value is ZolaImageFormat {
   return value === "auto" || value === "webp" || value === "avif" || value === "jpg" || value === "png";
+}
+
+function isZolaImageFilter(value: unknown): value is ZolaImageFilter {
+  return value === "nearest"
+    || value === "triangle"
+    || value === "catmull_rom"
+    || value === "gaussian"
+    || value === "lanczos3";
 }

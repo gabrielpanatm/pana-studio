@@ -1,6 +1,6 @@
 [package]
 name = "pana-studio"
-version = "0.1.9"
+version = "0.2.0"
 description = "Editor vizual desktop open-source pentru site-uri Zola"
 authors = ["Gabriel Pană"]
 license = "EUPL-1.2-or-later"
@@ -55,8 +55,6 @@ csv = "1.4"
 nom-bibtex = "0.6"
 roxmltree_to_serde = "0.6.2"
 # Shortcode CST folosește copia exactă a gramaticii din Zola embedded/pinned.
-pest = "2"
-pest_derive = "2"
 tauri-plugin-pty = "0.2.1"
 reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
 # Deploy S3/R2 folosește SDK-ul oficial AWS pentru SigV4, retry și paginare.
@@ -76,16 +74,16 @@ relative-path = "2"
 # WOFF și WOFF2; numele fișierului nu este tratat ca metadată.
 allsorts = { version = "0.17", default-features = false, features = ["flate2_rust"] }
 # Motorul de randare Preview este exact crate-ul `site` din release-ul
-# oficial Zola 0.22.1. Commitul fix împiedică schimbarea semanticii Tera,
+# oficial Zola 0.23.4. Commitul fix împiedică schimbarea semanticii Tera,
 # Markdown, Sass sau a rutelor fără un upgrade explicit și teste de paritate.
-zola-site = { package = "site", git = "https://github.com/getzola/zola.git", rev = "29540e9897dbe8aca388b13f7bdf615985f6ca2c" }
+zola-site = { package = "site", git = "https://github.com/getzola/zola.git", rev = "28daab8d47cacb1e6c863b97739148f424433f5b" }
 # Catalogul taxonomiilor parsează exact aceeași configurație ca motorul Zola
 # embedded, inclusiv limbile și strategia de slugificare.
-zola-config = { package = "config", git = "https://github.com/getzola/zola.git", rev = "29540e9897dbe8aca388b13f7bdf615985f6ca2c" }
+zola-config = { package = "config", git = "https://github.com/getzola/zola.git", rev = "28daab8d47cacb1e6c863b97739148f424433f5b" }
 # Workbench-ul randă un template prin aceleași API-uri și aceeași versiune
 # Tera folosite de motorul Zola embedded, fără niciun proces extern.
-zola-utils = { package = "utils", git = "https://github.com/getzola/zola.git", rev = "29540e9897dbe8aca388b13f7bdf615985f6ca2c" }
-tera = { version = "1.17", features = ["preserve_order", "date-locale"] }
+zola-utils = { package = "utils", git = "https://github.com/getzola/zola.git", rev = "28daab8d47cacb1e6c863b97739148f424433f5b" }
+tera = { version = "=2.2.0", features = ["preserve_order", "fast"] }
 fluent-bundle = "0.16"
 fluent-langneg = "0.14"
 unic-langid = { version = "0.9", features = ["macros"] }

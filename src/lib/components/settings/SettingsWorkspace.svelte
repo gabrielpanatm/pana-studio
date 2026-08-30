@@ -498,7 +498,13 @@
             </div>
             <div><dt>{t("settings-about-identifier")}</dt><dd>{appHome?.identifier ?? "com.gabriel.panastudio"}</dd></div>
             <div><dt>{t("settings-about-kernel")}</dt><dd>Rust + Tauri</dd></div>
-            <div><dt>{t("settings-about-generator")}</dt><dd>Zola 0.22.1</dd></div>
+            <div>
+              <dt>{t("settings-about-generator")}</dt>
+              <dd>
+                Zola {appHome?.embeddedZolaVersion
+                  ?? (informationLoading ? t("settings-about-reading") : t("common-unknown"))}
+              </dd>
+            </div>
             <div><dt>{t("settings-about-license")}</dt><dd>EUPL-1.2-or-later</dd></div>
           </dl>
           {#if informationError}
